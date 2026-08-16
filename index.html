@@ -432,6 +432,9 @@
     border-radius:8px; box-shadow:0 14px 40px var(--shadow); touch-action:none;
   }
   .favbar[hidden]{display:none}
+  /* it can carry twenty things now, which is taller than a tablet: the column
+     scrolls rather than running off the bottom of the screen */
+  .favbar{max-height:calc(100dvh - 80px); overflow-y:auto; overflow-x:hidden}
   .favbar button{
     min-width:42px; min-height:42px; padding:0; font-size:16px; line-height:1;
     background:transparent; border:1px solid var(--rule); border-radius:5px;
@@ -473,6 +476,17 @@
   }
   .dropmark[hidden]{display:none}
 
+  /* A page brought in from a PDF fills the width of the paper and keeps the
+     proportions of the sheet it came from, so an A4 page reads as A4 and a
+     wide slide as a slide. No border, no selected state, no cursor change:
+     it should feel like the page rather than something sitting on it. */
+  #body figure.imgblock.pdfpage{
+    width:100% !important; margin:0 0 var(--lead); border-color:transparent;
+    line-height:0; pointer-events:none;
+  }
+  #body figure.imgblock.pdfpage img{width:100%; height:auto; border-radius:0}
+  #body figure.imgblock.pdfpage::after{content:none}
+
   /* a locked picture says so, and stops taking the drag itself */
   #body figure.imgblock.locked{border-color:var(--rule); border-style:dashed}
   #body figure.imgblock.locked img{pointer-events:none}
@@ -480,6 +494,11 @@
     content:"\1F512"; position:absolute; top:4px; right:6px;
     font-size:13px; line-height:1; opacity:.75;
   }
+  /* A PDF page is locked too, but it should not wear the padlock or the
+     dashed edge — it is the page. Stated after .locked so it wins. */
+  #body figure.imgblock.pdfpage.locked{border-style:solid; border-color:transparent}
+  #body figure.imgblock.pdfpage.locked::after{content:none}
+  #body figure.imgblock.pdfpage.on{border-color:transparent; box-shadow:none}
   /* the picture being moved, and the line showing where it will land */
   #body figure.imgblock.moving{opacity:.45}
   #body .dropline{
@@ -905,12 +924,45 @@
     width:min(440px, calc(100vw - 28px)); box-shadow:0 18px 50px var(--shadow);
   }
   dialog::backdrop{background:var(--scrim)}
+  /* A dialog taller than the screen used to run off the bottom, taking its
+     buttons with it — there was then no way to close it but to reload. The
+     head and foot are pinned and only the middle scrolls. */
+  dialog[open]{
+    display:flex; flex-direction:column;
+    max-height:calc(100dvh - 24px); max-width:calc(100vw - 24px);
+  }
+  dialog[open] > form{
+    display:flex; flex-direction:column; min-height:0; max-height:100%;
+  }
   .dlg-head{
+    flex:none; display:flex; align-items:center; gap:8px;
     padding:15px 18px; border-bottom:1px solid var(--rule);
     font-family:var(--display); font-variation-settings:"wght" 700,"wdth" 75;
     font-size:14px; letter-spacing:.14em; text-transform:uppercase;
   }
-  .dlg-body{padding:18px}
+  .dlg-head .grow{flex:1}
+  .dlgx{
+    flex:none; width:34px; height:34px; padding:0; font-size:22px; line-height:1;
+    background:transparent; border:1px solid var(--rule); border-radius:3px; color:inherit;
+  }
+  .dlgx:hover{border-color:var(--ink-2)}
+  .dlg-body{padding:18px; overflow-y:auto; flex:1 1 auto; min-height:0; overscroll-behavior:contain}
+
+  /* collapsible settings groups */
+  .setgroup{border:1px solid var(--rule); border-radius:5px; margin-bottom:10px; background:var(--panel)}
+  .setgroup > summary{
+    cursor:pointer; padding:12px 14px; min-height:44px; display:flex; align-items:center;
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-2); list-style:none;
+  }
+  .setgroup > summary::-webkit-details-marker{display:none}
+  .setgroup > summary::after{content:"\25BE"; margin-left:auto; transition:transform .15s ease}
+  .setgroup[open] > summary{color:var(--ink); border-bottom:1px solid var(--rule)}
+  .setgroup[open] > summary::after{transform:rotate(180deg)}
+  .setgroup > .field{padding:0 14px}
+  .setgroup > .field:first-of-type{padding-top:14px}
+  .setgroup > .field:last-child{padding-bottom:14px}
+  .favpick{display:flex; flex-direction:column; gap:2px; margin-top:6px}
   .field{margin-bottom:16px}
   .field:last-child{margin-bottom:0}
   .field > label{
@@ -1476,148 +1528,194 @@
 
 <dialog id="setDlg">
   <form method="dialog">
-    <div class="dlg-head">Settings</div>
+    <div class="dlg-head">Settings<span class="grow"></span><button type="button" class="dlgx" id="setX" aria-label="Close settings">&times;</button></div>
     <div class="dlg-body settings">
-      <div class="field">
-        <label>While writing</label>
-        <label class="check"><input type="checkbox" id="setCollapseWrite"> Collapse the side panels when the pen starts</label>
-        <label class="check"><input type="checkbox" id="setCollapseType"> Collapse them when I start typing too</label>
-        <label class="check"><input type="checkbox" id="setShapes"> Tidy shapes when I hold still at the end of a stroke</label>
-        <label class="check"><input type="checkbox" id="setHover"> Show where the nib will land</label>
-        <label class="check"><input type="checkbox" id="setAutoScroll"> Scroll on when I write near the bottom</label>
-        <label class="check"><input type="checkbox" id="setPinch"> Pinch with two fingers to zoom</label>
-        <label class="check"><input type="checkbox" id="setPageFlow"> Keep scrolling past the end to reach the next page</label>
-        <label class="check"><input type="checkbox" id="setHints"> Show the small passing messages (&ldquo;Zoom unlocked&rdquo;, &ldquo;Undo&rdquo;&hellip;)</label>
-        <label class="check"><input type="checkbox" id="setKeepFoot"> Keep the note footer on screen while writing</label>
-        <label class="check"><input type="checkbox" id="setWake"> Keep the screen awake</label>
-        <label class="check"><input type="checkbox" id="setTapType"> Tapping blank page starts typing there</label>
-        <label class="check"><input type="checkbox" id="setSpell"> Check spelling as I type</label>
-        <label class="check"><input type="checkbox" id="setSymbols"> Expand typed shortcuts (-&gt; becomes an arrow)</label>
-        <label class="check"><input type="checkbox" id="setMarkdown"> Inline markdown (**bold**, *italic*, `code`)</label>
-        <label class="check"><input type="checkbox" id="setSmart"> Smart quotes</label>
-        <label class="check"><input type="checkbox" id="setLeft"> Left-handed layout</label>
-      </div>
-      <div class="field">
-        <label for="setTheme">Appearance</label>
-        <select id="setTheme">
-          <option value="system">Match the system</option>
-          <option value="light">Always light</option>
-          <option value="dark">Always dark</option>
-        </select>
-      </div>
-      <div class="field">
-        <button type="button" class="btn" id="screenBtn">Check how the screen is being used</button>
-        <div class="pressbox" id="screenBox" hidden>
-          <p class="hint" id="screenOut"></p>
+      <!-- Grouped and collapsed. The list had grown long enough that the
+           buttons at the foot were pushed off the bottom of the screen, and
+           the only way out of the dialog was to reload the page. -->
+      <details class="setgroup" open>
+        <summary>While writing</summary>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="setCollapseWrite"> Collapse the side panels when the pen starts</label>
+          <label class="check"><input type="checkbox" id="setCollapseType"> Collapse them when I start typing too</label>
+          <label class="check"><input type="checkbox" id="setShapes"> Tidy shapes when I hold still at the end of a stroke</label>
+          <label class="check"><input type="checkbox" id="setHover"> Show where the nib will land</label>
+          <label class="check"><input type="checkbox" id="setAutoScroll"> Scroll on when I write near the bottom</label>
+          <label class="check"><input type="checkbox" id="setPinch"> Pinch with two fingers to zoom</label>
+          <label class="check"><input type="checkbox" id="setPageFlow"> Keep scrolling past the end to reach the next page</label>
+          <label class="check"><input type="checkbox" id="setHints"> Show the small passing messages (&ldquo;Zoom unlocked&rdquo;, &ldquo;Undo&rdquo;&hellip;)</label>
+          <label class="check"><input type="checkbox" id="setKeepFoot"> Keep the note footer on screen while writing</label>
+          <label class="check"><input type="checkbox" id="setWake"> Keep the screen awake</label>
+          <label class="check"><input type="checkbox" id="setTapType"> Tapping blank page starts typing there</label>
+          <label class="check"><input type="checkbox" id="setSpell"> Check spelling as I type</label>
+          <label class="check"><input type="checkbox" id="setSymbols"> Expand typed shortcuts (-&gt; becomes an arrow)</label>
+          <label class="check"><input type="checkbox" id="setMarkdown"> Inline markdown for bold, italic and code</label>
+          <label class="check"><input type="checkbox" id="setSmart"> Smart quotes</label>
+          <label class="check"><input type="checkbox" id="setLeft"> Left-handed layout</label>
         </div>
-      </div>
-      <div class="field">
-        <button type="button" class="btn" id="pressBtn">Test what my pen reports</button>
-        <div class="pressbox" id="pressBox" hidden>
-          <p class="hint" id="pressOut">draw a stroke&hellip;</p>
-          <p class="hint" id="penBtnOut">hover or touch the pen here, then press its side button&hellip;</p>
+      </details>
+
+      <details class="setgroup">
+        <summary>Pen and eraser</summary>
+        <div class="field">
+          <label for="setPressure">Pen pressure</label>
+          <select id="setPressure">
+            <option value="light">Light touch</option>
+            <option value="normal">Normal</option>
+            <option value="firm">Firm hand</option>
+            <option value="off">Even width (no pressure)</option>
+          </select>
+          <p class="hint">If your device reports no pressure, Margin varies the
+          width by how fast you write instead.</p>
         </div>
-      </div>
-      <div class="field">
-        <label for="setPressure">Pen pressure</label>
-        <select id="setPressure">
-          <option value="light">Light touch</option>
-          <option value="normal">Normal</option>
-          <option value="firm">Firm hand</option>
-          <option value="off">Even width (no pressure)</option>
-        </select>
-        <p class="hint">If your device reports no pressure, Margin varies the
-        width by how fast you write instead.</p>
-      </div>
-      <div class="field">
-        <label for="setEraser">Eraser size <b id="eraserOut"></b></label>
-        <input type="range" id="setEraser" min="8" max="60" step="2">
-        <p class="hint">If the eraser seems to miss your writing, make it
-        bigger. &ldquo;Wipe an area&rdquo; in the ink bar uses roughly double this.</p>
-      </div>
-      <div class="field">
-        <label for="setGlide">Scrolling carries on after your finger lifts <b id="glideOut"></b></label>
-        <input type="range" id="setGlide" min="0" max="200" step="10">
-        <label for="setGlideStop">&hellip;and takes this long to stop <b id="glideStopOut"></b></label>
-        <input type="range" id="setGlideStop" min="0" max="100" step="5">
-        <p class="hint">Applies to one finger and to two fingers alike, so
-        scrolling feels the same whether the zoom is locked or not. Set the
-        first to 0 for no glide at all.</p>
-      </div>
-      <div class="field">
-        <label for="setSmooth">Handwriting smoothing <b id="smoothOut"></b></label>
-        <input type="range" id="setSmooth" min="0" max="50" step="5">
-        <p class="hint">Steadies the wobble in a stroke. Higher is neater but
-        rounder; 0 leaves your writing exactly as drawn. Applies to new strokes
-        only, so nothing already written is changed.</p>
-        <label class="check"><input type="checkbox" id="setCurves"> Draw strokes as curves rather than straight joins</label>
-        <p class="hint">Rounds the corners between the points the pen reported.
-        This changes only how the ink is drawn, not what is stored, so it
-        improves writing you have already done and costs nothing to turn off.</p>
-      </div>
-      <div class="field">
-        <label for="setZoomMin">Smallest zoom <b id="zoomMinOut"></b></label>
-        <input type="range" id="setZoomMin" min="25" max="100" step="5">
-        <label for="setZoomMax">Largest zoom <b id="zoomMaxOut"></b></label>
-        <input type="range" id="setZoomMax" min="110" max="500" step="10">
-        <p class="hint">The zoom buttons and the two-finger pinch both stop at
-        these.</p>
-      </div>
-      <div class="field">
-        <label for="setUIScale">Interface size <b id="uiScaleOut"></b></label>
-        <input type="range" id="setUIScale" min="85" max="130" step="5">
-      </div>
-      <div class="field">
-        <label for="setBackupGap">Ask me to back up every <b id="backupGapOut"></b></label>
-        <input type="range" id="setBackupGap" min="1" max="14" step="1">
-        <p class="hint">Shown once when you open the app, with Save backup and Later.</p>
-      </div>
-      <div class="field">
-        <label for="setHold">How long a press opens the spot menu <b id="holdOut"></b></label>
-        <input type="range" id="setHold" min="300" max="1400" step="100">
-      </div>
-      <div class="field">
-        <label>Which bars to show</label>
-        <label class="check"><input type="checkbox" id="setDocBar"> Note actions (star, practice, modes, zoom)</label>
-        <label class="check"><input type="checkbox" id="setFmtBar"> Typing and formatting</label>
-        <label class="check"><input type="checkbox" id="setTagRow"> Tags</label>
-        <label class="check"><input type="checkbox" id="setFavBar"> Favourites bar, floating (drag it where you like)</label>
-        <div id="favPick" class="favpick"></div>
-        <p class="hint">Immerse hides every bar at once; a single button brings them back.</p>
-      </div>
-      <div class="field">
-        <label for="setPenAway">How long the pen stays "present" after it lifts <b id="penAwayOut"></b></label>
-        <input type="range" id="setPenAway" min="400" max="4000" step="200">
-        <p class="hint">While the pen is present, a finger neither draws nor scrolls.</p>
-      </div>
-      <div class="field">
-        <label for="setInput">What may draw</label>
-        <select id="setInput">
-          <option value="penmouse">Pen and mouse</option>
-          <option value="pen">Pen only</option>
-          <option value="any">Anything, including a finger</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="setTemplate">Page</label>
-        <select id="setTemplate">
-          <option value="blank">Blank</option>
-          <option value="lined">Lined</option>
-          <option value="grid">Grid</option>
-          <option value="dot">Dots</option>
-          <option value="graph">Graph</option>
-          <option value="cornell">Cornell</option>
-          <option value="iso">Isometric</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="setFontSize">Text size <b id="fontSizeOut"></b></label>
-        <input type="range" id="setFontSize" min="13" max="24" step="1">
-        <label for="setLineHeight">Line spacing <b id="lineHeightOut"></b></label>
-        <input type="range" id="setLineHeight" min="22" max="44" step="2">
-      </div>
+        <div class="field">
+          <label for="setEraser">Eraser size <b id="eraserOut"></b></label>
+          <input type="range" id="setEraser" min="8" max="60" step="2">
+          <p class="hint">If the eraser seems to miss your writing, make it
+          bigger. &ldquo;Wipe an area&rdquo; in the ink bar uses roughly double this.</p>
+        </div>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="setTapErase"> Double-tap with the pen to turn the eraser on and off</label>
+          <p class="hint">A way in when the S&nbsp;Pen side button never reaches
+          the browser &mdash; on Samsung it is usually claimed by Air Actions
+          before any web page sees it. Two quick taps in the same spot.</p>
+        </div>
+        <div class="field">
+          <label for="setPenAway">How long the pen stays present after it lifts <b id="penAwayOut"></b></label>
+          <input type="range" id="setPenAway" min="400" max="4000" step="200">
+          <p class="hint">While the pen is present, a finger neither draws nor scrolls.</p>
+        </div>
+        <div class="field">
+          <label for="setInput">What may draw</label>
+          <select id="setInput">
+            <option value="penmouse">Pen and mouse</option>
+            <option value="pen">Pen only</option>
+            <option value="any">Anything, including a finger</option>
+          </select>
+        </div>
+        <div class="field">
+          <button type="button" class="btn" id="pressBtn">Test what my pen reports</button>
+          <div class="pressbox" id="pressBox" hidden>
+            <p class="hint" id="pressOut">draw a stroke&hellip;</p>
+            <p class="hint" id="penBtnOut">hover or touch the pen here, then press its side button&hellip;</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="setgroup">
+        <summary>How my handwriting looks</summary>
+        <div class="field">
+          <label for="setSmooth">Handwriting smoothing <b id="smoothOut"></b></label>
+          <input type="range" id="setSmooth" min="0" max="50" step="5">
+          <p class="hint">Steadies the wobble in a stroke. Higher is neater but
+          rounder; 0 leaves your writing exactly as drawn. Applies to new
+          strokes only, so nothing already written is changed.</p>
+          <label class="check"><input type="checkbox" id="setCurves"> Draw strokes as curves rather than straight joins</label>
+          <p class="hint">Rounds the corners between the points the pen
+          reported. This changes only how the ink is drawn, not what is stored,
+          so it improves writing you have already done.</p>
+        </div>
+      </details>
+
+      <details class="setgroup">
+        <summary>Scrolling and zoom</summary>
+        <div class="field">
+          <label for="setGlide">Scrolling carries on after your finger lifts <b id="glideOut"></b></label>
+          <input type="range" id="setGlide" min="0" max="200" step="10">
+          <label for="setGlideStop">&hellip;and takes this long to stop <b id="glideStopOut"></b></label>
+          <input type="range" id="setGlideStop" min="0" max="100" step="5">
+          <p class="hint">Applies to one finger and to two fingers alike, so
+          scrolling feels the same whether the zoom is locked or not. Set the
+          first to 0 for no glide at all.</p>
+        </div>
+        <div class="field">
+          <label for="setZoomMin">Smallest zoom <b id="zoomMinOut"></b></label>
+          <input type="range" id="setZoomMin" min="25" max="100" step="5">
+          <label for="setZoomMax">Largest zoom <b id="zoomMaxOut"></b></label>
+          <input type="range" id="setZoomMax" min="110" max="500" step="10">
+          <p class="hint">The zoom buttons and the two-finger pinch both stop at these.</p>
+        </div>
+      </details>
+
+      <details class="setgroup">
+        <summary>The favourites bar</summary>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="setFavBar"> Show the floating favourites bar (drag it where you like)</label>
+          <p class="hint">Tick what it should carry. Tapping a tool you are
+          already holding opens its colour and thickness beside the bar.</p>
+          <div id="favPick" class="favpick"></div>
+        </div>
+      </details>
+
+      <details class="setgroup">
+        <summary>Bars and screen</summary>
+        <div class="field">
+          <label>Which bars to show</label>
+          <label class="check"><input type="checkbox" id="setDocBar"> Note actions (star, practice, modes, zoom)</label>
+          <label class="check"><input type="checkbox" id="setFmtBar"> Typing and formatting</label>
+          <label class="check"><input type="checkbox" id="setTagRow"> Tags</label>
+          <p class="hint">Immerse hides every bar at once; a single button brings them back.</p>
+        </div>
+        <div class="field">
+          <label for="setTheme">Appearance</label>
+          <select id="setTheme">
+            <option value="system">Match the system</option>
+            <option value="light">Always light</option>
+            <option value="dark">Always dark</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="setUIScale">Interface size <b id="uiScaleOut"></b></label>
+          <input type="range" id="setUIScale" min="85" max="130" step="5">
+        </div>
+        <div class="field">
+          <button type="button" class="btn" id="screenBtn">Check how the screen is being used</button>
+          <div class="pressbox" id="screenBox" hidden>
+            <p class="hint" id="screenOut"></p>
+          </div>
+        </div>
+      </details>
+
+      <details class="setgroup">
+        <summary>The page</summary>
+        <div class="field">
+          <label for="setTemplate">Page</label>
+          <select id="setTemplate">
+            <option value="blank">Blank</option>
+            <option value="lined">Lined</option>
+            <option value="grid">Grid</option>
+            <option value="dot">Dots</option>
+            <option value="graph">Graph</option>
+            <option value="cornell">Cornell</option>
+            <option value="iso">Isometric</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="setFontSize">Text size <b id="fontSizeOut"></b></label>
+          <input type="range" id="setFontSize" min="13" max="24" step="1">
+          <label for="setLineHeight">Line spacing <b id="lineHeightOut"></b></label>
+          <input type="range" id="setLineHeight" min="22" max="44" step="2">
+        </div>
+      </details>
+
+      <details class="setgroup">
+        <summary>Backups and menus</summary>
+        <div class="field">
+          <label for="setBackupGap">Ask me to back up every <b id="backupGapOut"></b></label>
+          <input type="range" id="setBackupGap" min="1" max="14" step="1">
+          <p class="hint">Shown once when you open the app, with Save backup and Later.</p>
+        </div>
+        <div class="field">
+          <label for="setHold">How long a press opens the spot menu <b id="holdOut"></b></label>
+          <input type="range" id="setHold" min="300" max="1400" step="100">
+        </div>
+      </details>
     </div>
-    <div class="dlg-foot"><span class="grow"></span><button type="button" class="btn primary" id="setClose">Done</button></div>
+    <div class="dlg-foot">
+      <span class="hint" style="margin:0">Every change is saved as you make it.</span>
+      <span class="grow"></span>
+      <button type="button" class="btn primary" id="setClose">Done</button>
+    </div>
   </form>
 </dialog>
 
@@ -1794,7 +1892,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b16";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b17";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5150,6 +5248,35 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
         return;
       }
+      /* Two quick taps of the nib in the same spot toggle the eraser.
+         This exists because the S Pen's side button never arrives: Samsung
+         binds it to Air Actions above the browser, so no amount of listening
+         for it helps. A tap leaves a single-point stroke, so a double tap is
+         two dots close together in time and place — both are taken back out
+         again, and nothing is drawn. */
+      if (cfg.tapErase && S.name === "note" && st.pts.length === 3){
+        var nowT = Date.now();
+        var near = tapErase.last &&
+                   Math.abs(st.pts[0] - tapErase.x) < 26 &&
+                   Math.abs(st.pts[1] - tapErase.y) < 26 &&
+                   (nowT - tapErase.last) < 420;
+        if (near){
+          /* lift both dots, then switch */
+          S.strokes = S.strokes.filter(function(x){
+            return x.id !== st.id && x.id !== tapErase.id;
+          });
+          tapErase.last = 0;
+          ink.tool = (ink.tool === "eraser") ? (tapErase.was || "pen") : "eraser";
+          if (ink.tool === "eraser") tapErase.was = "pen";
+          S.redraw(); S.queueSave(); paintInkTools();
+          hint(ink.tool === "eraser" ? "Eraser on. Double-tap again for the pen."
+                                     : "Pen again.");
+          return;
+        }
+        tapErase.last = nowT; tapErase.x = st.pts[0]; tapErase.y = st.pts[1];
+        tapErase.id = st.id;
+        if (ink.tool !== "eraser") tapErase.was = ink.tool;
+      }
       lastStrokeEnd = Date.now();
       if (S.name === "note") setTimeout(growForInk, 0);
       /* Speed weighting must happen on the raw samples: simplify() drops
@@ -6269,6 +6396,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     defaultZoom: 1,
     pageFlow: true,    /* scrolling past the end carries on to the next page */
     eraserSize: 22,    /* how wide the eraser bites, in page units */
+    tapErase: true,    /* double-tap the nib to toggle the eraser */
     favBar: false,     /* the floating favourites bar */
     favTools: ["pen", "marker", "eraser", "lasso", "img", "cam"],
     favPos: null,      /* {x, y}, re-clamped to the window on load */
@@ -6305,6 +6433,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof applyHand === "function") applyHand();
     if (typeof applyUIScale === "function") applyUIScale();
     if (C.setPressure) C.setPressure(cfg.pressure || "normal");
+    /* Rebuilt here, not only when the tick box changes. loadCfg() is async and
+       resolves AFTER the boot chain has already called buildFavBar() once, so
+       that first build saw the default (off) and nothing ever rebuilt it —
+       which is why the bar came back missing after every reload. applyCfg is
+       the one place that runs both at boot and on every change. */
+    if (typeof buildFavBar === "function") buildFavBar();
     if (cfg.wakeLock) requestWake();
   }
 
@@ -6348,6 +6482,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (cfg.smooth > 50) { cfg.smooth = 50; saveCfg(); }
     $("setEraser").value = cfg.eraserSize;
     $("eraserOut").textContent = cfg.eraserSize + " px";
+    $("setTapErase").checked = cfg.tapErase !== false;
     $("setGlide").value = cfg.glideSpeed;
     $("glideOut").textContent = cfg.glideSpeed ? cfg.glideSpeed + "%" : "off";
     $("setGlideStop").value = cfg.glideStop;
@@ -6388,6 +6523,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     bindCheck("setPinch", "pinchZoom");
     bindCheck("setPageFlow", "pageFlow");
     bindCheck("setHints", "hints");
+    bindCheck("setTapErase", "tapErase");
     $("setFavBar").addEventListener("change", function(){
       cfg.favBar = this.checked; saveCfg(); buildFavBar();
     });
@@ -6496,6 +6632,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
     $("setBtn").addEventListener("click", function(){ buildSettings(); $("setDlg").showModal(); });
     $("setClose").addEventListener("click", function(){ $("setDlg").close(); });
+    $("setX").addEventListener("click", function(){ $("setDlg").close(); });
   }
 
   /* ---- screen wake lock ---- */
@@ -6519,17 +6656,33 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      buildInkTools uses to apply a colour or a width — so per-tool memory,
      lasso clearing and mode switching all keep working with one owner. */
   var FAV_ITEMS = {
-    pen:    { label: "✎", title: "Pen",        ink: true },
-    pencil: { label: "✏", title: "Pencil",     ink: true },
-    marker: { label: "░", title: "Highlighter",ink: true },
-    eraser: { label: "⌫", title: "Eraser",     ink: true },
-    lasso:  { label: "◌", title: "Lasso",      ink: true },
-    img:    { label: "ὛC", title: "Insert a picture", run: function(){ $("imgFile").click(); } },
-    cam:    { label: "▣", title: "Take a photo",      run: function(){ $("camFile").click(); } },
-    undo:   { label: "↶", title: "Undo",              run: function(){ globalUndo(); } },
-    redo:   { label: "↷", title: "Redo",              run: function(){ globalRedo(); } }
+    pen:     { label: "✎", title: "Pen",         ink: true },
+    pencil:  { label: "✐", title: "Pencil",      ink: true },
+    marker:  { label: "▤", title: "Highlighter", ink: true },
+    eraser:  { label: "⌫", title: "Eraser",      ink: true },
+    lasso:   { label: "◌", title: "Lasso",       ink: true },
+    lassobox:{ label: "▢", title: "Lasso: box or freehand",
+               run: function(){ $("lassoShapeBtn").click(); } },
+    ruler:   { label: "📏", title: "Ruler (keep the stroke straight)",
+               run: function(){ $("rulerBtn").click(); } },
+    img:     { label: "🖼", title: "Insert a picture", run: function(){ $("imgFile").click(); } },
+    cam:     { label: "📷", title: "Take a photo",     run: function(){ $("camFile").click(); } },
+    pdf:     { label: "📄", title: "PDF as pages",     run: function(){ $("pdfFile").click(); } },
+    rec:     { label: "●", title: "Start or stop a recording", run: function(){ $("recBtn").click(); } },
+    prac:    { label: "◧", title: "Rough working",     run: function(){ $("pracBtn").click(); } },
+    mark:    { label: "⚑", title: "Bookmark this page",run: function(){ $("markBtn").click(); } },
+    star:    { label: "★", title: "Star this page",    run: function(){ $("starBtn").click(); } },
+    addpage: { label: "＋", title: "New page",         run: function(){ $("addNote").click(); } },
+    insert:  { label: "⎀", title: "Insert a page after this one",
+               run: function(){ $("insertPageBtn").click(); } },
+    focus:   { label: "⛶", title: "Fold the panels away", run: function(){ $("focusBtn").click(); } },
+    lock:    { label: "🔒", title: "Lock the zoom",     run: function(){ $("lockBtn").click(); } },
+    undo:    { label: "↶", title: "Undo",              run: function(){ globalUndo(); } },
+    redo:    { label: "↷", title: "Redo",              run: function(){ globalRedo(); } }
   };
-  var FAV_ORDER = ["pen","pencil","marker","eraser","lasso","img","cam","undo","redo"];
+  var FAV_ORDER = ["pen","pencil","marker","eraser","lasso","lassobox","ruler",
+                   "img","cam","pdf","rec","prac","mark","star",
+                   "addpage","insert","focus","lock","undo","redo"];
 
   function favClamp(x, y){
     var el = $("favBar");
@@ -7135,6 +7288,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      eraser end as bit 32. Either one means "erase for now", and the previous
      tool comes straight back when it is let go. */
   var btn = { held: false, was: null };
+  var tapErase = { last: 0, x: 0, y: 0, id: null, was: "pen" };
   /* What a barrel button looks like is not consistent across stacks:
        buttons bit 2  (0x02)  barrel button, the spec answer
        buttons bit 5  (0x20)  the eraser end of the pen
@@ -7329,31 +7483,44 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
             PDF_MAX_PAGES + ".");
       }
       var firstId = null;
-      /* strictly one page at a time. Rendering them in parallel puts every
-         page's bitmap in memory at once, which a tablet will not survive on
-         a long document. */
-      var chain = Promise.resolve();
-      for (var i = 1; i <= total; i++){
-        (function(n){
-          chain = chain.then(function(){
-            $("noticeText").textContent = "Bringing in page " + n + " of " + total + "…";
-            $("notice").hidden = false;
-            return doc.getPage(n).then(pdfPageToBlob).then(function(r){
-              if (!r.blob) throw new Error("Page " + n + " would not render.");
-              return C.createNote(nbId, stem + " p" + n).then(function(note){
-                if (!firstId) firstId = note.id;
-                return C.createImage(note.id, r.blob, r.w, r.h).then(function(asset){
-                  var html = '<figure class="imgblock" contenteditable="false" ' +
-                             'data-img="' + asset.id + '" data-pct="100" data-lock="1"></figure>' +
-                             "<p><br></p>";
-                  return C.saveNote(note.id, { html: html });
+      /* Carry on the notebook's own numbering rather than starting a series
+         of its own, so the PDF lands as the pages that come next: if the
+         notebook ends at p5 the PDF becomes p6, p7, p8 … in order. */
+      return C.suggestPageTitle(nbId).then(function(firstName){
+        var seed = C.splitSeries(firstName) || { stem: "p", num: 1, pad: 1 };
+        /* strictly one page at a time. Rendering them in parallel puts every
+           page's bitmap in memory at once, which a tablet will not survive on
+           a long document. */
+        var chain = Promise.resolve();
+        for (var i = 1; i <= total; i++){
+          (function(n){
+            chain = chain.then(function(){
+              $("noticeText").textContent = "Bringing in page " + n + " of " + total + "…";
+              $("notice").hidden = false;
+              return doc.getPage(n).then(pdfPageToBlob).then(function(r){
+                if (!r.blob) throw new Error("Page " + n + " would not render.");
+                var title = C.seriesName(seed.stem, seed.num + (n - 1), seed.pad);
+                return C.createNote(nbId, title).then(function(note){
+                  if (!firstId) firstId = note.id;
+                  return C.createImage(note.id, r.blob, r.w, r.h).then(function(asset){
+                    /* data-pdfpage makes the page take the shape of the sheet
+                       it came from, and marks it as one to be left alone:
+                       locked, no resizing, and no full-screen viewer on a tap
+                       — you are here to write on it, not to look at it. */
+                    var ratio = (r.h && r.w) ? (r.h / r.w) : 1.414;
+                    var html = '<figure class="imgblock pdfpage" contenteditable="false" ' +
+                               'data-img="' + asset.id + '" data-pct="100" data-lock="1" ' +
+                               'data-pdfpage="1" data-ratio="' + ratio.toFixed(4) + '"></figure>' +
+                               "<p><br></p>";
+                    return C.saveNote(note.id, { html: html });
+                  });
                 });
               });
             });
-          });
-        })(i);
-      }
-      return chain.then(function(){ return { firstId: firstId, total: total, stem: stem }; });
+          })(i);
+        }
+        return chain.then(function(){ return { firstId: firstId, total: total, stem: stem }; });
+      });
     }).then(function(r){
       $("notice").hidden = true;
       return refreshLists().then(function(){
@@ -7750,11 +7917,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     e.preventDefault();
     e.stopPropagation();            /* never let this start a pen stroke */
 
+    /* A page that came from a PDF is the page, not a picture on it. Tapping
+       it must do nothing at all: no selection, no grips, and above all no
+       full-screen viewer — the pen has to be able to write straight onto it.
+       It is still reachable through the long-press menu if it ever needs
+       removing. */
+    if (fig.getAttribute("data-pdfpage") === "1") return;
+
     var now = Date.now();
     if (fig.classList.contains("on") && now - lastImgTap < 320){
       lastImgTap = 0;
       var url0 = imgUrls[fig.getAttribute("data-img")];
-      if (url0) openViewer(url0);
+      if (url0 && !isLocked(fig)) openViewer(url0);
       return;
     }
     lastImgTap = now;
