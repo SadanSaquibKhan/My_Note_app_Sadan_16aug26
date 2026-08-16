@@ -1271,6 +1271,8 @@
         <button class="ghost" id="lassoThinner" title="Thinner">&#8722;w</button>
         <button class="ghost" id="lassoThicker" title="Thicker">+w</button>
         <button class="ghost" id="lassoColour">Recolour</button>
+        <button class="ghost" id="lassoCopy" title="Copy this writing">Copy</button>
+        <button class="ghost" id="lassoCut" title="Cut this writing">Cut</button>
         <button class="ghost" id="lassoPromote" title="Copy into the clean note">To note</button>
         <button class="ghost danger" id="lassoDelete">Delete</button>
         <button class="ghost" id="lassoDone">Done</button>
@@ -1524,6 +1526,12 @@
         </select>
         <p class="hint">If your device reports no pressure, Margin varies the
         width by how fast you write instead.</p>
+      </div>
+      <div class="field">
+        <label for="setEraser">Eraser size <b id="eraserOut"></b></label>
+        <input type="range" id="setEraser" min="8" max="60" step="2">
+        <p class="hint">If the eraser seems to miss your writing, make it
+        bigger. &ldquo;Wipe an area&rdquo; in the ink bar uses roughly double this.</p>
       </div>
       <div class="field">
         <label for="setGlide">Scrolling carries on after your finger lifts <b id="glideOut"></b></label>
@@ -6141,6 +6149,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     backupGap: 1,
     defaultZoom: 1,
     pageFlow: true,    /* scrolling past the end carries on to the next page */
+    eraserSize: 22,    /* how wide the eraser bites, in page units */
     favBar: false,     /* the floating favourites bar */
     favTools: ["pen", "marker", "eraser", "lasso", "img", "cam"],
     favPos: null,      /* {x, y}, re-clamped to the window on load */
@@ -6218,6 +6227,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     /* the slider used to run to 100; a config saved then would sit off the
        end of the new one and read back as the maximum on first touch */
     if (cfg.smooth > 50) { cfg.smooth = 50; saveCfg(); }
+    $("setEraser").value = cfg.eraserSize;
+    $("eraserOut").textContent = cfg.eraserSize + " px";
     $("setGlide").value = cfg.glideSpeed;
     $("glideOut").textContent = cfg.glideSpeed ? cfg.glideSpeed + "%" : "off";
     $("setGlideStop").value = cfg.glideStop;
@@ -6299,6 +6310,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       cfg.penAway = Number(this.value);
       $("penAwayOut").textContent = (cfg.penAway / 1000).toFixed(1) + "s";
       saveCfg();
+    });
+    $("setEraser").addEventListener("input", function(){
+      cfg.eraserSize = Number(this.value);
+      $("eraserOut").textContent = cfg.eraserSize + " px";
+      saveCfg(); paintNib();
     });
     $("setGlide").addEventListener("input", function(){
       cfg.glideSpeed = Number(this.value);
@@ -6635,6 +6651,57 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     S.strokes = S.strokes.filter(function(s){ return !ids[s.id]; });
     lassoClear(); S.queueSave(); paintInkTools();
   });
+  /* ---- copy and paste handwriting ----
+     The clipboard holds the strokes moved so their top-left corner sits at
+     the origin, so pasting is a single translate to wherever you asked for
+     it, and the same copy can be dropped on any page or in the practice
+     sheet. It lives in meta rather than a variable so it survives changing
+     page, closing the app and coming back tomorrow. */
+  var inkClip = [];
+
+  function copyPickedInk(){
+    if (!lasso.picked.length) return 0;
+    var b = C.polyBounds(lasso.poly) || { minX: 0, minY: 0 };
+    var copy = JSON.parse(JSON.stringify(lasso.picked));
+    var norm = C.translateStrokes(copy, -b.minX, -b.minY);
+    inkClip = norm;
+    C.setMeta("inkClip", norm);
+    return norm.length;
+  }
+  function pasteInkAt(x, y){
+    if (!inkClip.length){ hint("Nothing copied yet."); return; }
+    var S = ink.surfaces[ink.active] || noteSurface;
+    var fresh = JSON.parse(JSON.stringify(inkClip));
+    fresh = C.translateStrokes(fresh, x, y);
+    /* new ids, or undo, erase and the lasso would all confuse the copy with
+       the original it came from */
+    var added = [];
+    fresh.forEach(function(s){
+      s.id = C.newId("s");
+      s.t = Date.now();
+      S.strokes.push(s);
+      added.push(s);
+    });
+    S.undo.push(tagOp({ t: "add", ss: added.map(function(s, k){
+      return { i: S.strokes.length - added.length + k, s: s };
+    }) }));
+    S.redo = []; clearTextRedo();
+    S.redraw(); S.queueSave(); paintInkTools();
+    hint(added.length + (added.length === 1 ? " stroke pasted." : " strokes pasted."));
+  }
+  $("lassoCopy").addEventListener("click", function(){
+    var n = copyPickedInk();
+    if (!n) return;
+    hint(n + (n === 1 ? " stroke copied." : " strokes copied.") +
+         " Long-press where you want it and choose Paste writing.");
+  });
+  $("lassoCut").addEventListener("click", function(){
+    var n = copyPickedInk();
+    if (!n) return;
+    $("lassoDelete").click();
+    hint(n + (n === 1 ? " stroke cut." : " strokes cut."));
+  });
+
   $("lassoColour").addEventListener("click", function(){
     var S = lasso.surface; if (!S) return;
     var ids = {}; lasso.picked.forEach(function(s){ ids[s.id] = 1; });
@@ -6976,6 +7043,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       ink.tool = "eraser";
       paintInkTools();
       $("modeChip").classList.add("live");
+      /* The press very often lands AFTER the nib is already down — you start
+         a stroke, realise it is wrong, and squeeze the button. Switching the
+         tool alone did nothing then, because the surface was already midway
+         through drawing and kept on drawing. Throw the half-made stroke away
+         and start erasing from the same point instead. */
+      var S = ink.surfaces[ink.active];
+      if (S && S.drawing && S.drawing.stroke){
+        var st = S.drawing.stroke;
+        S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
+        S.drawing = { erasing: true, removed: [] };
+        S.redraw();
+      }
     } else if (!down && btn.held){
       btn.held = false;
       ink.tool = btn.was || "pen";
@@ -6983,6 +7062,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       paintInkTools();
     }
   }
+  /* Listened for on the document as well as on the drawing surface. A barrel
+     press while the pen hovers over a toolbar, or over the gap beside the
+     page, never reaches the scroller's handlers — and that is exactly when
+     people press it, before bringing the nib down. */
+  ["pointerdown", "pointermove", "pointerup"].forEach(function(evt){
+    document.addEventListener(evt, function(e){
+      if (e.pointerType !== "pen" && e.pointerType !== "eraser") return;
+      applyPenButton(e);
+    }, true);
+  });
 
   /* ---- keyboard out of the way while the pen is in use ---- */
   function setTypingEnabled(on){
@@ -7855,6 +7944,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var items = [
       ["Mark this spot", markSpot],
       ["Work this out here…", pracHere],
+      ["Paste writing here", pasteInkHere, !inkClip.length],
       ["Copy a link to this spot", copySpotLink],
       ["Paste the last link here", pasteLink],
       ["Link to another note\u2026", function(){ $("linkBtn").click(); }],
@@ -7869,6 +7959,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       b.type = "button"; b.className = "holditem";
       b.textContent = it[0];
       if (it[0].indexOf("Paste the last link") === 0 && !state.lastLink) b.disabled = true;
+      if (it[2]) b.disabled = true;      /* items that say so themselves */
       b.addEventListener("click", function(){ closeHoldMenu(); it[1](x, y); });
       m.appendChild(b);
     });
@@ -7949,6 +8040,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     pin.remove();
     markDirty(); flush();
   });
+
+  /* the long-press point is in screen pixels; strokes live in page units */
+  function pasteInkHere(x, y){
+    var S = ink.surfaces[ink.active] || noteSurface;
+    var p = S.toPage({ clientX: x, clientY: y });
+    pasteInkAt(p.x, p.y);
+  }
 
   function markSpot(x, y){
     var name = window.prompt("Name this spot", "");
@@ -8486,9 +8584,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   /* ---- 9. the eraser should feel the same at any zoom ---- */
+  /* The old radius was 10 page units. That is thinner than the nib on most
+     strokes, so the eraser only bit when it passed almost exactly down the
+     centre of a line — which reads as "the eraser does nothing" even when it
+     is working perfectly. It is a setting now, and its floor is well clear of
+     a stroke's own width. */
   function eraseRadius(surfaceName){
     var z = (surfaceName === "note" ? state.zoom : 1) || 1;
-    return (ink.eraseMode === "area" ? 34 : 10) / z;
+    var base = Number(cfg.eraserSize);
+    if (!isFinite(base) || base <= 0) base = 22;
+    return (ink.eraseMode === "area" ? base * 1.8 : base) / z;
   }
 
   /* ---- 10. the hover dot should look like the pen you are holding ---- */
@@ -10192,6 +10297,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     C.getMeta("recent", []).then(function(r){ state.recent = r || []; paintRecent(); });
     C.getMeta("recentSearch", []).then(function(r){ state.recentSearch = r || []; });
     C.getMeta("toolMem", null).then(function(m){ if (m) { toolMem = m; restoreTool(ink.tool); paintInkTools(); } });
+    C.getMeta("inkClip", []).then(function(v){ inkClip = Array.isArray(v) ? v : []; });
     C.getMeta("lassoShape", "free").then(function(v){
       ink.lassoShape = (v === "rect") ? "rect" : "free";
       if (typeof paintLassoShape === "function") paintLassoShape();
