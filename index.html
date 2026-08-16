@@ -893,6 +893,7 @@
       <h2 id="listTitle">Notes</h2>
       <button class="ghost" id="editNotebook" title="Rename, recolour or delete this notebook">Edit</button>
       <button class="ghost" id="pickBtn" title="Select several notes">Select</button>
+      <button class="ghost" id="insertPageBtn" title="Insert a page after the open one and renumber the rest">Insert</button>
       <button class="add" id="addNote" aria-label="New note" title="New note">+</button>
     </div>
     <div class="filterwrap">
@@ -2072,6 +2073,61 @@ var MarginCore = (function(){
       return (a.createdAt||0) - (b.createdAt||0);
     });
   }
+  /* ---------- name series ----------
+     A name ending in digits is a series: "NB1" -> "NB2", "p9" -> "p10",
+     "Lecture 03" -> "Lecture 04" with the zero padding kept. This is what
+     lets a new notebook or page name itself, and what renumbering an
+     inserted page works on. Pure, so it is all testable off-browser. */
+  function splitSeries(name){
+    var m = /^(.*?)(\d+)\s*$/.exec(String(name == null ? "" : name));
+    if (!m) return null;
+    return { stem: m[1], num: parseInt(m[2], 10), pad: m[2].length };
+  }
+  function seriesName(stem, num, pad){
+    var s = String(num);
+    while (s.length < (pad || 1)) s = "0" + s;
+    return stem + s;
+  }
+  /* The next name after the highest member of the most-used stem. Counting
+     stems matters: a notebook holding p1..p9 plus one stray "Figure 2" should
+     still offer p10, not Figure 3. */
+  function nextSeriesName(names, fallback){
+    var groups = {}, order = [];
+    (names || []).forEach(function(nm){
+      var p = splitSeries(nm);
+      if (!p) return;
+      if (!groups[p.stem]){
+        groups[p.stem] = { stem: p.stem, max: -Infinity, pad: 1, count: 0 };
+        order.push(p.stem);
+      }
+      var g = groups[p.stem];
+      g.count++;
+      if (p.num > g.max){ g.max = p.num; g.pad = p.pad; }
+    });
+    var best = null;
+    order.forEach(function(k){
+      var g = groups[k];
+      if (!best || g.count > best.count || (g.count === best.count && g.max > best.max)) best = g;
+    });
+    if (!best) return fallback;
+    return seriesName(best.stem, best.max + 1, best.pad);
+  }
+  /* Which existing pages an insert at `fromNum` has to push up, highest
+     first so two pages never momentarily hold the same number. */
+  function renumberPlan(titles, stem, fromNum){
+    var hits = [];
+    (titles || []).forEach(function(t, i){
+      var p = splitSeries(t);
+      if (p && p.stem === stem && p.num >= fromNum){
+        hits.push({ index: i, from: t, num: p.num, pad: p.pad });
+      }
+    });
+    hits.sort(function(a, b){ return b.num - a.num; });
+    return hits.map(function(h){
+      return { index: h.index, from: h.from, to: seriesName(stem, h.num + 1, h.pad) };
+    });
+  }
+
   function matchNote(note, q){
     if (!q) return true;
     var hay = ((note.title||"") + " " + plainText(note.html) + " " +
@@ -2173,6 +2229,48 @@ var MarginCore = (function(){
       return putOne("notes", note);
     });
   }
+  /* ---------- naming the next notebook and the next page ---------- */
+
+  /* Pages are numbered in the order they were made, not the order the list
+     happens to be sorted in, so the suggestion does not change when you
+     switch the sort. */
+  function pagesInOrder(nbId){
+    return notesIn(nbId).then(function(list){
+      return list.slice().sort(function(a, b){ return (a.createdAt||0) - (b.createdAt||0); });
+    });
+  }
+  function suggestNotebookName(){
+    return allNotebooks().then(function(list){
+      var names = sortNotebooks(list).map(function(nb){ return nb.name; });
+      return nextSeriesName(names, "NB1");
+    });
+  }
+  function suggestPageTitle(nbId){
+    return pagesInOrder(nbId).then(function(list){
+      return nextSeriesName(list.map(function(n){ return n.title; }), "p1");
+    });
+  }
+  /* Insert a page directly after another one. Every later page in the same
+     series shifts up by one, applied highest-first and strictly in sequence:
+     run in parallel these are read-modify-write races on the same store and
+     two pages can end up with the same number. */
+  function insertPageAfter(nbId, afterNoteId){
+    return pagesInOrder(nbId).then(function(list){
+      var after = null;
+      list.forEach(function(n){ if (n.id === afterNoteId) after = n; });
+      var p = after ? splitSeries(after.title) : null;
+      if (!p) return createNote(nbId, "");      /* unnumbered: nothing to shift */
+      var plan = renumberPlan(list.map(function(n){ return n.title; }), p.stem, p.num + 1);
+      return plan.reduce(function(chain, step){
+        return chain.then(function(){
+          return saveNote(list[step.index].id, { title: step.to });
+        });
+      }, Promise.resolve()).then(function(){
+        return createNote(nbId, seriesName(p.stem, p.num + 1, p.pad));
+      });
+    });
+  }
+
   /* Search titles and typed bodies. Rough working is deliberately left out
      unless asked for: the practice space exists so the mess stays out of
      the way, and that includes out of results. */
@@ -3046,6 +3144,9 @@ var MarginCore = (function(){
     open:open, close:close, deviceId:deviceId,
     newId:newId, plainText:plainText, displayTitle:displayTitle, preview:preview,
     wordCount:wordCount, sortNotes:sortNotes, sortNotebooks:sortNotebooks,
+    splitSeries:splitSeries, seriesName:seriesName, nextSeriesName:nextSeriesName,
+    renumberPlan:renumberPlan, suggestNotebookName:suggestNotebookName,
+    suggestPageTitle:suggestPageTitle, insertPageAfter:insertPageAfter,
     INK_TOOLS:INK_TOOLS, INK_COLOURS:INK_COLOURS, INK_WIDTHS:INK_WIDTHS,
     INK_WIDTH_LABELS:INK_WIDTH_LABELS, W_FINE:W_FINE, W_MED:W_MED, W_BROAD:W_BROAD,
     newStroke:newStroke, distToSeg:distToSeg, strokeHit:strokeHit, simplify:simplify,
@@ -3500,6 +3601,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       C.markRevised(state.note.id);
       if (!$("outlinePane").hidden) paintOutline();
       if (prac.open) closePractice();
+      /* If this is the page the notebook was left on, put the scroll back
+         where it was. Any other page opens at the top, as you would expect. */
+      if (state.nbId){
+        var openingId = state.note.id;
+        loadPlace(state.nbId).then(function(place){
+          if (state.noteId !== openingId) return;      /* moved on already */
+          if (place && place.noteId === openingId){
+            restoreScroll(place.top || 0, place.left || 0);
+          } else {
+            /* a different page: this is now the notebook's place, at the top */
+            savePlace();
+          }
+        });
+      }
     }
     paintStar();
     paintTags();
@@ -3574,9 +3689,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
   }
 
+  /* what the last render showed, so reopening a notebook can tell "I have just
+     arrived here" from "I have just backed out of a page in it" */
+  var prevView = null, prevNbId = null;
+
   function render(){
     var r = parseHash();
     var changedNote = (r.noteId !== state.noteId);
+    var backedOutOfNote = (prevView === "note" && prevNbId === r.nbId);
+    prevView = r.view; prevNbId = r.nbId;
     state.nbId = r.nbId;
     if (r.nbId) state.nbLast = r.nbId;
     state.noteId = r.noteId;
@@ -3607,14 +3728,31 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (r.nbId && !state.notebooks.some(function(x){ return x.id === r.nbId; })){
         go({}, true); return;
       }
-      if (changedNote){
-        $("body").dataset.noteId = "";
-        document.body.dataset.save = "idle";
-        $("saveWord").textContent = "ready";
-        state.dirty = false;
+
+      /* Opening a notebook drops you back where you were in it. Deliberately
+         not done when you have just backed out of a page in this same
+         notebook: that is you asking for the page list, and bouncing you
+         straight back into the page would make Back useless. */
+      if (r.view === "notebook" && !r.noteId && !backedOutOfNote){
+        return loadPlace(r.nbId).then(function(place){
+          if (!place || !place.noteId) return finishRender();
+          var stillThere = state.notes.some(function(n){ return n.id === place.noteId; });
+          if (!stillThere) return finishRender();
+          go({ nbId: r.nbId, noteId: place.noteId }, true);
+        });
       }
-      paintNotebooks(); paintTrashRow(); paintNotes(); paintDoc(); paintCrumbs(); paintRecent();
-      if (state.nbId) C.setMeta("lastRoute", location.hash);
+      return finishRender();
+
+      function finishRender(){
+        if (changedNote){
+          $("body").dataset.noteId = "";
+          document.body.dataset.save = "idle";
+          $("saveWord").textContent = "ready";
+          state.dirty = false;
+        }
+        paintNotebooks(); paintTrashRow(); paintNotes(); paintDoc(); paintCrumbs(); paintRecent();
+        if (state.nbId) C.setMeta("lastRoute", location.hash);
+      }
     });
   }
 
@@ -3647,6 +3785,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("nbDuplicate").style.display = nb ? "" : "none";
     buildSwatches();
     $("nbDlg").showModal();
+    /* A new notebook arrives pre-named with the next in the series, selected
+       rather than just filled in, so typing over it costs one keystroke. */
+    if (!nb){
+      C.suggestNotebookName().then(function(name){
+        if (!$("nbDlg").open || $("nbName").value) return;
+        $("nbName").value = name;
+        try { $("nbName").select(); } catch (e) {}
+      });
+    }
     setTimeout(function(){ $("nbName").focus(); }, 30);
   }
   $("addNotebook").addEventListener("click", function(){ openNbDialog(null); });
@@ -3685,13 +3832,32 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* ---------------- notes ---------------- */
   $("addNote").addEventListener("click", function(){
     if (!state.nbId) return;
+    var nbId = state.nbId;
     flush().then(function(){
-      return C.createNote(state.nbId, "");
+      return C.suggestPageTitle(nbId);
+    }).then(function(title){
+      return C.createNote(nbId, title);
     }).then(function(n){
-      go({nbId:state.nbId, noteId:n.id});
-      setTimeout(function(){ $("noteTitle").focus(); }, 60);
+      go({nbId:nbId, noteId:n.id});
+      setTimeout(function(){ $("noteTitle").focus(); $("noteTitle").select(); }, 60);
     });
   });
+
+  /* Insert a page straight after the open one, pushing the rest up. */
+  function insertPageHere(){
+    if (!state.nbId || !state.noteId) return;
+    var nbId = state.nbId, afterId = state.noteId;
+    flush().then(function(){
+      return C.insertPageAfter(nbId, afterId);
+    }).then(function(n){
+      return refreshLists().then(function(){
+        go({nbId:nbId, noteId:n.id});
+        hint("Inserted " + (n.title || "a page") + ". The pages after it moved up one.");
+      });
+    }).catch(function(e){ say("Could not insert the page: " + e.message); });
+  }
+  var insBtn = $("insertPageBtn");
+  if (insBtn) insBtn.addEventListener("click", insertPageHere);
 
   $("deleteNoteBtn").addEventListener("click", function(){
     if (!state.note) return;
@@ -6717,7 +6883,57 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   function saveNoteZoom(){
     if (state.noteId) C.setMeta("zoom:" + state.noteId, state.zoom);
+    savePlace();
   }
+
+  /* ---- 20b. each notebook remembers where you were ----
+     One record per notebook, in meta so it survives a restart: which page was
+     open, how far down it was scrolled and at what zoom. Kept per notebook
+     rather than one global "last place" so moving between notebooks does not
+     make them all forget, which is the whole point of the feature. */
+  function placeKey(nbId){ return "place:" + nbId; }
+  var placeTimer = null, placeRestoring = false;
+
+  function savePlace(){
+    if (!state.nbId || !state.noteId) return;
+    if (placeRestoring) return;      /* do not record the scroll we just set */
+    var p = $("paper");
+    C.setMeta(placeKey(state.nbId), {
+      noteId: state.noteId,
+      top: p ? p.scrollTop : 0,
+      left: p ? p.scrollLeft : 0,
+      zoom: state.zoom,
+      at: Date.now()
+    });
+  }
+  function queueSavePlace(){
+    clearTimeout(placeTimer);
+    placeTimer = setTimeout(savePlace, 400);
+  }
+  function loadPlace(nbId){ return C.getMeta(placeKey(nbId), null); }
+
+  /* Restoring the scroll has to wait for the page to have its full height:
+     the ink layer, the images and the maths all change it after paintDoc
+     returns, and a scrollTop set before that is silently clamped to a much
+     smaller scrollHeight. Rather than guess one delay, re-apply it over a
+     short window and stop as soon as it sticks. */
+  function restoreScroll(top, left){
+    var p = $("paper");
+    if (!p || (!top && !left)) return;
+    placeRestoring = true;
+    var tries = 0;
+    (function attempt(){
+      p.scrollTop = top; p.scrollLeft = left || 0;
+      tries++;
+      if (Math.abs(p.scrollTop - top) > 2 && tries < 12){
+        setTimeout(attempt, 60);
+      } else {
+        setTimeout(function(){ placeRestoring = false; }, 120);
+        redrawAll();
+      }
+    })();
+  }
+  $("paper").addEventListener("scroll", queueSavePlace, { passive: true });
 
   /* ---- 21. only draw the strokes you can actually see ---- */
   /* kept off the stroke itself so it can never be written to disk */
