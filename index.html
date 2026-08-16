@@ -294,22 +294,68 @@
   .outrow.lvl2{padding-left:18px; font-size:12.5px}
   .outrow.lvl3{padding-left:28px; font-size:12px; color:var(--ink-2)}
 
-  /* page templates */
+  /* page templates
+     --rule-gap is the line spacing scaled by the zoom, so the ruling grows
+     and shrinks with the writing instead of staying put while the words move
+     away from it.
+     background-attachment:local is the important one and is restated after
+     every template below: the `background` shorthand silently resets it to
+     `scroll`, which pinned the lines to the window so they sat still while
+     the text and handwriting scrolled over them. */
+  .paper{--rule-gap:calc(var(--lead) * var(--z, 1))}
   .paper.tpl-blank{background:var(--field)}
-  .paper.tpl-lined{background:linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% var(--lead), var(--field)}
+  .paper.tpl-lined{background:linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% var(--rule-gap), var(--field)}
   .paper.tpl-grid{background:
-      linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% 26px,
-      linear-gradient(90deg, var(--paper-rule) 1px, transparent 1px) 0 0/26px 100%, var(--field)}
-  .paper.tpl-dot{background:radial-gradient(var(--paper-rule) 1.2px, transparent 1.2px) 0 0/24px 24px, var(--field)}
+      linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% calc(26px * var(--z,1)),
+      linear-gradient(90deg, var(--paper-rule) 1px, transparent 1px) 0 0/calc(26px * var(--z,1)) 100%, var(--field)}
+  .paper.tpl-dot{background:radial-gradient(var(--paper-rule) 1.2px, transparent 1.2px) 0 0/calc(24px * var(--z,1)) calc(24px * var(--z,1)), var(--field)}
   .paper.tpl-graph{background:
-      linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% 12px,
-      linear-gradient(90deg, var(--paper-rule) 1px, transparent 1px) 0 0/12px 100%,
-      linear-gradient(var(--slab) 1px, transparent 1px) 0 0/100% 60px,
-      linear-gradient(90deg, var(--slab) 1px, transparent 1px) 0 0/60px 100%, var(--field)}
+      linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% calc(12px * var(--z,1)),
+      linear-gradient(90deg, var(--paper-rule) 1px, transparent 1px) 0 0/calc(12px * var(--z,1)) 100%,
+      linear-gradient(var(--slab) 1px, transparent 1px) 0 0/100% calc(60px * var(--z,1)),
+      linear-gradient(90deg, var(--slab) 1px, transparent 1px) 0 0/calc(60px * var(--z,1)) 100%, var(--field)}
   .paper.tpl-iso{background:
-      repeating-linear-gradient(30deg, var(--paper-rule) 0 1px, transparent 1px 26px),
-      repeating-linear-gradient(-30deg, var(--paper-rule) 0 1px, transparent 1px 26px), var(--field)}
-  .paper.tpl-cornell{background:linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% var(--lead), var(--field)}
+      repeating-linear-gradient(30deg, var(--paper-rule) 0 1px, transparent 1px calc(26px * var(--z,1))),
+      repeating-linear-gradient(-30deg, var(--paper-rule) 0 1px, transparent 1px calc(26px * var(--z,1))), var(--field)}
+  .paper.tpl-cornell{background:linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% var(--rule-gap), var(--field)}
+  /* stated last so it survives every shorthand above */
+  .paper[class*="tpl-"]{background-attachment:local}
+  /* ---- where one page stops and the next begins ----
+     A page used to just run out of scroll with nothing to mark it, so there
+     was no way to tell "the end of this page" from "more below". The rule is
+     drawn dark and full width, and under it sits the beginning of the next
+     page, so both are on screen at the join. */
+  .pageend{margin-top:8px; padding-bottom:24px}
+  .pageend[hidden]{display:none}
+  .pageend-line{
+    position:relative; border-top:2px solid var(--ink);
+    margin:0 0 14px; text-align:center;
+  }
+  .pageend-line span{
+    position:relative; top:-9px; background:var(--field); padding:0 10px;
+    font-family:var(--mono); font-size:9px; letter-spacing:.2em;
+    text-transform:uppercase; color:var(--ink-2);
+  }
+  .nextpeek{
+    border:1px solid var(--rule); border-radius:6px; padding:12px 14px;
+    background:var(--panel); opacity:.92;
+  }
+  .nextpeek[hidden]{display:none}
+  .nextpeek-head{
+    font-family:var(--mono); font-size:10px; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--ink-2); margin-bottom:8px;
+  }
+  .nextpeek-body{
+    font-size:15px; line-height:var(--lead); color:var(--ink-2);
+    max-height:calc(var(--lead) * 4); overflow:hidden;
+  }
+  .nextpeek-go{
+    margin-top:10px; min-height:40px; padding:0 14px; border-radius:4px;
+    background:transparent; border:1px solid var(--ink); color:var(--ink);
+    font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase;
+  }
+  .nextpeek-go:hover{border-color:var(--live); color:var(--live)}
+
   .cornell{position:absolute; inset:0; pointer-events:none; z-index:1}
   .cornell[hidden]{display:none}
   .cornell::before{
@@ -539,7 +585,7 @@
      filling one notebook page at its own proportions. */
   body.pdfpaper .paper{background:var(--field)}
   body.pdfpaper .sheet{padding:0; max-width:none}
-  body.pdfpaper #body{min-height:0; padding-top:0}
+  body.pdfpaper #body{min-height:0; padding-top:0; padding-bottom:0}
   body.pdfpaper #body p:last-child{margin:0}
 
   /* a locked picture says so, and stops taking the drag itself */
@@ -927,10 +973,14 @@
       var(--field);
     background-attachment:local;
   }
-  .sheet{max-width:820px; margin:0 auto; padding:0 clamp(16px,4vw,44px) 45vh; zoom:var(--z,1)}
+  /* The room to write past the last line used to be padding on the sheet,
+     which put it AFTER the end-of-page marker — so the marker appeared with
+     half a screen of blank paper below it, which is the opposite of what it
+     is for. The room belongs to the writing area itself. */
+  .sheet{max-width:820px; margin:0 auto; padding:0 clamp(16px,4vw,44px) 24px; zoom:var(--z,1)}
   #body{
     min-height:60vh; outline:none; font-size:16px; line-height:var(--lead);
-    padding-top:calc(var(--lead) - 5px);
+    padding-top:calc(var(--lead) - 5px); padding-bottom:40vh;
     word-wrap:break-word; -webkit-user-select:text; user-select:text;
   }
   #body:empty::before{content:attr(data-placeholder); color:var(--ink-2)}
@@ -954,13 +1004,13 @@
      whole, plus its dates and counts — all of it reference, none of it needed
      mid-sentence. When the panels fold away to write, it goes with them and
      gives the line back to the page. body.keepfoot opts out. */
+  /* Duplicate / Move / Delete act on the note as a whole, and the dates and
+     counts are reference — all of it belongs with the note list, not over the
+     page you are writing on. So the footer follows the side panels exactly:
+     panels showing, footer showing; panels away, footer away. Tying it to the
+     pen instead made it flicker in and out as the pen came and went. */
   body[data-focus="1"]:not(.keepfoot) .docfoot{display:none}
-  /* and whenever the pen is actually in your hand. body.nokeys is set the
-     moment the pen comes near (typing is switched off then), so this covers
-     writing even with the side panels still open — which is when the footer
-     was still stealing a line. */
-  body.nokeys:not(.keepfoot) .docfoot{display:none}
-  body.penning:not(.keepfoot) .docfoot{display:none}
+  body[data-immerse="1"]:not(.keepfoot) .docfoot{display:none}
   .danger:hover{border-color:var(--warn); color:var(--warn)}
 
   .blank{
@@ -1449,6 +1499,16 @@
           <div class="sheet">
             <div id="body" contenteditable="true" spellcheck="true"
                  data-placeholder="Type here, or just start writing with the pen."></div>
+            <!-- Outside #body on purpose: everything inside it is the note's
+                 own HTML and would be saved into the note. -->
+            <div class="pageend" id="pageEnd" hidden>
+              <div class="pageend-line"><span id="pageEndLabel">end of page</span></div>
+              <div class="nextpeek" id="nextPeek" hidden>
+                <div class="nextpeek-head" id="nextPeekHead"></div>
+                <div class="nextpeek-body" id="nextPeekBody"></div>
+                <button type="button" class="nextpeek-go" id="nextPeekGo">Open this page</button>
+              </div>
+            </div>
           </div>
         </div>
         <canvas class="inklayer" id="inkLayer"></canvas>
@@ -1970,7 +2030,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b20";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b21";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4618,6 +4678,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     /* the foot-of-page buttons have to be judged again on every page, not
        only when something scrolls: a short page is at its own end already */
     if (typeof paintEndKit === "function") setTimeout(paintEndKit, 260);
+    if (typeof paintPageEnd === "function") paintPageEnd();
     /* a PDF page has no ruled lines under it and no page padding fighting it */
     document.body.classList.toggle("pdfpaper",
       (state.note.html || "").indexOf("data-pdfpage") > -1);
@@ -7609,6 +7670,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (e.button !== 2) return;
     if (lastPointerKind !== "pen") return;
     if (btn.held) return;                 /* the pointer path already has it */
+    if (looksLikeLongPress()) return;     /* the nib resting, not the button */
     if (cfg.penButtonErase === false) return;
     e.preventDefault();
     togglePenEraser("the pen's side button");
@@ -8665,9 +8727,25 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      Margin's, the mouse is left alone. contextmenu itself carries no
      pointerType, which is why it has to be remembered from pointerdown. */
   var lastPointerKind = "mouse";
+  /* When the nib is actually touching, and since when. Android raises a
+     contextmenu for a long press of the nib as well as for the side button,
+     and the two are otherwise identical — which is why simply holding the pen
+     against the page was switching to the eraser. A press of the button
+     happens with the pen hovering, or the instant it lands; a long press only
+     arrives after the nib has been held down for half a second. */
+  var penDown = 0;
   document.addEventListener("pointerdown", function(e){
     lastPointerKind = e.pointerType || "mouse";
+    if (e.pointerType === "pen" || e.pointerType === "eraser") penDown = Date.now();
   }, true);
+  ["pointerup", "pointercancel"].forEach(function(evt){
+    document.addEventListener(evt, function(e){
+      if (e.pointerType === "pen" || e.pointerType === "eraser") penDown = 0;
+    }, true);
+  });
+  function looksLikeLongPress(){
+    return penDown && (Date.now() - penDown) > 250;
+  }
 
   $("paper").addEventListener("contextmenu", function(e){
     if (lastPointerKind === "pen"){
@@ -8685,6 +8763,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          down. Toggling here as well would immediately switch it back — which
          is why the button worked one press and not the next. */
       if (btn.held) return;
+      /* Holding the nib against the page is a long press, not the button.
+         Without this, resting the pen for a moment switched to the eraser and
+         resting it again switched back — the behaviour you saw, on the wrong
+         gesture entirely. */
+      if (looksLikeLongPress()) return;
       if (cfg.penButtonErase !== false) togglePenEraser("the pen's side button");
       return;
     }
@@ -9757,6 +9840,35 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       setTimeout(function(){ el.hidden = true; }, 220);
     }, 1100);
   }
+  /* the end marker, and a look at the page that follows */
+  function paintPageEnd(){
+    var box = $("pageEnd");
+    if (!box) return;
+    if (!state.note || state.view !== "note"){ box.hidden = true; return; }
+    box.hidden = false;
+    var next = neighbourPage(1);
+    var peek = $("nextPeek");
+    if (!next){
+      $("pageEndLabel").textContent = "end of the last page";
+      peek.hidden = true;
+      return;
+    }
+    $("pageEndLabel").textContent = "end of page";
+    $("nextPeekHead").textContent = "next: " +
+      ((next.title || "").trim() || C.displayTitle(next));
+    /* Plain text only. This is a look at the next page, not a second live
+       editor: rendering its real HTML here would put a second copy of every
+       id, link and picture into the document. */
+    var t = C.preview(next, 240);
+    $("nextPeekBody").textContent = t || "(this page is empty)";
+    peek.hidden = false;
+  }
+  $("nextPeekGo").addEventListener("click", function(){
+    var next = neighbourPage(1);
+    if (!next) return;
+    flush().then(function(){ go({ nbId: state.nbId, noteId: next.id }); });
+  });
+
   function paintEndKit(){
     var kit = $("endKit"), p = $("paper");
     if (!kit || !p) return;
