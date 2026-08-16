@@ -1581,7 +1581,15 @@
         <div class="field">
           <label class="check"><input type="checkbox" id="setCollapseWrite"> Collapse the side panels when the pen starts</label>
           <label class="check"><input type="checkbox" id="setCollapseType"> Collapse them when I start typing too</label>
-          <label class="check"><input type="checkbox" id="setShapes"> Tidy shapes when I hold still at the end of a stroke</label>
+          <label for="setShapeMode" style="display:block;margin-top:10px">Tidy shapes</label>
+          <select id="setShapeMode">
+            <option value="hold">When I rest the nib at the end of the stroke</option>
+            <option value="always">Always, as soon as I lift the pen</option>
+            <option value="off">Never</option>
+          </select>
+          <p class="hint">Straightens lines and turns rough circles, boxes and
+          triangles into clean ones. &ldquo;Always&rdquo; is the Samsung Notes
+          way; it can catch a stray letter, and undo puts it straight back.</p>
           <label class="check"><input type="checkbox" id="setHover"> Show where the nib will land</label>
           <label class="check"><input type="checkbox" id="setAutoScroll"> Scroll on when I write near the bottom</label>
           <label class="check"><input type="checkbox" id="setPinch"> Pinch with two fingers to zoom</label>
@@ -2434,7 +2442,31 @@ var MarginCore = (function(){
     for (var m = 0; m < n; m++) rs.push(Math.hypot(pts[m*3] - cx, pts[m*3+1] - cy));
     var mean = rs.reduce(function(a,c){ return a + c; }, 0) / rs.length;
     var dev = Math.sqrt(rs.reduce(function(a,c){ return a + (c-mean)*(c-mean); }, 0) / rs.length);
-    if (mean > 8 && dev / mean < 0.16 && Math.min(w,h) / Math.max(w,h) > 0.6){
+
+    /* How much of its bounding box does the outline actually enclose?
+       This is what tells the three closed shapes apart, and it does not care
+       where the stroke started or which way round it went:
+         a rectangle fills its box   ~ 1.00
+         an ellipse fills pi/4 of it ~ 0.79
+         a triangle fills half of it ~ 0.50
+       Two earlier attempts failed here. Roundness alone called a square a
+       circle, because a square's radius from its centre varies by only about
+       a sixth. Counting samples that sit near an edge of the box called a
+       circle a square, because three quarters of a circle's samples do. */
+    var area2 = 0;
+    for (var s1 = 0; s1 < n; s1++){
+      var s2 = (s1 + 1) % n;
+      area2 += pts[s1*3] * pts[s2*3+1] - pts[s2*3] * pts[s1*3+1];
+    }
+    var fill = Math.abs(area2 / 2) / Math.max(1, w * h);
+
+    if (fill > 0.86 && w > 15 && h > 15){
+      return { kind:"rect", pts:[b.minX,b.minY,0.6, b.maxX,b.minY,0.6, b.maxX,b.maxY,0.6,
+                                 b.minX,b.maxY,0.6, b.minX,b.minY,0.6] };
+    }
+
+    if (fill > 0.66 && fill <= 0.86 && mean > 8 &&
+        dev / mean < 0.22 && Math.min(w,h) / Math.max(w,h) > 0.45){
       var out = [];
       for (var a2 = 0; a2 <= 48; a2++){
         var th = a2 / 48 * Math.PI * 2;
@@ -2442,16 +2474,43 @@ var MarginCore = (function(){
       }
       return { kind:"circle", pts: out };
     }
-    /* closed, not round: how much of its own bounding box does it hug? */
-    var onEdge = 0;
-    for (var q = 0; q < n; q++){
-      var px = pts[q*3], py = pts[q*3+1];
-      var e = Math.min(px - b.minX, b.maxX - px, py - b.minY, b.maxY - py);
-      if (e < Math.max(w, h) * 0.09) onEdge++;
+
+    /* Three corners. Take the point furthest from the centre, then the point
+       furthest from that one, then the point furthest from the line between
+       them: for a triangle those are its vertices, whichever side you started
+       drawing from and whichever way round you went. It is only a triangle if
+       every sample then sits close to the path joining them. */
+    var far = 0, iA = 0;
+    for (var t1 = 0; t1 < n; t1++){
+      var d1 = Math.hypot(pts[t1*3] - cx, pts[t1*3+1] - cy);
+      if (d1 > far){ far = d1; iA = t1; }
     }
-    if (onEdge / n > 0.75 && w > 15 && h > 15){
-      return { kind:"rect", pts:[b.minX,b.minY,0.6, b.maxX,b.minY,0.6, b.maxX,b.maxY,0.6,
-                                 b.minX,b.maxY,0.6, b.minX,b.minY,0.6] };
+    var ax = pts[iA*3], ay = pts[iA*3+1];
+    var far2 = 0, iB = 0;
+    for (var t2 = 0; t2 < n; t2++){
+      var d2 = Math.hypot(pts[t2*3] - ax, pts[t2*3+1] - ay);
+      if (d2 > far2){ far2 = d2; iB = t2; }
+    }
+    var bx = pts[iB*3], by = pts[iB*3+1];
+    var far3 = 0, iC = 0;
+    for (var t3 = 0; t3 < n; t3++){
+      var d3 = distToSeg(pts[t3*3], pts[t3*3+1], ax, ay, bx, by);
+      if (d3 > far3){ far3 = d3; iC = t3; }
+    }
+    var ccx = pts[iC*3], ccy = pts[iC*3+1];
+    if (far2 > 20 && far3 > 12 && fill > 0.3 && fill < 0.68){
+      var tol = Math.max(7, Math.max(w, h) * 0.11);
+      var off = 0;
+      for (var t4 = 0; t4 < n; t4++){
+        var qx = pts[t4*3], qy = pts[t4*3+1];
+        var near = Math.min(distToSeg(qx, qy, ax, ay, bx, by),
+                            distToSeg(qx, qy, bx, by, ccx, ccy),
+                            distToSeg(qx, qy, ccx, ccy, ax, ay));
+        if (near > tol) off++;
+      }
+      if (off / n < 0.12){
+        return { kind:"triangle", pts:[ax,ay,0.6, bx,by,0.6, ccx,ccy,0.6, ax,ay,0.6] };
+      }
     }
     return null;
   }
@@ -5338,18 +5397,29 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          points a straight line does not need, and with them any chance to
          vary the width along it. */
       applySpeedWeight(st);
+      /* The shape is judged on the plain simplified stroke, never on the
+         smoothed one: smoothing exists to round corners off, which is exactly
+         what a square and a triangle are recognised BY. Detecting after it
+         meant a carefully drawn box often failed to be seen as one. */
+      var plain = C.roundPts(C.simplify(st.pts, 0.6), 1);
       /* Smooth before simplify, never after: simplify() throws away the very
          samples the average needs, so smoothing a simplified stroke moves the
          few remaining points a long way and bends the line. */
       st.pts = C.roundPts(C.simplify(C.smoothPts(st.pts, smoothStrength()), 0.6), 1);
       if (typeof paintPressure === "function") paintPressure();
       rulerSnap(st);
-      /* held still at the end? tidy the shape */
-      if (cfg.shapes && S.heldStill){
-        var shp = C.detectShape(st.pts);
-        if (shp){ st.pts = shp.pts; st.shaped = shp.kind; }
+      /* "hold" waits for you to rest the nib at the end, which keeps ordinary
+         handwriting safe. "always" tidies every stroke that looks like a
+         shape, the way Samsung Notes does. */
+      var mode = shapeMode();
+      if (mode !== "off" && (mode === "always" || S.heldStill)){
+        var shp = C.detectShape(plain);
+        if (shp){
+          st.pts = shp.pts; st.shaped = shp.kind;
+          if (mode === "always") hint("Tidied into a " + shp.kind + ". Undo puts it back.");
+        }
       }
-      S.heldStill = false;
+      S.heldStill = false; S.stillAt = null;
       S.undo.push(tagOp({ t:"add", s:st })); S.redo = []; clearTextRedo();
       S.redraw(); S.queueSave(); paintInkTools();
     };
@@ -5569,10 +5639,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         }
       }
       if (e.pointerType !== "pen") moveHold(e);
+      /* "Held still at the end of the stroke" used to restart its timer on
+         every single pointermove. A stylus resting on glass never stops
+         sending them — jitter of a fraction of a pixel, hundreds of times a
+         second — so the timer was cleared before it could ever finish and the
+         shape tidy could not fire at all. The clock is only restarted when
+         the nib has actually travelled somewhere. */
       if (S.drawing && !S.drawing.lassoing && !S.drawing.moving && !S.drawing.erasing){
-        clearTimeout(S.stillTimer);
-        S.heldStill = false;
-        S.stillTimer = setTimeout(function(){ S.heldStill = true; }, 420);
+        var sx = e.clientX, sy = e.clientY;
+        var far = !S.stillAt ||
+                  Math.abs(sx - S.stillAt.x) > 4 || Math.abs(sy - S.stillAt.y) > 4;
+        if (far){
+          S.stillAt = { x: sx, y: sy };
+          clearTimeout(S.stillTimer);
+          S.heldStill = false;
+          S.stillTimer = setTimeout(function(){ S.heldStill = true; }, 420);
+        }
       }
       if (touchGesture(S, e, "move")) return;
       if (fingerPanMove(S, e)) return;
@@ -5960,6 +6042,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var lo = zoomFloor(), hi = zoomCeil();
     z = Number(z) || 1;
     return z < lo ? lo : (z > hi ? hi : z);
+  }
+  /* off | hold | always. The old boolean setting maps onto "hold", so an
+     existing config keeps behaving the way it did. */
+  function shapeMode(){
+    if (cfg.shapeMode === "off" || cfg.shapeMode === "hold" || cfg.shapeMode === "always"){
+      return cfg.shapeMode;
+    }
+    return cfg.shapes === false ? "off" : "hold";
   }
   function smoothStrength(){
     var pct = Number(cfg.smooth);
@@ -6429,6 +6519,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     fontSize: 16,
     lineHeight: 28,
     shapes: true,
+    shapeMode: "hold",   /* off | hold | always */
     hoverDot: true,
     autoScroll: true,
     wakeLock: false,
@@ -6512,7 +6603,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function buildSettings(){
     $("setCollapseWrite").checked = cfg.collapseOnWrite;
     $("setCollapseType").checked = cfg.collapseOnType;
-    $("setShapes").checked = cfg.shapes;
+    $("setShapeMode").value = shapeMode();
     $("setHover").checked = cfg.hoverDot;
     $("setAutoScroll").checked = cfg.autoScroll;
     $("setWake").checked = cfg.wakeLock;
@@ -6574,7 +6665,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     bindCheck("setCollapseWrite", "collapseOnWrite");
     bindCheck("setCollapseType", "collapseOnType");
-    bindCheck("setShapes", "shapes");
+    $("setShapeMode").addEventListener("change", function(){
+      cfg.shapeMode = this.value;
+      cfg.shapes = (this.value !== "off");   /* keep the old key in step */
+      saveCfg();
+    });
     bindCheck("setHover", "hoverDot");
     bindCheck("setAutoScroll", "autoScroll");
     bindCheck("setPinch", "pinchZoom");
