@@ -116,13 +116,24 @@
     background:transparent; border:1px solid var(--rule); border-radius:3px; font-size:17px; line-height:1;
   }
 
-  /* ---------- shell / panes ---------- */
-  .shell{flex:1; min-height:0; display:flex}
-  .pane{display:flex; flex-direction:column; min-height:0; min-width:0}
-  .docstack{flex:1; min-height:0; display:flex; flex-direction:column}
+  /* ---------- shell / panes ----------
+     The bars inside the document pane are the widest things in the app, and
+     when one of them was too wide it did not just spill over its own pane: it
+     made the whole document wider than the window, and the browser answered
+     by scaling the entire page down to fit. That is why the app sat in the
+     corner surrounded by grey, and why it only did it with a page open —
+     those bars do not exist otherwise.
+     Two belts here. max-width stops any pane from reporting a width larger
+     than the shell, and overflow:hidden on the shell means an over-wide child
+     is clipped rather than allowed to stretch the document. */
+  .shell{flex:1; min-height:0; display:flex; width:100%; max-width:100%; overflow:hidden}
+  .pane{display:flex; flex-direction:column; min-height:0; min-width:0; max-width:100%}
+  .docstack{flex:1; min-height:0; display:flex; flex-direction:column; min-width:0; max-width:100%}
   .docstack[hidden]{display:none}
-  .rail{flex:0 0 250px; background:var(--panel); border-right:1px solid var(--rule)}
-  .list{flex:0 0 320px; background:var(--panel); border-right:1px solid var(--rule)}
+  /* 0 0 meant "never shrink": on a narrow screen the two side panes alone
+     demanded 570px before the page had any room at all */
+  .rail{flex:0 1 250px; min-width:0; background:var(--panel); border-right:1px solid var(--rule)}
+  .list{flex:0 1 320px; min-width:0; background:var(--panel); border-right:1px solid var(--rule)}
   .doc{flex:1}
 
   /* also wraps: this row gained Folder and Insert, which pushed the + off
@@ -211,9 +222,13 @@
      simply unreachable — there was no scrollbar to get at them either. */
   .docbar{
     flex:none; display:flex; align-items:center; gap:8px; flex-wrap:wrap;
-    padding:9px 14px;
+    padding:9px 14px; min-width:0; max-width:100%;
     border-bottom:1px solid var(--rule); background:var(--panel);
   }
+  /* every bar in the document pane, held inside the pane no matter what is
+     put on it later */
+  .docbar, .fmtbar, .inktools, .lassobar, .tagrow{min-width:0; max-width:100%}
+  .docbar > *, .fmtbar > *, .inktools > *{max-width:100%}
   #noteTitle{
     flex:1; min-width:0; padding:8px 10px; min-height:38px;
     font-family:var(--display); font-variation-settings:"wght" 600,"wdth" 85;
@@ -1662,7 +1677,10 @@ var MarginCore = (function(){
      the top level, so an older backup still imports unchanged. */
   var DB_VERSION = 3;      /* storage schema */
   var FORMAT     = 7;      /* export file format (7 adds files and audio) */
-  var BUILD      = "v12 \u00B7 2026-08-16";
+  /* The trailing bXX must match the CACHE line in sw.js. Without it the top
+     bar read the same on every build, so there was no way to tell a fix that
+     had not worked from one the tablet had simply not fetched yet. */
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b13";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
