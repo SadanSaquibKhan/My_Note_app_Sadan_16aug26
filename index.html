@@ -1186,6 +1186,7 @@
           <button type="button" id="tool_eraser" aria-pressed="false">Eraser</button>
           <button type="button" id="tool_lasso" aria-pressed="false">Lasso</button>
         </span>
+        <button type="button" class="ghost" id="lassoShapeBtn" title="Lasso shape: draw around, or drag a box">&#9723; Box</button>
         <input type="color" id="customColour" value="#1b3fe0" title="A colour of your own">
         <button type="button" class="ghost" id="rulerBtn" aria-pressed="false" title="Keep the stroke straight">Ruler</button>
         <span class="swatchrow" id="penPresets"></span>
@@ -1465,6 +1466,7 @@
         <button type="button" class="btn" id="pressBtn">Test what my pen reports</button>
         <div class="pressbox" id="pressBox" hidden>
           <p class="hint" id="pressOut">draw a stroke&hellip;</p>
+          <p class="hint" id="penBtnOut">hover or touch the pen here, then press its side button&hellip;</p>
         </div>
       </div>
       <div class="field">
@@ -4728,6 +4730,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     tool: "pen", colour: "ink", width: C.INK_WIDTHS[C.W_MED],
     input: "penmouse",        /* who may draw in write mode */
     eraseMode: "all",         /* all | marker | area */
+    lassoShape: "free",       /* free | rect */
     ruler: false,
     mode: "auto",             /* auto | write | type */
     lock: false,              /* one finger stops scrolling; two fingers pan */
@@ -4807,7 +4810,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           S.drawing = { moving:true, last:p };     /* drag what is already caught */
           return;
         }
-        lasso.surface = S; lasso.picked = []; lasso.poly = [p.x, p.y];
+        lasso.surface = S; lasso.picked = [];
+        /* A box selection is still a polygon, just one with four corners.
+           Keeping the same shape downstream means strokeInPoly, polyBounds,
+           the move, the scale and the drawing code all carry on unchanged. */
+        lasso.origin = p;
+        lasso.poly = (ink.lassoShape === "rect")
+          ? [p.x, p.y, p.x, p.y, p.x, p.y, p.x, p.y]
+          : [p.x, p.y];
         S.drawing = { lassoing:true };
         $("lassoBar").hidden = true;
         return;
@@ -4829,7 +4839,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var evs = (e.getCoalescedEvents ? e.getCoalescedEvents() : null);
       if (!evs || !evs.length) evs = [e];
       if (S.drawing.lassoing){
-        evs.forEach(function(ev){ var q = S.toPage(ev); lasso.poly.push(q.x, q.y); });
+        if (ink.lassoShape === "rect" && lasso.origin){
+          var q = S.toPage(e), o = lasso.origin;
+          lasso.poly = [o.x, o.y, q.x, o.y, q.x, q.y, o.x, q.y];
+        } else {
+          evs.forEach(function(ev){ var q2 = S.toPage(ev); lasso.poly.push(q2.x, q2.y); });
+        }
         S.redraw();
         return;
       }
@@ -5327,6 +5342,29 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
   });
   $("eraseMode").addEventListener("change", function(){ ink.eraseMode = this.value; });
+
+  /* ---- lasso shape: draw around it, or drag a box round it ----
+     Drawing around a thing is right for a diagram tucked among other
+     writing; a box is right for a block of lines, where tracing the outline
+     is fiddly and a rectangle is what you meant anyway. */
+  function paintLassoShape(){
+    var b = $("lassoShapeBtn");
+    if (!b) return;
+    var rect = ink.lassoShape === "rect";
+    b.innerHTML = rect ? "▢ Box" : "⬭ Free";
+    b.title = rect
+      ? "Lasso shape: drag a box. Tap for freehand."
+      : "Lasso shape: draw around it. Tap for a box.";
+    b.setAttribute("aria-pressed", rect ? "true" : "false");
+    b.classList.toggle("on", rect);
+  }
+  $("lassoShapeBtn").addEventListener("click", function(){
+    ink.lassoShape = (ink.lassoShape === "rect") ? "free" : "rect";
+    C.setMeta("lassoShape", ink.lassoShape);
+    paintLassoShape();
+    if (ink.tool !== "lasso"){ ink.tool = "lasso"; paintInkTools(); }
+    hint(ink.lassoShape === "rect" ? "Lasso: drag a box." : "Lasso: draw around it.");
+  });
   ["auto","write","type"].forEach(function(m){
     $("mode_" + m).addEventListener("click", function(){ setMode(m); });
   });
@@ -6410,12 +6448,27 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      eraser end as bit 32. Either one means "erase for now", and the previous
      tool comes straight back when it is let go. */
   var btn = { held: false, was: null };
+  /* What a barrel button looks like is not consistent across stacks:
+       buttons bit 2  (0x02)  barrel button, the spec answer
+       buttons bit 5  (0x20)  the eraser end of the pen
+       button 5 / 2          the transition event for either of those
+       pointerType "eraser"  some drivers report the end as its own type
+     Samsung's S Pen has additionally been seen reporting the barrel as the
+     middle button. All of them are taken to mean "erase for now", because a
+     false positive costs one undo and a false negative makes the feature look
+     broken — which is how this arrived. */
   function eraserButtonDown(e){
-    return !!(e.buttons & 32) || !!(e.buttons & 2) || e.button === 5 || e.button === 2;
+    if (e.pointerType === "eraser") return true;
+    var b = e.buttons || 0;
+    if (b & 32) return true;      /* eraser end */
+    if (b & 2)  return true;      /* barrel */
+    if (b & 4)  return true;      /* middle, as some S Pen builds report it */
+    return e.button === 5 || e.button === 2 || e.button === 1;
   }
   function applyPenButton(e){
-    if (e.pointerType !== "pen") return;
+    if (e.pointerType !== "pen" && e.pointerType !== "eraser") return;
     var down = eraserButtonDown(e);
+    penReport(e, down);
     if (down && !btn.held){
       btn.held = true;
       btn.was = ink.tool;
@@ -9239,7 +9292,52 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("pressBox").hidden = !$("pressBox").hidden;
     lastPressures = [];
     paintPressure();
+    penSeen = {};
+    paintPenReport();
   });
+
+  /* ---- what the pen is actually reporting ----
+     The side button either works or it does not, and from the outside there
+     is no way to tell whether the pen never sent the press or Margin failed
+     to read it. This shows the raw pointer fields as they arrive, so pressing
+     the button while this is open answers the question outright.
+     Samsung is the reason this is worth having: if Air Actions or "S Pen to
+     screen off memo" has claimed the button, the browser is never told at
+     all, and no amount of code here can help. */
+  var penSeen = {};
+  function penReport(e, erasing){
+    if (!$("pressBox") || $("pressBox").hidden) return;
+    penSeen.type = e.pointerType;
+    penSeen.button = (e.button === undefined ? "?" : e.button);
+    penSeen.buttons = (e.buttons === undefined ? "?" : e.buttons);
+    if (erasing) penSeen.everErased = true;
+    if (e.buttons) penSeen.everNonZero = true;
+    paintPenReport();
+  }
+  function paintPenReport(){
+    var el = $("penBtnOut");
+    if (!el) return;
+    if (!penSeen.type){
+      el.textContent = "hover or touch the pen here, then press its side button…";
+      el.classList.remove("bad");
+      return;
+    }
+    var bits = [];
+    var b = Number(penSeen.buttons) || 0;
+    if (b & 1) bits.push("tip");
+    if (b & 2) bits.push("barrel");
+    if (b & 4) bits.push("middle");
+    if (b & 32) bits.push("eraser end");
+    el.textContent =
+      "pointerType " + penSeen.type +
+      " · buttons " + penSeen.buttons + (bits.length ? " (" + bits.join(", ") + ")" : "") +
+      " · button " + penSeen.button +
+      (penSeen.everErased
+        ? " — the side button IS reaching Margin and switches to erase."
+        : " — no side-button press seen yet. If pressing it changes nothing here, " +
+          "Android has taken the button: turn off Air Actions / screen-off memo for the S Pen.");
+    el.classList.toggle("bad", !penSeen.everErased);
+  }
 
   /* ---- 4. typed shorthand that never fired ----
      v11 hung this on keyup and document.execCommand. On the tablet keyboard
@@ -9515,6 +9613,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     C.getMeta("recent", []).then(function(r){ state.recent = r || []; paintRecent(); });
     C.getMeta("recentSearch", []).then(function(r){ state.recentSearch = r || []; });
     C.getMeta("toolMem", null).then(function(m){ if (m) { toolMem = m; restoreTool(ink.tool); paintInkTools(); } });
+    C.getMeta("lassoShape", "free").then(function(v){
+      ink.lassoShape = (v === "rect") ? "rect" : "free";
+      if (typeof paintLassoShape === "function") paintLassoShape();
+    });
     C.getMeta("nbFold", {}).then(function(m){ state.nbFold = m || {}; });
     C.getMeta("gFold", {}).then(function(m){ state.gFold = m || {}; });
     loadOpenNbs();
