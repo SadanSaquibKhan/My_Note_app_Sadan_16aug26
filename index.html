@@ -428,6 +428,12 @@
   }
   .fmtbar .ghost.on, .fmtbar .segmented button.on{background:var(--ink); color:var(--panel)}
 
+  .pressbox{
+    margin-top:8px; padding:10px 12px; border:1px solid var(--rule); border-radius:4px;
+    background:var(--slab-2);
+  }
+  .pressbox .hint{margin:0}
+  .pressbox .hint.bad{color:var(--warn)}
   .recentsearch{border-bottom:1px solid var(--rule)}
   #body a.ilink.ext::after{content:" \2197"; font-size:.8em; opacity:.6}
   #playSpeed{font-family:var(--mono); font-size:11px; min-width:38px}
@@ -1223,12 +1229,21 @@
         </select>
       </div>
       <div class="field">
+        <button type="button" class="btn" id="pressBtn">Test what my pen reports</button>
+        <div class="pressbox" id="pressBox" hidden>
+          <p class="hint" id="pressOut">draw a stroke&hellip;</p>
+        </div>
+      </div>
+      <div class="field">
         <label for="setPressure">Pen pressure</label>
         <select id="setPressure">
           <option value="light">Light touch</option>
           <option value="normal">Normal</option>
           <option value="firm">Firm hand</option>
+          <option value="off">Even width (no pressure)</option>
         </select>
+        <p class="hint">If your device reports no pressure, Margin varies the
+        width by how fast you write instead.</p>
       </div>
       <div class="field">
         <label for="setUIScale">Interface size <b id="uiScaleOut"></b></label>
@@ -1439,7 +1454,7 @@ var MarginCore = (function(){
   var DB_NAME    = "margin";
   var DB_VERSION = 2;      /* storage schema */
   var FORMAT     = 7;      /* export file format (7 adds files and audio) */
-  var BUILD      = "v11 \u00B7 2026-08-15";
+  var BUILD      = "v12 \u00B7 2026-08-16";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -1912,11 +1927,35 @@ var MarginCore = (function(){
      anything non-positive as medium rather than drawing a hairline. */
   /* how firmly the reported pressure maps to stroke width. Some S Pens read
      light, some heavy; a firm hand wants a wider dynamic range. */
-  var pressureA = 0.40, pressureB = 0.85;
+  /* v12: the old range (0.40 + 0.85p) moved a medium nib between 1.1px and
+     2.5px across the whole pressure range \u2014 real, but too small to see.
+     These spans are roughly three times wider. */
+  var pressureA = 0.25, pressureB = 1.60;
   function setPressure(name){
-    if (name === "light"){ pressureA = 0.55; pressureB = 0.55; }
-    else if (name === "firm"){ pressureA = 0.22; pressureB = 1.15; }
-    else { pressureA = 0.40; pressureB = 0.85; }
+    if (name === "light"){ pressureA = 0.45; pressureB = 1.10; }
+    else if (name === "firm"){ pressureA = 0.10; pressureB = 2.20; }
+    else if (name === "off"){ pressureA = 1.00; pressureB = 0.00; }
+    else { pressureA = 0.25; pressureB = 1.60; }
+  }
+  function pressureRange(){ return { a: pressureA, b: pressureB }; }
+
+  /* Many devices report a flat 0.5 for every sample \u2014 a mouse always does,
+     and a pen forwarded through screen mirroring does too. Speed then stands
+     in for pressure: slow strokes come out heavy, fast ones light. */
+  function speedWeight(dist, ms){
+    if (!(ms > 0)) return 0.5;
+    var v = dist / ms;                     /* page units per millisecond */
+    var w = 1 - (v / 2.2);
+    return w < 0.12 ? 0.12 : (w > 1 ? 1 : w);
+  }
+  /* true when every sample carries the same value: no real pressure data */
+  function flatPressure(pts){
+    if (!pts || pts.length < 12) return false;
+    var first = pts[2];
+    for (var i = 5; i < pts.length; i += 3){
+      if (Math.abs(pts[i] - first) > 0.001) return false;
+    }
+    return true;
   }
   function penWidth(base, pressure){
     var p = (typeof pressure === "number" && pressure > 0) ? pressure : 0.5;
@@ -2987,7 +3026,9 @@ var MarginCore = (function(){
     getMeta:getMeta, setMeta:setMeta, allMeta:allMeta,
     BUILD:BUILD, notesSnapshot:notesSnapshot, practiceCounts:practiceCounts,
     previewImport:previewImport, exportNotebook:exportNotebook,
-    setPressure:setPressure, SYMBOLS:SYMBOLS, symbolFor:symbolFor, putRaw:putOne,
+    setPressure:setPressure, pressureRange:pressureRange,
+    speedWeight:speedWeight, flatPressure:flatPressure,
+    SYMBOLS:SYMBOLS, symbolFor:symbolFor, putRaw:putOne,
     readingTime:readingTime, looksLikeURL:looksLikeURL,
     cleanStrokes:cleanStrokes, wordCountText:wordCountText, inkDepth:inkDepth,
     exportBundle:exportBundle, importBundle:importBundle, validBundle:validBundle
@@ -3695,6 +3736,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       hint("Panels folded away while you type. Tap the edge tab to bring them back.");
     }
     if (typeof scheduleDraft === "function") scheduleDraft();
+    if (typeof runTypingAids === "function") runTypingAids();
   });
   $("body").addEventListener("blur", flush);
   $("noteTitle").addEventListener("blur", flush);
@@ -3837,6 +3879,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       }
       var st = C.newStroke(ink.tool, ink.colour, ink.width);
       st.pts.push(p.x, p.y, e.pressure || 0.5);
+      if (typeof notePressure === "function" && e.pointerType === "pen") notePressure(e.pressure || 0);
       S.drawing = { stroke: st };
       S.strokes.push(st);
     };
@@ -3894,7 +3937,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       }
       lastStrokeEnd = Date.now();
       if (S.name === "note") setTimeout(growForInk, 0);
+      /* Speed weighting must happen on the raw samples: simplify() drops
+         points a straight line does not need, and with them any chance to
+         vary the width along it. */
+      applySpeedWeight(st);
       st.pts = C.roundPts(C.simplify(st.pts, 0.6), 1);
+      if (typeof paintPressure === "function") paintPressure();
       rulerSnap(st);
       /* held still at the end? tidy the shape */
       if (cfg.shapes && S.heldStill){
@@ -4036,10 +4084,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   function updateTouchAction(){
-    var block = ink.lock || ink.penNear || ink.mode === "write";
+    /* Always none. Switching this on the fly lost a race with the browser's
+       own scroll when the pen came down without hovering first; one finger is
+       panned by hand instead (fingerPan*), which cannot be raced. */
     ["paper","pracPaper"].forEach(function(id){
       var el = $(id);
-      if (el) el.style.touchAction = block ? "none" : "pan-y";
+      if (el) el.style.touchAction = "none";
     });
     document.body.classList.toggle("penning", ink.penNear);
   }
@@ -4060,6 +4110,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (e.pointerType === "pen"){ penDetected(); applyPenButton(e); }
       else { handOverToTyping(e); if (S.name === "note") armHold(e); }
       if (touchGesture(S, e, "down")) return;
+      if (fingerPanDown(S, e)) return;
       if (!mayDraw(e)) return;
       e.preventDefault();
       if (sc.setPointerCapture){ try { sc.setPointerCapture(e.pointerId); } catch (err) {} }
@@ -4083,6 +4134,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         S.stillTimer = setTimeout(function(){ S.heldStill = true; }, 420);
       }
       if (touchGesture(S, e, "move")) return;
+      if (fingerPanMove(S, e)) return;
       if (!S.drawing) return;
       if (!mayDraw(e)) return;
       e.preventDefault();
@@ -4092,6 +4144,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     function up(e){
       cancelHold();
       touchGesture(S, e, "up");
+      fingerPanUp(e);
       if (e && e.pointerType === "pen"){
         var fake = { pointerType:"pen", buttons: 0, button: -1 };
         applyPenButton(fake);            /* button released with the pen lifting */
@@ -4807,6 +4860,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setLeft").checked = cfg.leftHand === true;
     $("setTheme").value = cfg.theme || "system";
     $("setPressure").value = cfg.pressure || "normal";
+    if (C.setPressure) C.setPressure(cfg.pressure || "normal");
     $("setUIScale").value = cfg.uiScale || 100;
     $("uiScaleOut").textContent = (cfg.uiScale || 100) + "%";
     $("setDocBar").checked = cfg.showDocBar;
@@ -7219,13 +7273,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var ch = e.data;
     if (ch === " "){ /* handled on input via symbol/space */ }
   });
-  $("body").addEventListener("keyup", function(e){
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key === " "){ applySymbol(); return; }
-    if (e.key === "*" || e.key === "`"){ applyInlineMarkdown(e.key); return; }
-    if (e.key === '"' || e.key === "'"){ applySmartQuote(e.key); return; }
-    if (e.key === ">" || e.key === "-" || e.key === "="){ applySymbol(); return; }
-  });
+  /* superseded in v12 by runTypingAids on the input event: keyup does not
+     report a usable key on the tablet's on-screen keyboard. */
 
   /* ---------- 5. insert today's date ---------- */
   function insertDate(){
@@ -7422,6 +7471,227 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
 
+  /* ================= v12: fixes from real use on the tablet ================= */
+
+  /* ---- 1. the app not filling the screen ----
+     Chrome's "Desktop site" switch makes it ignore the page's viewport tag and
+     lay out at a fixed narrow width instead, which is why the app sat in the
+     corner with grey around it. Margin is already built for touch, so the fix
+     is to turn that switch off; this detects it and says so. */
+  function desktopSiteOn(){
+    try {
+      if (!window.screen || !window.screen.width) return false;
+      var ratio = (window.screen.width * (window.devicePixelRatio || 1)) /
+                  (window.innerWidth * (window.devicePixelRatio || 1));
+      return ratio > 1.15 && window.innerWidth > 0;
+    } catch (e) { return false; }
+  }
+  function checkViewport(){
+    if (!desktopSiteOn()) return;
+    C.getMeta("hideDesktopTip", 0).then(function(h){
+      if (h) return;
+      $("noticeText").textContent =
+        "Chrome's \u201CDesktop site\u201D is on, so this page is laid out narrower " +
+        "than your screen. Turn it off in the \u22EE menu for the full screen.";
+      $("noticeOk").textContent = "Don't show again";
+      $("notice").hidden = false;
+      $("noticeOk").onclick = function(){
+        $("notice").hidden = true;
+        $("noticeOk").textContent = "OK";
+        $("noticeOk").onclick = null;
+        C.setMeta("hideDesktopTip", 1);
+      };
+    });
+  }
+
+  /* ---- 2. the pen scrolling for a moment before it writes ----
+     touch-action was only switched off once the pen had been noticed. If the
+     pen came down without hovering first, the browser had already begun a
+     scroll and switching the property mid-gesture cannot call it back. The
+     drawing surface is now permanently touch-action:none and one finger pans
+     it in JavaScript, so there is no browser gesture left to lose a race to. */
+  var pan = { id: null, x: 0, y: 0, top: 0, left: 0, on: false };
+  function fingerPanDown(S, e){
+    if (e.pointerType !== "touch") return false;
+    if (mayDraw(e)) return false;              /* this finger is drawing */
+    /* Pan exactly when the browser used to be allowed to: the lock, the pen
+       being near, and write mode all still mean a finger does nothing. */
+    if (ink.lock || ink.penNear || ink.mode === "write") return false;
+    if (Object.keys(gest.pts).length > 1) return false;  /* two fingers: pinch */
+    pan.id = e.pointerId; pan.on = true;
+    pan.x = e.clientX; pan.y = e.clientY;
+    pan.top = S.scroller.scrollTop; pan.left = S.scroller.scrollLeft;
+    return true;
+  }
+  function fingerPanMove(S, e){
+    if (!pan.on || e.pointerId !== pan.id) return false;
+    S.scroller.scrollTop = pan.top - (e.clientY - pan.y);
+    S.scroller.scrollLeft = pan.left - (e.clientX - pan.x);
+    return true;
+  }
+  function fingerPanUp(e){
+    if (!pan.on || e.pointerId !== pan.id) return false;
+    pan.on = false; pan.id = null;
+    return true;
+  }
+
+  /* ---- 3. pressure ----
+     The width curve was right but its range was too narrow to notice, and some
+     devices report a flat 0.5 for every sample anyway. Strokes that come back
+     flat are re-weighted by speed at the end, so they still taper. */
+  function applySpeedWeight(st){
+    if (cfg.pressure === "off") return;
+    var p = st.pts;
+    if (!C.flatPressure(p)) return;
+    st.flat = true;
+    for (var i = 3; i < p.length; i += 3){
+      var dx = p[i] - p[i - 3], dy = p[i + 1] - p[i - 2];
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      p[i + 2] = C.speedWeight(dist, 16);
+    }
+    if (p.length >= 6) p[2] = p[5];
+  }
+
+  /* a live readout, so it is obvious whether the device reports pressure */
+  var lastPressures = [];
+  function notePressure(v){
+    lastPressures.push(v);
+    if (lastPressures.length > 40) lastPressures.shift();
+  }
+  function paintPressure(){
+    var el = $("pressOut");
+    if (!el || $("pressBox").hidden) return;
+    if (!lastPressures.length){ el.textContent = "draw a stroke\u2026"; return; }
+    var lo = Math.min.apply(null, lastPressures);
+    var hi = Math.max.apply(null, lastPressures);
+    var flat = (hi - lo) < 0.02;
+    el.textContent = flat
+      ? "flat at " + hi.toFixed(2) + " \u2014 no pressure from this device; using speed instead"
+      : "reported " + lo.toFixed(2) + " to " + hi.toFixed(2) + " \u2014 pressure is working";
+    el.classList.toggle("bad", flat);
+  }
+  $("pressBtn").addEventListener("click", function(){
+    $("pressBox").hidden = !$("pressBox").hidden;
+    lastPressures = [];
+    paintPressure();
+  });
+
+  /* ---- 4. typed shorthand that never fired ----
+     v11 hung this on keyup and document.execCommand. On the tablet keyboard
+     keyup reports no usable key, and execCommand is unreliable, so nothing
+     happened. It now runs on the input event and edits the text node through a
+     Range, which works with any keyboard. */
+  function caretText(max){
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    var node = sel.anchorNode;
+    if (!node || node.nodeType !== 3) return null;
+    var off = sel.anchorOffset;
+    return { node: node, off: off, text: node.nodeValue.slice(0, off).slice(-(max || 80)) };
+  }
+  function replaceBeforeCaret(cut, insert){
+    var c = caretText(80);
+    if (!c || c.off < cut) return false;
+    var r = document.createRange();
+    r.setStart(c.node, c.off - cut);
+    r.setEnd(c.node, c.off);
+    r.deleteContents();
+    var t = document.createTextNode(insert);
+    r.insertNode(t);
+    var sel = window.getSelection();
+    var after = document.createRange();
+    after.setStart(t, t.length);
+    after.collapse(true);
+    sel.removeAllRanges(); sel.addRange(after);
+    return true;
+  }
+  function wrapBeforeCaret(cut, inner, tag){
+    var c = caretText(160);
+    if (!c || c.off < cut) return false;
+    var r = document.createRange();
+    r.setStart(c.node, c.off - cut);
+    r.setEnd(c.node, c.off);
+    r.deleteContents();
+    var el = document.createElement(tag);
+    el.textContent = inner;
+    r.insertNode(el);
+    var tail = document.createTextNode("\u200B");
+    if (el.parentNode) el.parentNode.insertBefore(tail, el.nextSibling);
+    var sel = window.getSelection();
+    var after = document.createRange();
+    after.setStart(tail, 1);
+    after.collapse(true);
+    sel.removeAllRanges(); sel.addRange(after);
+    return true;
+  }
+
+  function runSymbol(){
+    if (cfg.symbols === false) return false;
+    var c = caretText(20);
+    if (!c) return false;
+    var txt = c.text;
+    if (txt.slice(-1) !== " ") return false;      /* fires on the space */
+    var m = C.symbolFor(txt.slice(0, -1));
+    if (!m) return false;
+    return replaceBeforeCaret(m.cut + 1, m.ins + " ");
+  }
+  function runInlineMarkdown(){
+    if (cfg.markdown === false) return false;
+    var c = caretText(160);
+    if (!c) return false;
+    var txt = c.text;
+    var rules = [["**", "b"], ["`", "code"], ["*", "i"]];
+    for (var i = 0; i < rules.length; i++){
+      var mark = rules[i][0], tag = rules[i][1];
+      if (txt.slice(-mark.length) !== mark) continue;
+      var body = txt.slice(0, -mark.length);
+      if (mark === "*" && body.slice(-1) === "*") continue;   /* part of ** */
+      var openAt = body.lastIndexOf(mark);
+      if (openAt < 0) continue;
+      var inner = body.slice(openAt + mark.length);
+      if (!inner || inner.indexOf(mark) >= 0 || /^\s|\s$/.test(inner)) continue;
+      return wrapBeforeCaret(inner.length + mark.length * 2, inner, tag);
+    }
+    return false;
+  }
+  function runSmartQuotes(){
+    if (cfg.smartQuotes === false) return false;
+    var c = caretText(4);
+    if (!c) return false;
+    var txt = c.text;
+    var last = txt.slice(-1);
+    if (last !== '"' && last !== "'") return false;
+    var before = txt.slice(-2, -1);
+    var openish = !before || /[\s(\[{\u201C\u2018]/.test(before);
+    var rep = last === '"' ? (openish ? "\u201C" : "\u201D") : (openish ? "\u2018" : "\u2019");
+    return replaceBeforeCaret(1, rep);
+  }
+  /* one pass, cheapest test first; each returns true once it has acted */
+  function runTypingAids(){
+    if (!state.note) return;
+    if (runSymbol()) { markDirty(); return; }
+    if (runSmartQuotes()) { markDirty(); return; }
+    if (runInlineMarkdown()) { markDirty(); return; }
+  }
+
+  /* ---- 5. two and three finger taps ----
+     They were only completed on pointerup. When the browser claims a
+     multi-finger gesture it sends pointercancel instead, so the tap never
+     finished and nothing was undone. */
+  function tapEnd(e){
+    if (!tapG.pts[e.pointerId]) return;
+    delete tapG.pts[e.pointerId];
+    if (Object.keys(tapG.pts).length > 0) return;
+    var quick = Date.now() - tapG.downAt < 400;
+    if (quick && !tapG.moved && !ink.penNear){
+      if (tapG.max === 2){ globalUndo(); hint("Undo"); }
+      else if (tapG.max === 3){ globalRedo(); hint("Redo"); }
+    }
+    tapG.max = 0;
+  }
+  document.addEventListener("pointercancel", tapEnd, true);
+
+
   /* ---------------- theme ---------------- */
   function applyTheme(dark){
     document.body.classList.toggle("dark", !!dark);
@@ -7587,6 +7857,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }).then(function(){
     paintRecent();
     setTimeout(function(){ backupCheck(); storageCheck(); }, 900);
+    setTimeout(checkViewport, 2600);
   }).catch(function(e){
     say("Storage did not open: " + (e && e.message ? e.message : e) +
         " \u2014 private browsing blocks IndexedDB in some browsers.");
