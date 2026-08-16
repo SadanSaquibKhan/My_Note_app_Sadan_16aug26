@@ -707,6 +707,9 @@
   .pagewrap{position:relative; flex:1; min-height:0; display:flex}
   .inklayer{position:absolute; inset:0; width:100%; height:100%; pointer-events:none}
   body.penning .sheet{user-select:none; -webkit-user-select:none}
+  /* stops Android's long-press callout appearing over pictures and links
+     while Margin's own spot menu is opening */
+  .paper, .paper img, .paper figure{-webkit-touch-callout:none}
   body.drawing{cursor:crosshair}
 
   #body ul.todolist{list-style:none; padding-left:30px}
@@ -832,6 +835,11 @@
     font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-2);
   }
   .docfoot .grow{flex:1}
+  /* The footer carries Duplicate / Move / Delete, which act on the note as a
+     whole, plus its dates and counts — all of it reference, none of it needed
+     mid-sentence. When the panels fold away to write, it goes with them and
+     gives the line back to the page. body.keepfoot opts out. */
+  body[data-focus="1"]:not(.keepfoot) .docfoot{display:none}
   .danger:hover{border-color:var(--warn); color:var(--warn)}
 
   .blank{
@@ -1429,6 +1437,8 @@
         <label class="check"><input type="checkbox" id="setAutoScroll"> Scroll on when I write near the bottom</label>
         <label class="check"><input type="checkbox" id="setPinch"> Pinch with two fingers to zoom</label>
         <label class="check"><input type="checkbox" id="setPageFlow"> Keep scrolling past the end to reach the next page</label>
+        <label class="check"><input type="checkbox" id="setHints"> Show the small passing messages (&ldquo;Zoom unlocked&rdquo;, &ldquo;Undo&rdquo;&hellip;)</label>
+        <label class="check"><input type="checkbox" id="setKeepFoot"> Keep the note footer on screen while writing</label>
         <label class="check"><input type="checkbox" id="setWake"> Keep the screen awake</label>
         <label class="check"><input type="checkbox" id="setTapType"> Tapping blank page starts typing there</label>
         <label class="check"><input type="checkbox" id="setSpell"> Check spelling as I type</label>
@@ -4659,7 +4669,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     markDirty();
     clearTimeout(footTimer);
     footTimer = setTimeout(paintFoot, 220);      /* counting is not urgent */
-    if (cfg.collapseOnType && !ink.focusOverride && !isFocus()){
+    /* same reasoning as the pen path: typing again is a fresh intent, and the
+       flag made this fire only on the first page you touched */
+    if (cfg.collapseOnType && !isFocus()){
       setFocus(true);
       hint("Panels folded away while you type. Tap the edge tab to bring them back.");
     }
@@ -5037,7 +5049,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       paintModeChip();
       $("inkTools").hidden = false;
       setTypingEnabled(false);
-      if (ink.hideLists && !ink.focusOverride){
+      /* Deliberately not gated on ink.focusOverride any more.
+         Bringing the panels back used to set that flag for good, so writing
+         again on the SAME page never folded them; only moving to another page
+         cleared it, which is why it looked like the fold worked on some pages
+         and not others. Putting the pen down is a fresh statement of intent
+         each time, so it folds each time. Someone who wants the panels to
+         stay has the "Collapse the side panels when the pen starts" setting
+         to turn the whole behaviour off. */
+      if (ink.hideLists){
         setFocus(true);
         hint("Panels folded away. Tap the edge tab on the left to bring them back.");
       }
@@ -5796,6 +5816,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     backupGap: 1,
     defaultZoom: 1,
     pageFlow: true,    /* scrolling past the end carries on to the next page */
+    keepFoot: false,   /* keep the note footer on screen even while writing */
+    hints: true,       /* the small passing messages along the bottom */
     smooth: 20,        /* handwriting smoothing, per cent; 0 turns it off */
     curves: true,      /* draw strokes as curves, not straight joins */
     zoomMin: 50,       /* zoom limits, per cent, honoured by buttons and pinch */
@@ -5819,6 +5841,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     document.documentElement.style.setProperty("--lead", cfg.lineHeight + "px");
     ink.hideLists = cfg.collapseOnWrite;
     applyTemplate(cfg.template);
+    document.body.classList.toggle("keepfoot", cfg.keepFoot === true);
     if (typeof applyBars === "function") applyBars();
     if (typeof applySpell === "function") applySpell();
     if (typeof applyHand === "function") applyHand();
@@ -5847,6 +5870,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setWake").checked = cfg.wakeLock;
     $("setPinch").checked = cfg.pinchZoom;
     $("setPageFlow").checked = cfg.pageFlow !== false;
+    $("setHints").checked = cfg.hints !== false;
+    $("setKeepFoot").checked = cfg.keepFoot === true;
     $("setTapType").checked = cfg.tapToType;
     $("setSpell").checked = cfg.spellcheck !== false;
     $("setSymbols").checked = cfg.symbols !== false;
@@ -5895,6 +5920,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     bindCheck("setAutoScroll", "autoScroll");
     bindCheck("setPinch", "pinchZoom");
     bindCheck("setPageFlow", "pageFlow");
+    bindCheck("setHints", "hints");
+    bindCheck("setKeepFoot", "keepFoot");
     bindCheck("setTapType", "tapToType");
     $("setSpell").addEventListener("change", function(){
       cfg.spellcheck = this.checked; saveCfg(); applySpell();
@@ -7225,6 +7252,31 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      spot you are holding, rather than to a toolbar at the top of the screen. */
   var hold = { timer: null, x: 0, y: 0, moved: false };
 
+  /* ---- the browser's own menu must not gatecrash the long press ----
+     Holding a finger or the pen on the page raised Chrome's context menu
+     (Back / Refresh / Save as / Inspect) on top of Margin's own spot menu.
+     A blanket preventDefault would also kill the right-click menu on the
+     laptop, where it is genuinely useful — spelling suggestions live there.
+     So the last pointer that touched the screen decides: pen and finger are
+     Margin's, the mouse is left alone. contextmenu itself carries no
+     pointerType, which is why it has to be remembered from pointerdown. */
+  var lastPointerKind = "mouse";
+  document.addEventListener("pointerdown", function(e){
+    lastPointerKind = e.pointerType || "mouse";
+  }, true);
+
+  $("paper").addEventListener("contextmenu", function(e){
+    if (lastPointerKind === "touch" || lastPointerKind === "pen"){
+      e.preventDefault();
+      return;
+    }
+    /* a mouse right-click while our own menu is up: ours wins */
+    if (!$("holdMenu").hidden || ($("imgMenu") && !$("imgMenu").hidden)) e.preventDefault();
+  });
+  /* Android also raises a long-press "callout" over images and links that is
+     separate from contextmenu, and it cannot be cancelled from script. */
+  $("paper").style.webkitTouchCallout = "none";
+
   function armHold(e){
     clearTimeout(hold.timer);
     hold.x = e.clientX; hold.y = e.clientY; hold.moved = false;
@@ -8334,7 +8386,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* ---- 3. say what just happened when a bar folds itself ---- */
   var hintTimer = null;
+  /* The passing messages along the bottom ("Zoom unlocked", "Undo", …).
+     Switchable off in Settings, because once the gestures are in the fingers
+     the running commentary is just something moving in the corner of the eye.
+     Only these are silenced: say() carries the things that actually need an
+     answer and is never suppressed. */
   function hint(msg){
+    if (cfg && cfg.hints === false) return;
     var h = $("hint");
     h.textContent = msg;
     h.hidden = false;
