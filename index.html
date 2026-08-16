@@ -212,6 +212,7 @@
   }
   .when{flex:none; font-family:var(--mono); font-size:10.5px; letter-spacing:.04em; color:var(--ink-2); text-align:right}
   .pinmark{flex:none; color:var(--live); font-size:12px}
+  .pinmark.conflictmark{color:var(--warn); font-weight:700}
 
   .empty{padding:22px 16px; color:var(--ink-2); font-size:13.5px; line-height:1.55}
   .empty b{color:var(--ink); font-weight:600}
@@ -1215,6 +1216,7 @@
         <button type="button" class="ghost" id="imgBtn" title="Insert a picture">Image</button>
         <button type="button" class="ghost" id="camBtn" title="Take a photo">Camera</button>
         <button type="button" class="ghost" id="fileBtn" title="Attach a PDF or any file">Attach</button>
+        <button type="button" class="ghost" id="pdfPagesBtn" title="Bring a PDF in as pages you can write on">PDF&#8594;pages</button>
         <button type="button" class="ghost" id="quoteBtn">&ldquo;&rdquo;</button>
         <button type="button" class="ghost" id="ruleBtn">&mdash;</button>
         <button type="button" class="ghost" id="foldBtn" title="Collapsible section">&#9662;</button>
@@ -1722,13 +1724,19 @@
           <button type="button" class="btn" id="importBtn">Open a backup file</button>
           <label for="importMode" style="margin-top:8px;display:block">If a note exists in both</label>
           <select id="importMode">
+            <option value="both">Keep both copies, side by side (safest)</option>
             <option value="newest">Keep whichever was edited last</option>
             <option value="mine">Always keep this device's copy</option>
             <option value="theirs">Always take the file's copy</option>
           </select>
         </div>
         <p class="hint" id="dataStat"></p>
-        <p class="hint">A backup is one file holding every notebook and note. Opening one merges it in &mdash; whichever copy of a note was edited last wins. Full export with images and ink arrives in a later stage.</p>
+        <p class="hint"><b>Keep both</b> never loses writing: where a page was
+        edited on both devices, yours stays exactly as it is and the other
+        device's copy arrives beside it, marked &ldquo;from&hellip;&rdquo; and
+        sitting next to its twin in the page order so it is easy to compare
+        the two and merge them by hand. The other three settings pick one copy
+        and discard the other.</p>
       </div>
       <div class="field">
         <label>Storage</label>
@@ -1745,6 +1753,7 @@
 <input type="file" id="importFile" accept="application/json,.json" hidden>
 <input type="file" id="imgFile" accept="image/*" multiple hidden>
 <input type="file" id="camFile" accept="image/*" capture="environment" hidden>
+<input type="file" id="pdfFile" accept="application/pdf,.pdf" hidden>
 <input type="file" id="anyFile" multiple hidden>
 <div class="favbar" id="favBar" hidden>
   <button type="button" class="favgrip" id="favGrip" aria-label="Move the favourites bar" title="Drag to move">&#8942;&#8942;</button>
@@ -1785,7 +1794,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b15";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b16";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -2469,14 +2478,28 @@ var MarginCore = (function(){
      Pages with no number in the title keep to creation order and sit after
      the numbered ones, which is the only sensible place for them. */
   function sortPages(list){
+    /* A page brought in from the other device as a conflicting twin sorts by
+       the page it is a copy OF, not by its own name — otherwise "p37 (from
+       the tablet)" has no number on the end and falls to the bottom of the
+       notebook, which is exactly the "where did that page go" problem the
+       keep-both merge exists to avoid. */
+    var byId = {};
+    list.forEach(function(n){ if (n && n.id) byId[n.id] = n; });
+    function keyFor(n){
+      var twin = (n && n.conflictOf && byId[n.conflictOf]) ? byId[n.conflictOf] : null;
+      var src = twin || n;
+      return { p: splitSeries(src && src.title), at: (src && src.createdAt) || 0, second: twin ? 1 : 0 };
+    }
     return list.slice().sort(function(a, b){
-      var pa = splitSeries(a && a.title), pb = splitSeries(b && b.title);
+      var ka = keyFor(a), kb = keyFor(b);
+      var pa = ka.p, pb = kb.p;
       if (pa && pb){
         if (pa.stem === pb.stem && pa.num !== pb.num) return pa.num - pb.num;
         if (pa.stem !== pb.stem) return pa.stem < pb.stem ? -1 : 1;
       } else if (pa && !pb) return -1;
       else if (!pa && pb) return 1;
-      return (a.createdAt || 0) - (b.createdAt || 0);
+      if (ka.at !== kb.at) return ka.at - kb.at;
+      return ka.second - kb.second;      /* the original first, its twin after */
     });
   }
 
@@ -3071,12 +3094,16 @@ var MarginCore = (function(){
   /* A recording plus the wall-clock instant it started. Every stroke already
      carries the moment it was drawn, so the offset into the audio is just a
      subtraction — no separate sync track needed. */
-  function createAudio(noteId, blob, startedAt, dur){
+  function createAudio(noteId, blob, startedAt, dur, pages){
     var now = Date.now();
     return open().then(function(){
       return putOne("assets", {
         id: newId("aud"), noteId: noteId, kind: "audio",
         blob: blob, startedAt: startedAt, dur: dur || 0,
+        /* which page was open when, so playback can follow across pages.
+           Recordings made before this existed simply have none, and behave
+           exactly as they always did. */
+        pages: Array.isArray(pages) ? pages : [],
         createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
       });
     });
@@ -3086,6 +3113,25 @@ var MarginCore = (function(){
       return l.filter(function(a){ return a.kind === "audio"; })
               .sort(function(a,b){ return a.startedAt - b.startedAt; });
     });
+  }
+  /* Every recording that touched this page: the ones filed against it, plus
+     any whose page track passed through it. Without this, a recording that
+     began on p1 was invisible from p2 even though it covers it. */
+  function audioTouching(noteId){
+    return getAll("assets").then(function(l){
+      return l.filter(function(a){
+        if (a.kind !== "audio" || a.deletedAt) return false;
+        if (a.noteId === noteId) return true;
+        return (a.pages || []).some(function(p){ return p && p.noteId === noteId; });
+      }).sort(function(a,b){ return a.startedAt - b.startedAt; });
+    });
+  }
+  /* which page the recording was on at this moment */
+  function pageAtMoment(audio, whenMs){
+    var pages = (audio && audio.pages) || [];
+    var found = null;
+    pages.forEach(function(p){ if (p && p.at <= whenMs) found = p.noteId; });
+    return found || (audio && audio.noteId) || null;
   }
   function filesFor(noteId){
     return assetsFor(noteId).then(function(l){
@@ -3521,6 +3567,9 @@ var MarginCore = (function(){
       if (!Array.isArray(r.strokes)) r.strokes = [];
       if (!r.kind) r.kind = "ink";
       if (!r.h) r.h = 360;
+      /* a recording's page track is plain JSON, so it survives the backup
+         round-trip on its own; this only fixes up an older file that has none */
+      if (r.kind === "audio" && !Array.isArray(r.pages)) r.pages = [];
       if (r.data && !r.blob){
         r.blob = dataToBlob(r.data);
         delete r.data;
@@ -3539,6 +3588,7 @@ var MarginCore = (function(){
       if (!Array.isArray(r.tags)) r.tags = [];
       if (r.deletedVia === undefined) r.deletedVia = null;
       if (r.bookmark === undefined) r.bookmark = null;
+      if (r.conflictOf === undefined) r.conflictOf = null;
     }
     if (kind === "group"){
       if (r.parentId === undefined) r.parentId = null;
@@ -3582,8 +3632,35 @@ var MarginCore = (function(){
         var have = [{}, {}, {}, {}, {}];
         cur.forEach(function(list, i){ list.forEach(function(x){ have[i][x.id] = x; }); });
 
-        var res = {added:0, updated:0, skipped:0, deleted:0};
+        var res = {added:0, updated:0, skipped:0, deleted:0, conflicts:0};
         var write = [[], [], [], [], []];
+
+        /* ---- a page edited on both devices ----
+           Last-writer-wins is fine until the two copies genuinely differ, and
+           then it is a silent loss: the older side's writing is simply gone
+           and nothing says so. In "keep both" the incoming copy is kept as a
+           NEW page beside yours, named so the pair is obvious and sorted so
+           it lands next to its twin rather than at the end of the notebook.
+           Only pages are treated this way. A notebook or a folder is a name
+           and a colour, so a duplicate of one is noise rather than rescue. */
+        function conflicting(a, b2){
+          if (!a || !b2) return false;
+          if ((a.lastEdited || 0) === (b2.lastEdited || 0)) return false;
+          return (a.html || "") !== (b2.html || "") ||
+                 (a.title || "") !== (b2.title || "");
+        }
+        /* Opening the same backup twice must not leave two identical twins.
+           The twin gets a fresh id each time, so it cannot be recognised by
+           id — it is recognised by what it is a copy of, and the moment that
+           copy was last edited. */
+        var twinIndex = {};
+        Object.keys(have[1]).forEach(function(k){
+          var n = have[1][k];
+          if (n && n.conflictOf) twinIndex[n.conflictOf + "@" + (n.lastEdited || 0)] = true;
+        });
+        function twinAlreadyHere(x){
+          return !!twinIndex[x.id + "@" + (x.lastEdited || 0)];
+        }
 
         [inNb, inNt, inPr, inAs, inGp].forEach(function(incoming, i){
           incoming.forEach(function(x){
@@ -3591,9 +3668,20 @@ var MarginCore = (function(){
             if (!mine){
               write[i].push(x);
               if (x.deletedAt) res.deleted++; else res.added++;
+            } else if (mode === "both" && i === 1 && !x.deletedAt && !mine.deletedAt &&
+                       conflicting(mine, x) && !twinAlreadyHere(x)){
+              /* keep yours untouched, and bring theirs in alongside it */
+              var twin = {};
+              Object.keys(x).forEach(function(k){ twin[k] = x[k]; });
+              twin.id = newId("nt");
+              twin.conflictOf = x.id;
+              twin.title = (x.title || "untitled") + " (from " + (x.editedOn || "the other device") + ")";
+              twin.bookmark = null;
+              write[i].push(twin);
+              res.conflicts++;
             } else {
               var takeIt = (mode === "theirs") ? true
-                         : (mode === "mine") ? false
+                         : (mode === "mine" || mode === "both") ? false
                          : (x.lastEdited || 0) > (mine.lastEdited || 0);
               if (takeIt && (x.lastEdited || 0) !== (mine.lastEdited || 0) || (takeIt && mode === "theirs")){
                 write[i].push(x);
@@ -3661,6 +3749,7 @@ var MarginCore = (function(){
     createImage:createImage, imagesFor:imagesFor, blobToData:blobToData, dataToBlob:dataToBlob,
     createFile:createFile, filesFor:filesFor, createAudio:createAudio, audioFor:audioFor,
     offsetInAudio:offsetInAudio, audioAt:audioAt,
+    audioTouching:audioTouching, pageAtMoment:pageAtMoment,
     practiceAll:practiceAll, weakNotes:weakNotes,
     snippet:snippet, search:search, practicePages:practicePages,
     TEMPLATES:TEMPLATES,
@@ -4184,6 +4273,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         var st = document.createElement("span"); st.className = "pinmark"; st.textContent = "\u2605";
         b.appendChild(st);
       }
+      if (n.bookmark){
+        var bm = document.createElement("span"); bm.className = "pinmark";
+        bm.textContent = "\u2691"; bm.title = n.bookmark;
+        b.appendChild(bm);
+      }
+      if (n.conflictOf){
+        /* the copy that came from the other device, so the pair is obvious
+           at a glance in the list rather than only in its title */
+        var cm = document.createElement("span");
+        cm.className = "pinmark conflictmark";
+        cm.textContent = "\u21c4";
+        cm.title = "Came from another device; its twin is just above.";
+        b.appendChild(cm);
+      }
       var pn = state.prac && state.prac[n.id];
       if (pn){
         var pm = document.createElement("span"); pm.className = "pinmark";
@@ -4248,6 +4351,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       hydrateFiles();
       loadAudio();
       pushRecent(state.note.id);
+      /* mid-recording page turns become part of the recording's page track,
+         and a page opened during one gets its paragraphs stamped so tapping
+         them can seek the audio later */
+      try {
+        if (typeof noteRecordingPage === "function") noteRecordingPage(state.note.id);
+        if (typeof rec === "object" && rec && rec.mr && typeof stampBlocks === "function"){
+          setTimeout(stampBlocks, 60);
+        }
+        /* a page turn you made yourself, while something is playing, means
+           "leave me here" — not "drag me back to the recording" */
+        if (typeof play === "object" && play && play.audio &&
+            typeof follow === "object" && follow && !follow.turning &&
+            typeof pauseAudioFollow === "function"){
+          pauseAudioFollow();
+        }
+      } catch (e) { /* audio is a nicety; opening the page is not */ }
       C.markRevised(state.note.id);
       if (!$("outlinePane").hidden) paintOutline();
       if (prac.open) closePractice();
@@ -7136,6 +7255,119 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     setTypingEnabled(true);
   }
 
+  /* ================= PDF straight into the notebook =================
+     Not an attachment that hands off to another app: each page of the PDF
+     becomes an ordinary page of the notebook, with the rendered page as a
+     locked full-width picture. The ink layer already floats above the page
+     content, so writing on top of it needs no new machinery at all — and
+     because each one is a real page, the page numbering, the bookmarks, the
+     scroll-into-the-next-page and everything else work on them unchanged.
+
+     pdf.js is fetched the first time it is needed rather than at startup: it
+     is 1.4MB, and most sessions never import a PDF. The service worker keeps
+     it afterwards, so the second import works with no network. */
+  var PDF_LIB = "./pdf.min.js", PDF_WORKER = "./pdf.worker.min.js";
+  var pdfLoading = null;
+  function loadPdfJs(){
+    if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+    if (pdfLoading) return pdfLoading;
+    pdfLoading = new Promise(function(res, rej){
+      var s = document.createElement("script");
+      s.src = PDF_LIB;
+      s.onload = function(){
+        if (!window.pdfjsLib){ rej(new Error("The PDF reader did not start.")); return; }
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDF_WORKER;
+        res(window.pdfjsLib);
+      };
+      s.onerror = function(){
+        pdfLoading = null;
+        rej(new Error("Could not load the PDF reader. Open the app online once, " +
+                      "then it will work offline."));
+      };
+      document.head.appendChild(s);
+    });
+    return pdfLoading;
+  }
+
+  var PDF_WIDTH = 1500;        /* rendered pixels across; legible when zoomed */
+  var PDF_MAX_PAGES = 200;
+
+  function pdfPageToBlob(page){
+    /* scale chosen from the page's own size so a big drawing and a small
+       letter both come out at a readable width */
+    var base = page.getViewport({ scale: 1 });
+    var scale = Math.min(4, Math.max(0.5, PDF_WIDTH / base.width));
+    var vp = page.getViewport({ scale: scale });
+    var cv = document.createElement("canvas");
+    cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+    var ctx = cv.getContext("2d");
+    if (!ctx) return Promise.reject(new Error("This device cannot render PDF pages."));
+    /* white behind it: PDFs are transparent, and a dark theme would other-
+       wise show black text on a black page */
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    return page.render({ canvasContext: ctx, viewport: vp }).promise.then(function(){
+      return new Promise(function(res){
+        cv.toBlob(function(b){ res({ blob: b, w: cv.width, h: cv.height }); }, "image/jpeg", 0.82);
+      });
+    });
+  }
+
+  function importPdfAsPages(file){
+    if (!state.nbId){ say("Open a notebook first."); return Promise.resolve(); }
+    var nbId = state.nbId;
+    var stem = (file.name || "PDF").replace(/\.pdf$/i, "").slice(0, 40);
+    say("Reading " + stem + "…");
+    return loadPdfJs().then(function(pdfjsLib){
+      return file.arrayBuffer();
+    }).then(function(buf){
+      return window.pdfjsLib.getDocument({ data: buf }).promise;
+    }).then(function(doc){
+      var total = Math.min(doc.numPages, PDF_MAX_PAGES);
+      if (doc.numPages > PDF_MAX_PAGES){
+        say("This PDF has " + doc.numPages + " pages; bringing in the first " +
+            PDF_MAX_PAGES + ".");
+      }
+      var firstId = null;
+      /* strictly one page at a time. Rendering them in parallel puts every
+         page's bitmap in memory at once, which a tablet will not survive on
+         a long document. */
+      var chain = Promise.resolve();
+      for (var i = 1; i <= total; i++){
+        (function(n){
+          chain = chain.then(function(){
+            $("noticeText").textContent = "Bringing in page " + n + " of " + total + "…";
+            $("notice").hidden = false;
+            return doc.getPage(n).then(pdfPageToBlob).then(function(r){
+              if (!r.blob) throw new Error("Page " + n + " would not render.");
+              return C.createNote(nbId, stem + " p" + n).then(function(note){
+                if (!firstId) firstId = note.id;
+                return C.createImage(note.id, r.blob, r.w, r.h).then(function(asset){
+                  var html = '<figure class="imgblock" contenteditable="false" ' +
+                             'data-img="' + asset.id + '" data-pct="100" data-lock="1"></figure>' +
+                             "<p><br></p>";
+                  return C.saveNote(note.id, { html: html });
+                });
+              });
+            });
+          });
+        })(i);
+      }
+      return chain.then(function(){ return { firstId: firstId, total: total, stem: stem }; });
+    }).then(function(r){
+      $("notice").hidden = true;
+      return refreshLists().then(function(){
+        if (r.firstId) go({ nbId: nbId, noteId: r.firstId });
+        say(r.total + " page" + (r.total === 1 ? "" : "s") + " of " + r.stem +
+            " added. Write on them like any other page — the picture is locked " +
+            "so it cannot be dragged out of place.");
+      });
+    }).catch(function(e){
+      $("notice").hidden = true;
+      say("Could not bring in that PDF: " + (e && e.message ? e.message : e));
+    });
+  }
+
   /* ---- images ---- */
   var MAX_IMG = 1600;
 
@@ -7643,6 +7875,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   $("imgBtn").addEventListener("click", function(){ $("imgFile").click(); });
   $("camBtn").addEventListener("click", function(){ $("camFile").click(); });
+  $("pdfPagesBtn").addEventListener("click", function(){ $("pdfFile").click(); });
+  $("pdfFile").addEventListener("change", function(){
+    var f = (this.files || [])[0];
+    this.value = "";
+    if (f) importPdfAsPages(f);
+  });
   function wireFilePicker(id){
     $(id).addEventListener("change", function(){
       var files = Array.prototype.slice.call(this.files || []);
@@ -7952,6 +8190,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       ["Insert a picture", function(){ $("imgFile").click(); }],
       ["Take a photo", function(){ $("camFile").click(); }],
       ["Attach a PDF or file", function(){ $("anyFile").click(); }],
+      ["Bring a PDF in as pages…", function(){ $("pdfFile").click(); }],
       ["Start a recording", function(){ $("recBtn").click(); }]
     ];
     items.forEach(function(it){
@@ -8239,7 +8478,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
 
   /* ---- voice, synced to what you were writing ---- */
-  var rec = { mr: null, chunks: [], startedAt: 0, asset: null };
+  /* `pages` is the track of which page was open at which moment during the
+     recording. It is what lets playback follow you across page turns, and
+     what lets every page the recording covers show it. */
+  var rec = { mr: null, chunks: [], startedAt: 0, asset: null, noteId: null, pages: [] };
+
+  /* called whenever the open page changes; a no-op unless recording */
+  function noteRecordingPage(noteId){
+    if (!rec.mr || !noteId) return;
+    var last = rec.pages[rec.pages.length - 1];
+    if (last && last.noteId === noteId) return;
+    rec.pages.push({ at: Date.now(), noteId: noteId });
+  }
   var play = { audio: null, asset: null, raf: 0 };
 
   $("recBtn").addEventListener("click", function(){
@@ -8250,13 +8500,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream){
       rec.chunks = [];
       rec.startedAt = Date.now();
+      /* Whose recording this is, decided at the start. It used to be read at
+         STOP time, so a recording spanning pages 1 to 4 was filed against
+         page 4 alone and pages 1-3 showed no recording at all. */
+      rec.noteId = state.note && state.note.id;
+      rec.pages = rec.noteId ? [{ at: rec.startedAt, noteId: rec.noteId }] : [];
       rec.mr = new MediaRecorder(stream);
       rec.mr.ondataavailable = function(e){ if (e.data && e.data.size) rec.chunks.push(e.data); };
       rec.mr.onstop = function(){
         stream.getTracks().forEach(function(t){ t.stop(); });
         var blob = new Blob(rec.chunks, { type: rec.mr.mimeType || "audio/webm" });
         var dur = (Date.now() - rec.startedAt) / 1000;
-        var noteId = state.note && state.note.id;
+        var noteId = rec.noteId || (state.note && state.note.id);
+        var pages = rec.pages.slice();
         rec.mr = null;
         document.body.classList.remove("recording");
         clearInterval(recTick);
@@ -8264,7 +8520,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         $("recBtn").classList.remove("on");
         $("recBtn").textContent = "Record";
         if (!noteId) return;
-        C.createAudio(noteId, blob, rec.startedAt, dur).then(function(){ loadAudio(); });
+        C.createAudio(noteId, blob, rec.startedAt, dur, pages).then(function(){ loadAudio(); });
       };
       rec.mr.start();
       requestWake();
@@ -8296,7 +8552,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   function loadAudio(){
     if (!state.note) return Promise.resolve();
-    return C.audioFor(state.note.id).then(function(list){
+    /* every recording that covers this page, not only the ones filed here */
+    return C.audioTouching(state.note.id).then(function(list){
       state.audio = list;
       var bar = $("audioBar");
       bar.hidden = !list.length;
@@ -8338,16 +8595,46 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("audioStop").addEventListener("click", stopAudio);
 
   /* highlight the paragraph, and un-fade the strokes, from that moment */
+  /* Following the audio across a page turn.
+     `turning` stops the jump firing again on every timeupdate while the new
+     page is still loading, and `heldOff` lets you take control back: if you
+     deliberately turn the page yourself while something is playing, the
+     follow stands down for a few seconds instead of yanking you back. */
+  var follow = { turning: false, heldOff: 0 };
+  function pauseAudioFollow(){ follow.heldOff = Date.now() + 6000; }
+
   function followAudio(){
     if (!play.audio || !play.asset) return;
     var nowMs = play.asset.startedAt + play.audio.currentTime * 1000;
+
+    /* the page that was open at this moment of the recording */
+    var want = C.pageAtMoment(play.asset, nowMs);
+    if (want && want !== state.noteId && !follow.turning && Date.now() > follow.heldOff){
+      follow.turning = true;
+      var nb = state.nbId;
+      flush().then(function(){
+        go({ nbId: nb, noteId: want });
+        /* let the page mount and its ink load before lighting anything up */
+        setTimeout(function(){ follow.turning = false; followAudio(); }, 420);
+      }).catch(function(){ follow.turning = false; });
+      return;
+    }
+
     var chosen = null;
     Array.prototype.forEach.call($("body").children, function(el){
       var at = Number(el.getAttribute("data-at") || 0);
       if (at && at <= nowMs) chosen = el;
       el.classList.remove("lit");
     });
-    if (chosen) chosen.classList.add("lit");
+    if (chosen){
+      chosen.classList.add("lit");
+      /* bring it into view, but only when it actually changes — doing it on
+         every timeupdate would fight any attempt to scroll by hand */
+      if (chosen !== follow.lastLit){
+        follow.lastLit = chosen;
+        try { chosen.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
+      }
+    }
     var ctx = noteSurface.ctx();
     if (ctx){
       var r = $("paper").getBoundingClientRect(), z = state.zoom || 1;
@@ -10222,7 +10509,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         return C.importBundle(b, { mode: $("importMode").value });
       }).then(function(r){
         $("dataDlg").close();
-        say("Merged: " + r.added + " new, " + r.updated + " updated, " + r.skipped + " already current.");
+        say("Merged: " + r.added + " new, " + r.updated + " updated, " +
+            r.skipped + " already current" +
+            (r.conflicts ? ", and " + r.conflicts + " page" + (r.conflicts === 1 ? "" : "s") +
+                           " kept as both copies — look for the ones marked " +
+                           "“from…” next to their twin." : "") + ".");
         $("body").dataset.noteId = "";
         return render();
       }).catch(function(e){ say(e.message); });

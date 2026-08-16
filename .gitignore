@@ -3,3 +3,11 @@ desktop.ini
 Thumbs.db
 *.tmp
 ~$*
+
+# Working documents that live in this folder but must not be published.
+# This repo is a public GitHub Pages site: anything committed here is on the
+# open web. Only the app itself belongs in it.
+*.docx
+*.doc
+*.pdf
+v11_device_test_results_and_tablet_issues.md
