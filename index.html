@@ -1502,6 +1502,15 @@
         width by how fast you write instead.</p>
       </div>
       <div class="field">
+        <label for="setGlide">Scrolling carries on after your finger lifts <b id="glideOut"></b></label>
+        <input type="range" id="setGlide" min="0" max="200" step="10">
+        <label for="setGlideStop">&hellip;and takes this long to stop <b id="glideStopOut"></b></label>
+        <input type="range" id="setGlideStop" min="0" max="100" step="5">
+        <p class="hint">Applies to one finger and to two fingers alike, so
+        scrolling feels the same whether the zoom is locked or not. Set the
+        first to 0 for no glide at all.</p>
+      </div>
+      <div class="field">
         <label for="setSmooth">Handwriting smoothing <b id="smoothOut"></b></label>
         <input type="range" id="setSmooth" min="0" max="50" step="5">
         <p class="hint">Steadies the wobble in a stroke. Higher is neater but
@@ -5197,6 +5206,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var sc = S.scroller;
 
     sc.addEventListener("pointerdown", function(e){
+      /* catch a coasting page: without this the pen could lay a stroke while
+         the paper was still sliding underneath it */
+      stopGlide();
       if (e.pointerType === "pen"){ penDetected(); applyPenButton(e); }
       else { handOverToTyping(e); if (S.name === "note") armHold(e); }
       if (touchGesture(S, e, "down")) return;
@@ -5257,6 +5269,78 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* Two-finger pan and pinch. Needed because once native scrolling is off
      (pen near, write mode, or the lock on) the page would otherwise be stuck. */
+  /* ---- the page keeps moving after the finger leaves ----
+     Neither scrolling path had any inertia. #paper is touch-action:none, so
+     the browser never scrolls it and never supplies momentum: one finger goes
+     through fingerPanMove and two through touchGesture, and both were bare
+     scrollTop assignments that stopped dead on lift. One glide engine here,
+     used by both, so they finally behave the same.
+     Speed and how long it coasts are both settings, because how much a page
+     should run on is a matter of taste and hand size, not something to be
+     decided once in code. */
+  var glide = { raf: 0, S: null, vx: 0, vy: 0, last: 0 };
+  function nowMs(){ return (window.performance && performance.now) ? performance.now() : Date.now(); }
+  function stopGlide(){
+    if (glide.raf) cancelAnimationFrame(glide.raf);
+    glide.raf = 0; glide.S = null;
+  }
+  /* pixels per millisecond, lightly smoothed so one jittery final sample
+     cannot decide the whole fling */
+  function trackVel(o, x, y){
+    var t = nowMs(), dt = t - (o.t || t);
+    if (dt > 0 && dt < 120){
+      var k = Math.min(1, dt / 40);
+      o.vx = (o.vx || 0) * (1 - k) + ((x - (o.px == null ? x : o.px)) / dt) * k;
+      o.vy = (o.vy || 0) * (1 - k) + ((y - (o.py == null ? y : o.py)) / dt) * k;
+    }
+    o.px = x; o.py = y; o.t = t;
+  }
+  function glideSpeed(){
+    var v = Number(cfg.glideSpeed);
+    return isFinite(v) ? v / 100 : 1;      /* 0 turns the glide off entirely */
+  }
+  function glideDamp(){
+    var p = Number(cfg.glideStop);
+    if (!isFinite(p)) p = 50;
+    p = Math.max(0, Math.min(100, p));
+    /* The top of this range was 0.995 first, which coasted for thirteen
+       seconds and a couple of thousand pixels — past anything you could aim
+       at. 0.982 tops out around three seconds, which is a long glide without
+       being a runaway. */
+    return 0.86 + (p / 100) * 0.122;       /* 0.86 stops smartly … 0.982 long coast */
+  }
+  function startGlide(S, vx, vy){
+    stopGlide();
+    var boost = glideSpeed();
+    if (!boost || !S || !S.scroller) return;
+    if (ink.penNear || S.drawing) return;
+    if (Math.sqrt(vx*vx + vy*vy) < 0.06) return;   /* a slow lift means stop, not throw */
+    glide.S = S; glide.vx = vx * boost; glide.vy = vy * boost; glide.last = nowMs();
+    (function step(){
+      glide.raf = requestAnimationFrame(function(){
+        if (!glide.S) return;
+        var t = nowMs(), dt = Math.min(50, t - glide.last);
+        glide.last = t;
+        /* decay per elapsed time, not per frame, so a 60Hz and a 120Hz screen
+           coast for the same length of time */
+        var keep = Math.pow(glideDamp(), dt / 16.67);
+        glide.vx *= keep; glide.vy *= keep;
+        var sc = glide.S.scroller;
+        var t0 = sc.scrollTop, l0 = sc.scrollLeft;
+        /* same sign convention as fingerPanMove: the page moves opposite the
+           finger */
+        sc.scrollTop = t0 - glide.vy * dt;
+        sc.scrollLeft = l0 - glide.vx * dt;
+        glide.S.queueRedraw();      /* the ink canvas transform follows scroll */
+        if (Math.sqrt(glide.vx*glide.vx + glide.vy*glide.vy) < 0.02 ||
+            (sc.scrollTop === t0 && sc.scrollLeft === l0)){   /* clamped at an edge */
+          stopGlide(); return;
+        }
+        step();
+      });
+    })();
+  }
+
   var gest = { pts: {}, base: null };
   function touchGesture(S, e, phase){
     if (e.pointerType !== "touch") return false;
@@ -5270,7 +5354,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return false;
     }
 
-    if (phase === "up"){ delete gest.pts[e.pointerId]; gest.base = null; return true; }
+    if (phase === "up"){
+      /* Fling on the FIRST finger of a real two-finger gesture leaving, so
+         the second one lifting cannot throw the page a second time. The
+         velocity has to be read here: gest.base is about to be discarded,
+         and it was the only record of where the fingers had been — which is
+         exactly why two-finger scrolling used to stop dead. */
+      if (Object.keys(gest.pts).length >= 2 && gest.base && gest.base.v && !gest.base.zoomed){
+        startGlide(S, gest.base.v.vx || 0, gest.base.v.vy || 0);
+      }
+      delete gest.pts[e.pointerId]; gest.base = null; return true;
+    }
 
     var ids = Object.keys(gest.pts);
     if (phase === "move" && gest.pts[e.pointerId]){
@@ -5279,14 +5373,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         var a = gest.pts[ids[0]], b = gest.pts[ids[1]];
         var cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
         var d = Math.hypot(a.x - b.x, a.y - b.y);
-        if (!gest.base){ gest.base = { cx:cx, cy:cy, d:d, z:state.zoom }; }
+        if (!gest.base){ gest.base = { cx:cx, cy:cy, d:d, z:state.zoom, v:{}, zoomed:false }; }
         else {
           S.scroller.scrollLeft -= (cx - gest.base.cx);
           S.scroller.scrollTop  -= (cy - gest.base.cy);
           if (!ink.lock && cfg.pinchZoom && S.name === "note" && gest.base.d > 20){
             var z = gest.base.z * (d / gest.base.d);
+            var before = state.zoom;
             applyZoom(clampZoom(Math.round(z * 20) / 20));
+            /* a pinch that actually changed the zoom should not also throw
+               the page across the screen when the fingers come off */
+            if (state.zoom !== before) gest.base.zoomed = true;
           }
+          trackVel(gest.base.v, cx, cy);
           gest.base.cx = cx; gest.base.cy = cy;
         }
         S.queueRedraw();
@@ -6005,6 +6104,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     backupGap: 1,
     defaultZoom: 1,
     pageFlow: true,    /* scrolling past the end carries on to the next page */
+    glideSpeed: 100,   /* how fast the page carries on after the finger lifts */
+    glideStop: 50,     /* how long it takes to come to rest */
     keepFoot: false,   /* keep the note footer on screen even while writing */
     hints: true,       /* the small passing messages along the bottom */
     smooth: 20,        /* handwriting smoothing, per cent; 0 turns it off */
@@ -6075,6 +6176,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     /* the slider used to run to 100; a config saved then would sit off the
        end of the new one and read back as the maximum on first touch */
     if (cfg.smooth > 50) { cfg.smooth = 50; saveCfg(); }
+    $("setGlide").value = cfg.glideSpeed;
+    $("glideOut").textContent = cfg.glideSpeed ? cfg.glideSpeed + "%" : "off";
+    $("setGlideStop").value = cfg.glideStop;
+    $("glideStopOut").textContent = cfg.glideStop < 25 ? "quickly"
+                                  : cfg.glideStop > 75 ? "slowly" : "medium";
     $("setSmooth").value = cfg.smooth;
     $("smoothOut").textContent = cfg.smooth ? cfg.smooth + "%" : "off";
     $("setCurves").checked = cfg.curves !== false;
@@ -6147,6 +6253,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setPenAway").addEventListener("input", function(){
       cfg.penAway = Number(this.value);
       $("penAwayOut").textContent = (cfg.penAway / 1000).toFixed(1) + "s";
+      saveCfg();
+    });
+    $("setGlide").addEventListener("input", function(){
+      cfg.glideSpeed = Number(this.value);
+      $("glideOut").textContent = cfg.glideSpeed ? cfg.glideSpeed + "%" : "off";
+      saveCfg();
+    });
+    $("setGlideStop").addEventListener("input", function(){
+      cfg.glideStop = Number(this.value);
+      $("glideStopOut").textContent = cfg.glideStop < 25 ? "quickly"
+                                    : cfg.glideStop > 75 ? "slowly" : "medium";
       saveCfg();
     });
     $("setSmooth").addEventListener("input", function(){
@@ -9451,7 +9568,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      scroll and switching the property mid-gesture cannot call it back. The
      drawing surface is now permanently touch-action:none and one finger pans
      it in JavaScript, so there is no browser gesture left to lose a race to. */
-  var pan = { id: null, x: 0, y: 0, top: 0, left: 0, on: false };
+  var pan = { id: null, x: 0, y: 0, top: 0, left: 0, on: false,
+              S: null, vx: 0, vy: 0, t: 0, px: null, py: null };
   function fingerPanDown(S, e){
     if (e.pointerType !== "touch") return false;
     if (mayDraw(e)) return false;              /* this finger is drawing */
@@ -9462,10 +9580,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     pan.id = e.pointerId; pan.on = true;
     pan.x = e.clientX; pan.y = e.clientY;
     pan.top = S.scroller.scrollTop; pan.left = S.scroller.scrollLeft;
+    /* the surface is stashed because fingerPanUp is called without one */
+    pan.S = S;
+    pan.vx = pan.vy = 0; pan.t = 0; pan.px = e.clientX; pan.py = e.clientY;
     return true;
   }
   function fingerPanMove(S, e){
     if (!pan.on || e.pointerId !== pan.id) return false;
+    trackVel(pan, e.clientX, e.clientY);
     S.scroller.scrollTop = pan.top - (e.clientY - pan.y);
     S.scroller.scrollLeft = pan.left - (e.clientX - pan.x);
     return true;
@@ -9473,6 +9595,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function fingerPanUp(e){
     if (!pan.on || e.pointerId !== pan.id) return false;
     pan.on = false; pan.id = null;
+    startGlide(pan.S, pan.vx, pan.vy);
     return true;
   }
 
