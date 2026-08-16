@@ -338,6 +338,21 @@
     line-height:1.5; padding:16px; text-align:center; color:var(--warn);
     background:var(--warnbg); border-color:var(--warnline);
   }
+  /* the storage-blocked cover */
+  .blockwall{
+    position:fixed; inset:0; z-index:90; display:flex;
+    align-items:center; justify-content:center; padding:20px;
+    background:rgba(0,0,0,.55);
+  }
+  .blockwall[hidden]{display:none}
+  .blockcard{
+    background:var(--panel); color:var(--ink); border-radius:12px;
+    padding:20px 22px; max-width:460px; box-shadow:0 12px 40px rgba(0,0,0,.35);
+  }
+  .blockcard h2{margin:0 0 8px; font-size:19px}
+  .blockcard p{margin:0 0 10px; line-height:1.5}
+  .blockrow{display:flex; gap:8px; justify-content:flex-end; margin-top:14px}
+
   /* a folder row in the notebook tree */
   .grouprow{font-weight:600}
   .grouprow .twisty{
@@ -925,6 +940,22 @@
 <div class="notice" id="notice" hidden>
   <p id="noticeText"></p>
   <button class="ghost" id="noticeOk">OK</button>
+</div>
+
+<!-- Shown when the database could not be opened. Deliberately a full cover
+     rather than a toast: an empty notebook list reads as "my notes are gone",
+     and that guess must never be left standing. -->
+<div class="blockwall" id="blockWall" hidden>
+  <div class="blockcard">
+    <h2>Your notes are safe</h2>
+    <p id="blockWhy"></p>
+    <p class="hint">Nothing has been deleted. Margin simply could not open the
+    storage while another tab was holding it.</p>
+    <div class="blockrow">
+      <button type="button" class="btn primary" id="blockRetry">Try again</button>
+      <button type="button" class="btn" id="blockReload">Reload the page</button>
+    </div>
+  </div>
 </div>
 
 <i class="hovernib" id="hoverNib"></i>
@@ -1707,6 +1738,17 @@ var MarginCore = (function(){
   /* ---------- connection ---------- */
 
   var _db = null, _open = null, _device = null;
+  /* Called when this tab is asked to step aside for a newer one, so the UI
+     can say so instead of appearing to lose everything. Set from the app. */
+  var _onEvicted = null;
+  function onEvicted(fn){ _onEvicted = fn; }
+
+  function blockedError(){
+    var e = new Error("Margin is open in another tab running an older version. " +
+                      "Close the other tabs, then reload this one. Nothing has been lost.");
+    e.code = "BLOCKED";
+    return e;
+  }
 
   function open(){
     if (_open) return _open;
@@ -1718,9 +1760,22 @@ var MarginCore = (function(){
       req.onupgradeneeded = function(e){
         upgrade(e.target.result, e.oldVersion, e.target.transaction);
       };
-      req.onsuccess = function(){ res(req.result); };
+      req.onsuccess = function(){
+        var db = req.result;
+        /* The other half of the same problem. When a tab running a NEWER
+           build needs to upgrade the schema, every older connection has to
+           let go or its upgrade is blocked for as long as that tab lives.
+           Without this the newer tab shows an empty, dead app and it looks
+           exactly like the data has been deleted. */
+        db.onversionchange = function(){
+          db.close();
+          _db = null; _open = null;
+          if (_onEvicted) { try { _onEvicted(); } catch (err) {} }
+        };
+        res(db);
+      };
       req.onerror = function(){ rej(req.error); };
-      req.onblocked = function(){ rej(new Error("Another tab has an older version of Margin open. Close it and reload.")); };
+      req.onblocked = function(){ rej(blockedError()); };
     }).then(function(db){
       _db = db;
       return new Promise(function(res){
@@ -1734,6 +1789,13 @@ var MarginCore = (function(){
         t.oncomplete = function(){ res(db); };
         t.onerror = function(){ _device = _device || "unknown"; res(db); };
       });
+    }).catch(function(e){
+      /* Never keep a failed connection cached. The usual reason for failing
+         is a blocking tab, which is temporary: caching the rejection meant
+         every later call failed too, so closing the other tab appeared to
+         change nothing and only a full reload recovered. */
+      _open = null; _db = null;
+      throw e;
     });
     return _open;
   }
@@ -3408,7 +3470,7 @@ var MarginCore = (function(){
   return {
     DB_NAME:DB_NAME, DB_VERSION:DB_VERSION, FORMAT:FORMAT, TRASH_DAYS:TRASH_DAYS,
     COLOURS:COLOURS, SORTS:SORTS,
-    open:open, close:close, deviceId:deviceId,
+    open:open, close:close, deviceId:deviceId, onEvicted:onEvicted,
     newId:newId, plainText:plainText, displayTitle:displayTitle, preview:preview,
     wordCount:wordCount, sortNotes:sortNotes, sortNotebooks:sortNotebooks,
     createGroup:createGroup, allGroups:allGroups, getGroup:getGroup,
@@ -3586,6 +3648,36 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("notice").hidden = false;
   }
   $("noticeOk").addEventListener("click", function(){ $("notice").hidden = true; });
+
+  /* ---- storage that would not open ----
+     Kept separate from say(): a toast that fades leaves an empty notebook
+     list on screen with no explanation, which is indistinguishable from
+     having lost everything. */
+  function showBlocked(msg){
+    $("blockWhy").textContent = msg ||
+      "Margin could not open its storage.";
+    $("blockWall").hidden = false;
+  }
+  function hideBlocked(){ $("blockWall").hidden = true; }
+  /* Any action that failed because the storage is blocked should say so
+     properly rather than as a one-line "could not save", which reads like the
+     button is broken. */
+  function dbFail(prefix){
+    return function(e){
+      if (e && e.code === "BLOCKED") showBlocked(e.message);
+      else say(prefix + ": " + ((e && e.message) ? e.message : String(e)));
+    };
+  }
+  $("blockReload").addEventListener("click", function(){ location.reload(); });
+  $("blockRetry").addEventListener("click", function(){
+    hideBlocked();
+    render().catch(function(e){ showBlocked(e && e.message ? e.message : String(e)); });
+  });
+  /* an older tab being asked to stand aside for a newer build */
+  C.onEvicted(function(){
+    showBlocked("Another tab opened a newer version of Margin, so this tab " +
+                "let go of the storage. Reload to carry on here.");
+  });
 
   /* ---------------- painting ---------------- */
 
@@ -4280,7 +4372,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     p.then(function(){
       $("gpDlg").close();
       return refreshLists();
-    }).catch(function(e){ say("Could not save the folder: " + e.message); });
+    }).catch(dbFail("Could not save the folder"));
   });
   $("gpDelete").addEventListener("click", function(){
     if (!gpEditing) return;
@@ -4352,7 +4444,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       $("nbDlg").close();
       if (nbEditing) return refreshLists();
       go({nbId:nb.id});
-    }).catch(function(e){ say("Could not save the notebook: " + e.message); });
+    }).catch(dbFail("Could not save the notebook"));
   });
   $("nbDelete").addEventListener("click", function(){
     if (!nbEditing) return;
@@ -9039,8 +9131,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     setTimeout(function(){ backupCheck(); storageCheck(); }, 900);
     setTimeout(checkViewport, 2600);
   }).catch(function(e){
-    say("Storage did not open: " + (e && e.message ? e.message : e) +
-        " \u2014 private browsing blocks IndexedDB in some browsers.");
+    var msg = (e && e.message) ? e.message : String(e);
+    if (e && e.code === "BLOCKED") showBlocked(msg);
+    else showBlocked("Storage did not open: " + msg +
+                     " \u2014 private browsing also blocks IndexedDB in some browsers.");
   });
 })();
 </script>
