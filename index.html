@@ -355,6 +355,11 @@
     border:1.5px solid var(--live); pointer-events:none; z-index:60; display:none;
   }
   body.penning .hovernib{display:block}
+  /* Shown while the pen merely hovers, not only mid-stroke. It used to appear
+     only once you were already drawing, which is too late to tell you what
+     the eraser is about to take. */
+  body.pennear .hovernib{display:block}
+  body.erasing .hovernib{z-index:61}
   .lassopath{stroke-dasharray:6 5}
 
   #body figure.imgblock{
@@ -432,6 +437,19 @@
     border-radius:8px; box-shadow:0 14px 40px var(--shadow); touch-action:none;
   }
   .favbar[hidden]{display:none}
+  /* a nib in its own colour, so a row of pens reads like a row of pens */
+  .favbar .favnib{display:block; width:22px; height:5px; border-radius:3px; margin:0 auto}
+  .favbar button[aria-pressed="true"] .favnib{box-shadow:0 0 0 2px var(--panel)}
+
+  /* what the pen is hovering over, explained */
+  .pentip{
+    position:fixed; z-index:82; max-width:min(300px, 80vw);
+    background:var(--panel); color:var(--ink);
+    border:1px solid var(--ink); border-radius:6px; padding:10px 12px;
+    font-size:13px; line-height:1.45; box-shadow:0 14px 40px var(--shadow);
+    pointer-events:none;
+  }
+  .pentip[hidden]{display:none}
   /* it can carry twenty things now, which is taller than a tablet: the column
      scrolls rather than running off the bottom of the screen */
   .favbar{max-height:calc(100dvh - 80px); overflow-y:auto; overflow-x:hidden}
@@ -761,8 +779,9 @@
   body[data-immerse="1"] .inktools,
   body[data-immerse="1"] .tagrow,
   body[data-immerse="1"] .docfoot{display:none !important}
-  /* Immerse means everything away, and the floating bar is no exception */
-  body[data-immerse="1"] .favbar{display:none !important}
+  /* Immerse puts every bar away — but not this one. The whole point of a
+     floating favourites bar is that it is the one thing you keep when you
+     clear the screen to write. */
   body.nofmt .fmtbar{display:none !important}
   body.nodoc .docbar{display:none !important}
   body.notags .tagrow{display:none !important}
@@ -1693,6 +1712,7 @@
         <summary>The favourites bar</summary>
         <div class="field">
           <label class="check"><input type="checkbox" id="setFavBar"> Show the floating favourites bar (drag it where you like)</label>
+          <label class="check"><input type="checkbox" id="setPenHelp"> Rest the pen over any button for two seconds to see what it does</label>
           <p class="hint">Tick what it should carry. Tapping a tool you are
           already holding opens its colour and thickness beside the bar.</p>
           <div id="favPick" class="favpick"></div>
@@ -1912,6 +1932,7 @@
 <div class="flowcue" id="flowCue" hidden></div>
 <div class="dropmark" id="dropMark" hidden></div>
 <div class="pagetag" id="pageTag" hidden></div>
+<div class="pentip" id="penTip" hidden></div>
 <div class="endkit" id="endKit" hidden>
   <button type="button" id="endInsert" title="Put a new page after this one">&#10010; page</button>
   <button type="button" id="endNext" title="Go to the next page">next &#8595;</button>
@@ -1949,7 +1970,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b19";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b20";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5566,8 +5587,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     ink.lastPenAt = Date.now();
     cancelHold();
     clearTimeout(ink.penTimer);
+    document.body.classList.add("pennear");
     ink.penTimer = setTimeout(function(){
       ink.penNear = false;
+      document.body.classList.remove("pennear");
       updateTouchAction(); paintModeChip();
       setTypingEnabled(true);
     }, (typeof cfg === "object" && cfg.penAway) || 1600);
@@ -6545,7 +6568,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     tapErase: true,       /* double-tap the nib to toggle the eraser */
     penButtonErase: true, /* the pen's side button toggles the eraser */
     favBar: false,     /* the floating favourites bar */
-    favTools: ["pen", "marker", "eraser", "lasso", "img", "cam"],
+    favTools: ["pen_ink", "pen_blue", "pen_red", "hl_amber", "eraser", "lasso", "undo"],
+    penHelp: true,     /* hover the pen over a control to hear what it does */
     favPos: null,      /* {x, y}, re-clamped to the window on load */
     glideSpeed: 100,   /* how fast the page carries on after the finger lifts */
     glideStop: 50,     /* how long it takes to come to rest */
@@ -6611,6 +6635,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setPageFlow").checked = cfg.pageFlow !== false;
     $("setHints").checked = cfg.hints !== false;
     $("setFavBar").checked = cfg.favBar === true;
+    $("setPenHelp").checked = cfg.penHelp !== false;
     buildFavPick();
     $("setKeepFoot").checked = cfg.keepFoot === true;
     $("setTapType").checked = cfg.tapToType;
@@ -6677,6 +6702,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     bindCheck("setHints", "hints");
     bindCheck("setTapErase", "tapErase");
     bindCheck("setPenBtnErase", "penButtonErase");
+    bindCheck("setPenHelp", "penHelp");
     $("setFavBar").addEventListener("change", function(){
       cfg.favBar = this.checked; saveCfg(); buildFavBar();
     });
@@ -6808,6 +6834,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      button that already exists in the ink bar, or runs the same three lines
      buildInkTools uses to apply a colour or a width — so per-tool memory,
      lasso clearing and mode switching all keep working with one owner. */
+  /* A coloured pen or highlighter is one button that picks the tool AND the
+     colour together, which is what you actually reach for — "the red pen",
+     not "pen, then red". Tapping one you are already holding still opens its
+     thickness. */
+  var FAV_PENS = [
+    { key:"pen_ink",     tool:"pen",    colour:"ink",    title:"Black pen" },
+    { key:"pen_blue",    tool:"pen",    colour:"blue",   title:"Blue pen" },
+    { key:"pen_red",     tool:"pen",    colour:"red",    title:"Red pen" },
+    { key:"pen_green",   tool:"pen",    colour:"green",  title:"Green pen" },
+    { key:"hl_amber",    tool:"marker", colour:"amber",  title:"Yellow highlighter" },
+    { key:"hl_green",    tool:"marker", colour:"green",  title:"Green highlighter" },
+    { key:"hl_pink",     tool:"marker", colour:"pink",   title:"Pink highlighter" }
+  ];
+
   var FAV_ITEMS = {
     pen:     { label: "✎", title: "Pen",         ink: true },
     pencil:  { label: "✐", title: "Pencil",      ink: true },
@@ -6833,9 +6873,46 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     undo:    { label: "↶", title: "Undo",              run: function(){ globalUndo(); } },
     redo:    { label: "↷", title: "Redo",              run: function(){ globalRedo(); } }
   };
-  var FAV_ORDER = ["pen","pencil","marker","eraser","lasso","lassobox","ruler",
+  /* the coloured pens join the same table, so everything below treats them
+     identically to the plain tools */
+  FAV_PENS.forEach(function(p){
+    FAV_ITEMS[p.key] = { title: p.title, pen: p };
+  });
+  var FAV_ORDER = FAV_PENS.map(function(p){ return p.key; }).concat(
+                  ["pen","pencil","marker","eraser","lasso","lassobox","ruler",
                    "img","cam","pdf","rec","prac","mark","star",
-                   "addpage","insert","focus","lock","undo","redo"];
+                   "addpage","insert","focus","lock","undo","redo"]);
+
+  /* what each favourite is for, in a sentence, for the hover help */
+  var FAV_HELP = {
+    pen:     "Writes in the current colour and thickness. Tap it again to change those.",
+    pencil:  "A softer, slightly transparent line, like a real pencil.",
+    marker:  "A broad see-through stroke for highlighting over writing.",
+    eraser:  "Rubs out whole strokes you drag across. The ring under the nib shows its reach.",
+    lasso:   "Draw round some writing to pick it up, then move, resize, recolour, copy or delete it.",
+    lassobox:"Switches the lasso between drawing round a thing and dragging a box over it.",
+    ruler:   "Keeps the next stroke straight, for underlines and axes.",
+    img:     "Puts a picture from the tablet into this page.",
+    cam:     "Takes a photo now and drops it straight into this page.",
+    pdf:     "Brings a PDF in as pages you can write on, one PDF page per notebook page.",
+    rec:     "Records audio and pins it to what you write while it runs, so you can tap a line later and hear that moment.",
+    prac:    "Opens the rough working sheet for this page — scribbles that never reach the clean note.",
+    mark:    "Bookmarks this page and names the topic that starts on it.",
+    star:    "Stars this page so it shows in the Starred list.",
+    addpage: "Makes a new page at the end of this notebook.",
+    insert:  "Puts a new page straight after this one and renumbers the pages after it.",
+    focus:   "Folds the side panels away to give the page the whole screen.",
+    lock:    "Locks the zoom so one finger scrolls instead of pinching.",
+    undo:    "Undoes the last thing, writing or typing alike.",
+    redo:    "Puts back what you just undid."
+  };
+  function favHelp(key, it){
+    if (it && it.pen){
+      return it.title + ". Picks the tool and the colour in one tap; tap it " +
+             "again for its thickness.";
+    }
+    return FAV_HELP[key] || (it && it.title) || "";
+  }
 
   function favClamp(x, y){
     var el = $("favBar");
@@ -6868,10 +6945,33 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var b = document.createElement("button");
       b.type = "button";
       b.dataset.fav = key;
-      b.title = it.title + (it.ink ? " — tap again for its settings" : "");
-      b.textContent = it.label;
+      b.title = it.title + ((it.ink || it.pen) ? " — tap again for its settings" : "");
+      b.setAttribute("data-help", favHelp(key, it));
+      if (it.pen){
+        /* drawn as a nib in its own colour rather than a glyph, so the bar
+           reads at a glance the way a row of real pens would */
+        var nib = document.createElement("i");
+        nib.className = "favnib";
+        nib.style.background = inkHex(it.pen.colour);
+        if (it.pen.tool === "marker"){ nib.style.opacity = ".5"; nib.style.height = "16px"; }
+        b.appendChild(nib);
+      } else {
+        b.textContent = it.label;
+      }
       b.addEventListener("click", function(e){
         e.preventDefault(); e.stopPropagation();
+        if (it.pen){
+          var already = (ink.tool === it.pen.tool && ink.colour === it.pen.colour);
+          if (already){ openFavPop(b, it.pen.tool); return; }
+          rememberCurrentTool();
+          ink.tool = it.pen.tool;
+          ink.colour = it.pen.colour;
+          if (ink.mode === "type") setMode("auto");
+          lassoClear();
+          rememberCurrentTool();
+          paintInkTools();
+          return;
+        }
         if (it.ink){
           /* second tap on the tool you are already holding opens its
              settings beside the button, which is the whole point */
@@ -6919,8 +7019,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var host = $("favBar");
     if (!host || host.hidden) return;
     Array.prototype.slice.call(host.querySelectorAll("button[data-fav]")).forEach(function(b){
-      var k = b.dataset.fav;
-      b.setAttribute("aria-pressed", (FAV_ITEMS[k] && FAV_ITEMS[k].ink && ink.tool === k) ? "true" : "false");
+      var k = b.dataset.fav, it = FAV_ITEMS[k];
+      var on = false;
+      if (it && it.pen) on = (ink.tool === it.pen.tool && ink.colour === it.pen.colour);
+      else if (it && it.ink) on = (ink.tool === k);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
     });
   }
   /* the little settings panel next to a tool: colour and thickness */
@@ -8472,6 +8575,56 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      spot you are holding, rather than to a toolbar at the top of the screen. */
   var hold = { timer: null, x: 0, y: 0, moved: false };
 
+  /* ---- hover the pen over anything to find out what it does ----
+     Hovering is something only a pen can do, and it is otherwise unused, so
+     it costs nothing to put the explanations there. Two seconds of the nib
+     held over a control, without touching, and it says what it is for.
+     The text comes from data-help where there is one, and falls back to the
+     control's own title, so every button in the app is covered without each
+     one having to be written out twice. */
+  var penHelp = { timer: null, el: null, x: 0, y: 0 };
+  function helpTextFor(el){
+    while (el && el !== document.body){
+      if (el.getAttribute){
+        var h = el.getAttribute("data-help") || el.getAttribute("title");
+        if (h && h.length > 1) return { text: h, el: el };
+      }
+      el = el.parentNode;
+    }
+    return null;
+  }
+  function showPenHelp(found){
+    var box = $("penTip");
+    if (!box || !found) return;
+    box.textContent = found.text;
+    box.hidden = false;
+    var r = found.el.getBoundingClientRect();
+    var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+    box.style.left = Math.max(8, Math.min(r.left, vw - box.offsetWidth - 8)) + "px";
+    /* above the control by preference, below it when there is no room */
+    var above = r.top - box.offsetHeight - 10;
+    box.style.top = (above > 8 ? above : Math.min(r.bottom + 10, vh - box.offsetHeight - 8)) + "px";
+  }
+  function hidePenHelp(){
+    clearTimeout(penHelp.timer);
+    penHelp.el = null;
+    if ($("penTip")) $("penTip").hidden = true;
+  }
+  document.addEventListener("pointermove", function(e){
+    if (e.pointerType !== "pen" || e.buttons) { if (e.buttons) hidePenHelp(); return; }
+    if (cfg.penHelp === false) return;
+    /* a small wander is still "held over it"; a real move starts again */
+    if (penHelp.el && Math.abs(e.clientX - penHelp.x) < 14 &&
+        Math.abs(e.clientY - penHelp.y) < 14) return;
+    hidePenHelp();
+    var found = helpTextFor(e.target);
+    if (!found) return;
+    penHelp.el = found.el; penHelp.x = e.clientX; penHelp.y = e.clientY;
+    penHelp.timer = setTimeout(function(){ showPenHelp(found); }, 2000);
+  }, true);
+  document.addEventListener("pointerdown", hidePenHelp, true);
+  document.addEventListener("pointerleave", hidePenHelp, true);
+
   /* ---- two taps with a finger go back to typing ----
      Deliberately the finger and not the pen: the pen's double tap is the
      eraser, and the two must not fight. It reads naturally anyway — you put
@@ -8527,6 +8680,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          no matching release, so there is no way to know when the button was
          let go. */
       e.preventDefault();
+      /* If the pointer events DID carry the button, that path has already
+         switched to the eraser and holds it for as long as the button is
+         down. Toggling here as well would immediately switch it back — which
+         is why the button worked one press and not the next. */
+      if (btn.held) return;
       if (cfg.penButtonErase !== false) togglePenEraser("the pen's side button");
       return;
     }
@@ -8544,7 +8702,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        like the button doing nothing — which is the bug this whole feature has
        been chasing. First one through wins; the rest of the press is ignored. */
     var t = Date.now();
-    if (t - lastPenToggle < 500) return;
+    /* Only long enough to swallow the mousedown and contextmenu pair, which
+       arrive a few milliseconds apart. Any longer and a deliberate second
+       press gets eaten, which itself looks like the button being unreliable. */
+    if (t - lastPenToggle < 250) return;
     lastPenToggle = t;
     penSeen.route = why;
     penSeen.everErased = true;
@@ -9301,12 +9462,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function paintNib(){
     var nb = $("hoverNib");
     if (!nb) return;
-    var size = Math.max(6, ink.width * 3);
+    var erasing = ink.tool === "eraser";
+    /* In eraser mode the ring is drawn at the size the eraser actually bites,
+       so you can see what it will take before it takes it. eraseRadius() is
+       in page units, so it is scaled back up by the zoom to land on the
+       screen at the right size. */
+    var size = erasing
+      ? Math.max(14, eraseRadius("note") * 2 * (state.zoom || 1))
+      : Math.max(6, ink.width * 3);
     nb.style.width = nb.style.height = size + "px";
     nb.style.margin = (-size / 2) + "px 0 0 " + (-size / 2) + "px";
-    nb.style.borderColor = ink.tool === "eraser" ? "var(--warn)" : inkHex(ink.colour);
-    nb.style.background = ink.tool === "eraser" ? "transparent" : inkHex(ink.colour);
-    nb.style.opacity = ink.tool === "marker" ? ".35" : ".8";
+    nb.style.borderColor = erasing ? "var(--warn)" : inkHex(ink.colour);
+    nb.style.background = erasing ? "var(--warnbg)" : inkHex(ink.colour);
+    nb.style.borderStyle = erasing ? "dashed" : "solid";
+    nb.style.borderWidth = erasing ? "2px" : "1.5px";
+    nb.style.opacity = erasing ? ".9" : (ink.tool === "marker" ? ".35" : ".8");
+    document.body.classList.toggle("erasing", erasing);
   }
 
   /* ---- 11. the current pen, visible even with the toolbar away ---- */
