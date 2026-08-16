@@ -1,7 +1,7 @@
 /* Margin service worker.
    Cache-first for the shell: once installed the app never needs the network.
    Bump CACHE when you upload a new index.html or the old one will be served. */
-const CACHE = "margin-2026-08-16-v9";
+const CACHE = "margin-2026-08-16-v10";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest",
                "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png"];
 

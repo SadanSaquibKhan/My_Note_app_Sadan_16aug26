@@ -338,6 +338,56 @@
     line-height:1.5; padding:16px; text-align:center; color:var(--warn);
     background:var(--warnbg); border-color:var(--warnline);
   }
+  /* a folder row in the notebook tree */
+  .grouprow{font-weight:600}
+  .grouprow .twisty{
+    flex:0 0 auto; width:14px; text-align:center; font-size:11px;
+    color:var(--ink-2); margin-right:2px;
+  }
+  .swatch.folder{border-radius:3px}
+
+  /* open notebooks: a tab strip, plus the same set as a list under the arrow */
+  .nbtabs{display:flex; align-items:stretch; gap:4px; padding:4px 6px 0;
+    border-bottom:1px solid var(--rule); background:var(--panel)}
+  .nbtabs[hidden]{display:none}
+  .nbtabstrip{display:flex; gap:4px; overflow-x:auto; flex:1; scrollbar-width:thin}
+  .nbtab{
+    display:flex; align-items:center; gap:6px; flex:0 0 auto;
+    max-width:190px; padding:7px 8px 7px 10px; cursor:pointer;
+    border:1px solid var(--rule); border-bottom:none;
+    border-radius:8px 8px 0 0; background:transparent; color:var(--ink-2);
+    font-size:13px; white-space:nowrap;
+  }
+  .nbtab .nbtabname{overflow:hidden; text-overflow:ellipsis}
+  .nbtab .nbdot{width:8px; height:8px; border-radius:50%; flex:0 0 auto}
+  .nbtab[aria-current="true"]{
+    background:var(--paper); color:var(--ink); font-weight:600;
+    box-shadow:inset 0 2px 0 var(--live);
+  }
+  .nbtab .nbclose{
+    border:none; background:none; color:inherit; cursor:pointer;
+    font-size:15px; line-height:1; padding:0 2px; opacity:.6;
+  }
+  .nbtab .nbclose:hover{opacity:1}
+  .nbtabmenu{flex:0 0 auto; align-self:center}
+  .nbopenlist{
+    border-bottom:1px solid var(--rule); background:var(--panel); padding:4px 0;
+  }
+  .nbopenlist[hidden]{display:none}
+  .nbopenlist .row{width:100%}
+
+  /* the banner shown when scrolling carries you into another page */
+  .flowcue{
+    position:fixed; left:50%; top:14%; transform:translate(-50%, -8px);
+    z-index:55; pointer-events:none;
+    background:var(--live); color:#fff; font-weight:600;
+    padding:10px 18px; border-radius:999px; font-size:15px;
+    box-shadow:0 6px 22px rgba(0,0,0,.28);
+    opacity:0; transition:opacity .18s ease, transform .18s ease;
+  }
+  .flowcue.on{opacity:1; transform:translate(-50%, 0)}
+  .flowcue[hidden]{display:none}
+
   /* a locked picture says so, and stops taking the drag itself */
   #body figure.imgblock.locked{border-color:var(--rule); border-style:dashed}
   #body figure.imgblock.locked img{pointer-events:none}
@@ -886,6 +936,7 @@
   <aside class="pane rail" id="railPane" aria-label="Notebooks">
     <div class="panehead">
       <h2>Notebooks</h2>
+      <button class="ghost" id="addGroup" title="New folder">Folder</button>
       <button class="add" id="addNotebook" aria-label="New notebook" title="New notebook">+</button>
     </div>
     <div class="filterwrap">
@@ -922,6 +973,11 @@
   </aside>
 
   <section class="pane list" id="listPane" aria-label="Notes">
+    <div class="nbtabs" id="nbTabs" hidden>
+      <div class="nbtabstrip" id="nbTabStrip"></div>
+      <button class="ghost nbtabmenu" id="nbTabMenu" title="All open notebooks">&#9662;</button>
+    </div>
+    <div class="nbopenlist" id="nbOpenList" hidden></div>
     <div class="panehead">
       <h2 id="listTitle">Notes</h2>
       <button class="ghost" id="editNotebook" title="Rename, recolour or delete this notebook">Edit</button>
@@ -1205,6 +1261,10 @@
         <label>Colour</label>
         <div class="swatches" id="nbSwatches"></div>
       </div>
+      <div class="field">
+        <label for="nbGroup">Folder</label>
+        <select id="nbGroup"></select>
+      </div>
     </div>
     <div class="dlg-foot">
       <button type="button" class="btn danger" id="nbDelete">Delete</button>
@@ -1212,6 +1272,34 @@
       <span class="grow"></span>
       <button type="button" class="btn" id="nbCancel">Cancel</button>
       <button type="button" class="btn primary" id="nbSave">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="gpDlg">
+  <form method="dialog">
+    <div class="dlg-head" id="gpDlgHead">New folder</div>
+    <div class="dlg-body">
+      <div class="field">
+        <label for="gpName">Folder name</label>
+        <input type="text" id="gpName" maxlength="80" autocomplete="off" placeholder="e.g. VLSI job prep">
+      </div>
+      <div class="field">
+        <label>Colour</label>
+        <div class="swatches" id="gpSwatches"></div>
+      </div>
+      <div class="field">
+        <label for="gpParent">Inside</label>
+        <select id="gpParent"></select>
+        <p class="hint">Folders can sit inside other folders. Deleting a folder
+        keeps everything in it &mdash; the contents move up one level.</p>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="btn danger" id="gpDelete">Delete</button>
+      <span class="grow"></span>
+      <button type="button" class="btn" id="gpCancel">Cancel</button>
+      <button type="button" class="btn primary" id="gpSave">Save</button>
     </div>
   </form>
 </dialog>
@@ -1262,6 +1350,7 @@
         <label class="check"><input type="checkbox" id="setHover"> Show where the nib will land</label>
         <label class="check"><input type="checkbox" id="setAutoScroll"> Scroll on when I write near the bottom</label>
         <label class="check"><input type="checkbox" id="setPinch"> Pinch with two fingers to zoom</label>
+        <label class="check"><input type="checkbox" id="setPageFlow"> Keep scrolling past the end to reach the next page</label>
         <label class="check"><input type="checkbox" id="setWake"> Keep the screen awake</label>
         <label class="check"><input type="checkbox" id="setTapType"> Tapping blank page starts typing there</label>
         <label class="check"><input type="checkbox" id="setSpell"> Check spelling as I type</label>
@@ -1493,6 +1582,7 @@
 <input type="file" id="imgFile" accept="image/*" multiple hidden>
 <input type="file" id="camFile" accept="image/*" capture="environment" hidden>
 <input type="file" id="anyFile" multiple hidden>
+<div class="flowcue" id="flowCue" hidden></div>
 <div class="holdmenu" id="holdMenu" hidden></div>
 <button class="immerseout" id="immerseOut" hidden>Show the tools</button>
 
@@ -1517,7 +1607,10 @@ var MarginCore = (function(){
   "use strict";
 
   var DB_NAME    = "margin";
-  var DB_VERSION = 2;      /* storage schema */
+  /* 3 adds the notebook groups store. The step is purely additive: nothing
+     already stored is rewritten, and a notebook with no group simply sits at
+     the top level, so an older backup still imports unchanged. */
+  var DB_VERSION = 3;      /* storage schema */
   var FORMAT     = 7;      /* export file format (7 adds files and audio) */
   var BUILD      = "v12 \u00B7 2026-08-16";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
@@ -1562,6 +1655,10 @@ var MarginCore = (function(){
        a per-item merge keeps both instead of one clobbering the other. */
     if (!db.objectStoreNames.contains("practices")){
       db.createObjectStore("practices", {keyPath:"id"}).createIndex("by_note", "noteId");
+    }
+    /* notebook groups: folders, nestable via parentId, with their own colour */
+    if (!db.objectStoreNames.contains("groups")){
+      db.createObjectStore("groups", {keyPath:"id"}).createIndex("by_parent", "parentId");
     }
     if (oldVersion >= 1 && oldVersion < 2 && tx) migrate1to2(tx);
   }
@@ -2211,6 +2308,7 @@ var MarginCore = (function(){
         id: newId("nb"),
         name: (name||"").trim() || "Untitled notebook",
         colour: COLOURS.indexOf(colour) >= 0 ? colour : "slate",
+        groupId: null,
         order: now,
         createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
       });
@@ -2232,6 +2330,94 @@ var MarginCore = (function(){
       });
       if (touched) touch(nb);
       return putOne("notebooks", nb);
+    });
+  }
+
+  /* ---------- notebook groups ----------
+     A folder holding notebooks and other folders. Nesting is by parentId,
+     with null meaning the top level. Depth is not limited by the data, only
+     by a guard against a folder being dropped inside itself. */
+  function createGroup(name, colour, parentId){
+    var now = Date.now();
+    return open().then(function(){
+      return putOne("groups", {
+        id: newId("gp"),
+        name: (name||"").trim() || "New folder",
+        colour: COLOURS.indexOf(colour) >= 0 ? colour : "slate",
+        parentId: parentId || null,
+        order: now,
+        createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
+      });
+    });
+  }
+  function allGroups(opts){
+    opts = opts || {};
+    return getAll("groups").then(function(l){
+      var list = opts.includeDeleted ? l : l.filter(live);
+      return list.sort(function(a, b){
+        var ao = (a.order==null ? 1e15 : a.order), bo = (b.order==null ? 1e15 : b.order);
+        if (ao !== bo) return ao - bo;
+        return (a.createdAt||0) - (b.createdAt||0);
+      });
+    });
+  }
+  function getGroup(id){ return getOne("groups", id); }
+  function updateGroup(id, patch){
+    return getGroup(id).then(function(g){
+      if (!g) throw new Error("No folder " + id);
+      var touched = false;
+      Object.keys(patch).forEach(function(k){
+        if (g[k] !== patch[k]){ g[k] = patch[k]; touched = true; }
+      });
+      if (touched) touch(g);
+      return putOne("groups", g);
+    });
+  }
+  /* Would moving `id` under `parentId` put it inside itself? Walking up from
+     the proposed parent is the cheap way to answer it, and without this check
+     a folder and its child can be detached from the tree entirely and
+     disappear from the list while still occupying storage. */
+  function wouldCycle(groups, id, parentId){
+    var byId = {};
+    groups.forEach(function(g){ byId[g.id] = g; });
+    var seen = {}, cur = parentId;
+    while (cur){
+      if (cur === id) return true;
+      if (seen[cur]) return true;          /* already-broken data: refuse */
+      seen[cur] = 1;
+      cur = byId[cur] ? byId[cur].parentId : null;
+    }
+    return false;
+  }
+  function moveGroup(id, parentId){
+    return allGroups().then(function(list){
+      if (id === parentId || wouldCycle(list, id, parentId)){
+        throw new Error("A folder cannot go inside itself.");
+      }
+      return updateGroup(id, { parentId: parentId || null });
+    });
+  }
+  /* Deleting a folder never deletes what is in it: the children move up to
+     where the folder was, so notebooks can never be lost behind a folder. */
+  function deleteGroup(id){
+    return Promise.all([allGroups(), allNotebooks()]).then(function(r){
+      var groups = r[0], books = r[1];
+      var me = null;
+      groups.forEach(function(g){ if (g.id === id) me = g; });
+      if (!me) return null;
+      var up = me.parentId || null;
+      var jobs = [];
+      groups.forEach(function(g){
+        if (g.parentId === id) jobs.push(updateGroup(g.id, { parentId: up }));
+      });
+      books.forEach(function(nb){
+        if (nb.groupId === id) jobs.push(updateNotebook(nb.id, { groupId: up }));
+      });
+      return Promise.all(jobs).then(function(){
+        me.deletedAt = Date.now();
+        touch(me);
+        return putOne("groups", me);
+      });
     });
   }
 
@@ -3005,7 +3191,8 @@ var MarginCore = (function(){
 
   function exportBundle(){
     return Promise.all([
-      getAll("notebooks"), getAll("notes"), getAll("practices"), getAll("assets"), allMeta()
+      getAll("notebooks"), getAll("notes"), getAll("practices"), getAll("assets"), allMeta(),
+      getAll("groups")
     ]).then(function(r){
       return Promise.all(r[3].map(function(a){
         if (!a.blob && !a.orig) return Promise.resolve(a);
@@ -3028,6 +3215,7 @@ var MarginCore = (function(){
         exportedAt: Date.now(), exportedBy: _device,
         notebooks: r[0], notes: r[1], practices: r[2],
         assets: r[3],     /* ink lives here; images join it at stage 4 */
+        groups: r[5] || [],
         meta: meta
       };
     });
@@ -3118,6 +3306,12 @@ var MarginCore = (function(){
       if (!Array.isArray(r.tags)) r.tags = [];
       if (r.deletedVia === undefined) r.deletedVia = null;
     }
+    if (kind === "group"){
+      if (r.parentId === undefined) r.parentId = null;
+      if (!r.name) r.name = "Folder";
+      if (COLOURS.indexOf(r.colour) < 0) r.colour = "slate";
+    }
+    if (kind === "notebook" && r.groupId === undefined) r.groupId = null;
     return r;
   }
 
@@ -3134,6 +3328,7 @@ var MarginCore = (function(){
     var inNt = (b.notes||[]).map(function(x){ return normalise(x, "note"); }).filter(Boolean);
     var inPr = (b.practices||[]).map(function(x){ return normalise(x, "practice"); }).filter(Boolean);
     var inAs = (b.assets||[]).map(function(x){ return normalise(x, "asset"); }).filter(Boolean);
+    var inGp = (b.groups||[]).map(function(x){ return normalise(x, "group"); }).filter(Boolean);
 
     /* a format-1 file keeps its scratch text inline */
     inNt.forEach(function(n){
@@ -3147,15 +3342,16 @@ var MarginCore = (function(){
       delete n.scratch;
     });
 
-    return Promise.all([getAll("notebooks"), getAll("notes"), getAll("practices"), getAll("assets")])
+    return Promise.all([getAll("notebooks"), getAll("notes"), getAll("practices"),
+                        getAll("assets"), getAll("groups")])
       .then(function(cur){
-        var have = [{}, {}, {}, {}];
+        var have = [{}, {}, {}, {}, {}];
         cur.forEach(function(list, i){ list.forEach(function(x){ have[i][x.id] = x; }); });
 
         var res = {added:0, updated:0, skipped:0, deleted:0};
-        var write = [[], [], [], []];
+        var write = [[], [], [], [], []];
 
-        [inNb, inNt, inPr, inAs].forEach(function(incoming, i){
+        [inNb, inNt, inPr, inAs, inGp].forEach(function(incoming, i){
           incoming.forEach(function(x){
             var mine = have[i][x.id];
             if (!mine){
@@ -3194,8 +3390,17 @@ var MarginCore = (function(){
           }
         });
 
-        return putMany(["notebooks","notes","practices","assets"],
-                       {notebooks:write[0], notes:write[1], practices:write[2], assets:write[3]})
+        /* a notebook pointing at a folder that did not come with the backup
+           sits at the top level rather than disappearing from the tree */
+        var gpIds = {};
+        Object.keys(have[4]).forEach(function(k){ gpIds[k] = 1; });
+        write[4].forEach(function(x){ gpIds[x.id] = 1; });
+        write[0].forEach(function(x){ if (x.groupId && !gpIds[x.groupId]) x.groupId = null; });
+        write[4].forEach(function(x){ if (x.parentId && !gpIds[x.parentId]) x.parentId = null; });
+
+        return putMany(["notebooks","notes","practices","assets","groups"],
+                       {notebooks:write[0], notes:write[1], practices:write[2],
+                        assets:write[3], groups:write[4]})
                .then(function(){ return res; });
       });
   }
@@ -3206,6 +3411,9 @@ var MarginCore = (function(){
     open:open, close:close, deviceId:deviceId,
     newId:newId, plainText:plainText, displayTitle:displayTitle, preview:preview,
     wordCount:wordCount, sortNotes:sortNotes, sortNotebooks:sortNotebooks,
+    createGroup:createGroup, allGroups:allGroups, getGroup:getGroup,
+    updateGroup:updateGroup, moveGroup:moveGroup, deleteGroup:deleteGroup,
+    wouldCycle:wouldCycle,
     splitSeries:splitSeries, seriesName:seriesName, nextSeriesName:nextSeriesName,
     renumberPlan:renumberPlan, suggestNotebookName:suggestNotebookName,
     suggestPageTitle:suggestPageTitle, insertPageAfter:insertPageAfter,
@@ -3269,6 +3477,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     filter: "", sort: "edited", trash: [], zoom: 1, query: "", hits: [], prac: {},
     starred: [], recent: [], weak: [], pracAll: [], audio: [], lastLink: null,
     allNotes: [], inkNotes: {}, attNotes: {}, audNotes: {}, nbLast: null,
+    groups: [], gFold: {},
     dirty: false, saving: false
   };
 
@@ -3380,10 +3589,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* ---------------- painting ---------------- */
 
+  /* ---- 1. notebooks live in folders ----
+     Drawn as a tree: each folder prints itself, then its child folders, then
+     the notebooks filed under it, recursing to any depth. Folders remember
+     whether they are open in state.gFold, alongside the existing nbFold. */
   function paintNotebooks(){
     var host = $("notebookList");
     host.textContent = "";
-    if (!state.notebooks.length){
+    if (!state.notebooks.length && !state.groups.length){
       var e = document.createElement("div");
       e.className = "empty";
       e.innerHTML = "<b>No notebooks yet.</b><br>Make one per subject &mdash; " +
@@ -3391,8 +3604,59 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       host.appendChild(e);
       return;
     }
+
+    var kids = {};      /* parentId -> child folders */
+    state.groups.forEach(function(g){
+      var k = g.parentId || "";
+      (kids[k] || (kids[k] = [])).push(g);
+    });
+    var booksIn = {};   /* groupId -> notebooks */
+    var known = {};
+    state.groups.forEach(function(g){ known[g.id] = 1; });
     state.notebooks.forEach(function(nb){
+      /* a notebook whose folder has gone shows at the top level rather than
+         vanishing from the list */
+      var k = (nb.groupId && known[nb.groupId]) ? nb.groupId : "";
+      (booksIn[k] || (booksIn[k] = [])).push(nb);
+    });
+
+    function drawGroup(g, depth){
+      var open = state.gFold[g.id] !== false;    /* open unless folded shut */
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "row grouprow";
+      row.style.paddingLeft = (10 + depth * 14) + "px";
+      var tw = document.createElement("span");
+      tw.className = "twisty";
+      tw.textContent = open ? "▾" : "▸";
+      var sw = document.createElement("i");
+      sw.className = "swatch folder";
+      sw.style.background = SWATCH[g.colour] || SWATCH.slate;
+      var m = document.createElement("span"); m.className = "rowmain";
+      var t = document.createElement("span"); t.className = "rowtitle";
+      t.textContent = g.name;
+      m.appendChild(t);
+      row.appendChild(tw); row.appendChild(sw); row.appendChild(m);
+      row.addEventListener("click", function(){
+        state.gFold[g.id] = !open;
+        C.setMeta("gFold", state.gFold);
+        paintNotebooks();
+      });
+      row.addEventListener("contextmenu", function(ev){
+        ev.preventDefault(); openGroupDialog(g);
+      });
+      host.appendChild(row);
+      if (open) drawLevel(g.id, depth + 1);
+    }
+
+    function drawLevel(parentId, depth){
+      (kids[parentId || ""] || []).forEach(function(g){ drawGroup(g, depth); });
+      (booksIn[parentId || ""] || []).forEach(function(nb){ drawBook(nb, depth); });
+    }
+
+    function drawBook(nb, depth){
       var b = document.createElement("button");
+      b.style.paddingLeft = (10 + depth * 14) + "px";
       b.type = "button"; b.className = "row";
       if (nb.id === state.nbId) b.setAttribute("aria-current", "true");
       var sw = document.createElement("i");
@@ -3416,7 +3680,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       ord.appendChild(upB); ord.appendChild(dnB);
       b.appendChild(ord);
       host.appendChild(b);
-    });
+    }
+
+    drawLevel("", 0);
   }
 
   function paintTrashRow(){
@@ -3738,9 +4004,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return Promise.all([
       C.allNotebooks(),
       state.nbId ? C.notesIn(state.nbId) : Promise.resolve([]),
-      C.notesSnapshot(), C.trash(), C.practiceCounts()
+      C.notesSnapshot(), C.trash(), C.practiceCounts(), C.allGroups()
     ]).then(function(r){
       state.notebooks = r[0]; state.notes = r[1];
+      state.groups = r[5] || [];
       var snap = r[2];
       void snap;
       state.allNotes = snap.all; state.counts = snap.counts;
@@ -3748,6 +4015,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       state.trash = r[3]; state.prac = r[4];
       indexAssets();
       paintNotebooks(); paintTrashRow(); paintNotes(); paintCrumbs(); paintRecent();
+      paintTabs();
     });
   }
 
@@ -3771,9 +4039,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       r.nbId ? C.notesIn(r.nbId) : Promise.resolve([]),
       Promise.resolve(null),
       r.noteId ? C.getNote(r.noteId) : Promise.resolve(null),
-      C.trash(), C.notesSnapshot(), C.practiceCounts()
+      C.trash(), C.notesSnapshot(), C.practiceCounts(), C.allGroups()
     ]).then(function(res){
       state.notebooks = res[0];
+      state.groups = res[7] || [];
       state.notes = res[1];
       state.counts = res[2];
       state.note = (res[3] && !res[3].deletedAt) ? res[3] : null;
@@ -3812,11 +4081,216 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           $("saveWord").textContent = "ready";
           state.dirty = false;
         }
+        /* visiting a notebook is what puts it in the open set */
+        if (state.nbId) openNotebookTab(state.nbId); else paintTabs();
         paintNotebooks(); paintTrashRow(); paintNotes(); paintDoc(); paintCrumbs(); paintRecent();
         if (state.nbId) C.setMeta("lastRoute", location.hash);
       }
     });
   }
+
+  /* ---------------- 4. several notebooks open at once ----------------
+     The open set is just a list of notebook ids kept in meta, so it survives
+     a restart. Where each one was left is already recorded per notebook by
+     the place record, so switching tabs restores the page, scroll and zoom
+     without this code having to know anything about them. */
+  var openNbs = [];
+
+  function loadOpenNbs(){
+    return C.getMeta("openNotebooks", null).then(function(l){
+      openNbs = Array.isArray(l) ? l.slice() : [];
+      paintTabs();
+    });
+  }
+  function saveOpenNbs(){ return C.setMeta("openNotebooks", openNbs); }
+
+  function openNotebookTab(nbId){
+    if (!nbId) return;
+    if (openNbs.indexOf(nbId) < 0){
+      openNbs.push(nbId);
+      saveOpenNbs();
+    }
+    paintTabs();
+  }
+  function closeNotebookTab(nbId){
+    var i = openNbs.indexOf(nbId);
+    if (i < 0) return;
+    openNbs.splice(i, 1);
+    saveOpenNbs();
+    /* closing the one you are looking at moves you to its neighbour, and to
+       the home list only when nothing is left open */
+    if (state.nbId === nbId){
+      var next = openNbs[i] || openNbs[i - 1] || null;
+      if (next) go({ nbId: next }); else go({});
+    } else {
+      paintTabs();
+    }
+  }
+  function nbById(id){
+    var hit = null;
+    state.notebooks.forEach(function(nb){ if (nb.id === id) hit = nb; });
+    return hit;
+  }
+  function paintTabs(){
+    var strip = $("nbTabStrip"), wrap = $("nbTabs");
+    if (!strip || !wrap) return;
+    /* drop any notebook that has since been deleted rather than showing a
+       tab that leads nowhere */
+    var alive = openNbs.filter(function(id){ return !!nbById(id); });
+    if (alive.length !== openNbs.length){ openNbs = alive; saveOpenNbs(); }
+
+    strip.textContent = "";
+    wrap.hidden = alive.length < 2;      /* one notebook needs no tab strip */
+    alive.forEach(function(id){
+      var nb = nbById(id);
+      var tab = document.createElement("div");
+      tab.className = "nbtab";
+      tab.setAttribute("role", "button");
+      tab.setAttribute("tabindex", "0");
+      tab.setAttribute("aria-current", id === state.nbId ? "true" : "false");
+      var dot = document.createElement("i");
+      dot.className = "nbdot";
+      dot.style.background = SWATCH[nb.colour] || "var(--rule)";
+      var name = document.createElement("span");
+      name.className = "nbtabname";
+      name.textContent = nb.name;
+      var x = document.createElement("button");
+      x.type = "button"; x.className = "nbclose";
+      x.setAttribute("aria-label", "Close " + nb.name);
+      x.textContent = "×";
+      x.addEventListener("click", function(e){
+        e.stopPropagation();
+        closeNotebookTab(id);
+      });
+      tab.appendChild(dot); tab.appendChild(name); tab.appendChild(x);
+      tab.addEventListener("click", function(){ if (id !== state.nbId) go({ nbId: id }); });
+      tab.addEventListener("keydown", function(e){
+        if (e.key === "Enter" || e.key === " "){ e.preventDefault(); go({ nbId: id }); }
+      });
+      strip.appendChild(tab);
+    });
+    paintOpenList();
+  }
+  function paintOpenList(){
+    var host = $("nbOpenList");
+    if (!host || host.hidden) return;
+    host.textContent = "";
+    openNbs.forEach(function(id){
+      var nb = nbById(id);
+      if (!nb) return;
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "row";
+      if (id === state.nbId) b.setAttribute("aria-current", "true");
+      var sw = document.createElement("i");
+      sw.className = "swatch";
+      sw.style.background = SWATCH[nb.colour] || "var(--rule)";
+      var m = document.createElement("span"); m.className = "rowmain";
+      var t = document.createElement("span"); t.className = "rowtitle";
+      t.textContent = nb.name;
+      m.appendChild(t);
+      b.appendChild(sw); b.appendChild(m);
+      b.addEventListener("click", function(){
+        $("nbOpenList").hidden = true;
+        if (id !== state.nbId) go({ nbId: id });
+      });
+      host.appendChild(b);
+    });
+    if (!host.firstChild){
+      host.innerHTML = '<div class="empty">No notebooks are open.</div>';
+    }
+  }
+  $("nbTabMenu").addEventListener("click", function(){
+    var host = $("nbOpenList");
+    host.hidden = !host.hidden;
+    paintOpenList();
+  });
+
+  /* ---------------- folder dialog ---------------- */
+  var gpEditing = null, gpColour = "slate";
+
+  /* "VLSI job prep / seminars", indented, so a nested folder can be told
+     apart from a top-level one with the same name */
+  function groupPathOptions(exclude){
+    var out = [];
+    var kids = {};
+    state.groups.forEach(function(g){
+      var k = g.parentId || "";
+      (kids[k] || (kids[k] = [])).push(g);
+    });
+    (function walk(parentId, depth){
+      (kids[parentId || ""] || []).forEach(function(g){
+        /* a folder cannot be offered as its own home, nor its descendants' */
+        if (exclude && (g.id === exclude || C.wouldCycle(state.groups, exclude, g.id))) return;
+        out.push({ id: g.id, label: new Array(depth + 1).join(" ") + g.name });
+        walk(g.id, depth + 1);
+      });
+    })("", 0);
+    return out;
+  }
+  function fillGroupSelect(sel, chosen, exclude){
+    sel.textContent = "";
+    var top = document.createElement("option");
+    top.value = ""; top.textContent = "— none (top level) —";
+    sel.appendChild(top);
+    groupPathOptions(exclude).forEach(function(o){
+      var op = document.createElement("option");
+      op.value = o.id; op.textContent = o.label;
+      sel.appendChild(op);
+    });
+    sel.value = chosen || "";
+  }
+  function buildGpSwatches(){
+    var host = $("gpSwatches");
+    host.textContent = "";
+    C.COLOURS.forEach(function(c){
+      var b = document.createElement("button");
+      b.type = "button"; b.style.background = SWATCH[c];
+      b.setAttribute("aria-label", c);
+      b.setAttribute("aria-pressed", c === gpColour ? "true" : "false");
+      b.addEventListener("click", function(){
+        gpColour = c;
+        Array.prototype.forEach.call(host.children, function(el){
+          el.setAttribute("aria-pressed", el === b ? "true" : "false");
+        });
+      });
+      host.appendChild(b);
+    });
+  }
+  function openGroupDialog(g){
+    gpEditing = g || null;
+    gpColour = g ? (g.colour || "slate") : "slate";
+    $("gpDlgHead").textContent = g ? "Folder" : "New folder";
+    $("gpName").value = g ? g.name : "";
+    $("gpDelete").style.display = g ? "" : "none";
+    buildGpSwatches();
+    fillGroupSelect($("gpParent"), g ? g.parentId : "", g ? g.id : null);
+    $("gpDlg").showModal();
+    setTimeout(function(){ $("gpName").focus(); }, 30);
+  }
+  $("addGroup").addEventListener("click", function(){ openGroupDialog(null); });
+  $("gpCancel").addEventListener("click", function(){ $("gpDlg").close(); });
+  $("gpSave").addEventListener("click", function(){
+    var name = $("gpName").value.trim();
+    if (!name){ $("gpName").focus(); return; }
+    var parent = $("gpParent").value || null;
+    var p = gpEditing
+      ? C.updateGroup(gpEditing.id, { name:name, colour:gpColour })
+          .then(function(){ return C.moveGroup(gpEditing.id, parent); })
+      : C.createGroup(name, gpColour, parent);
+    p.then(function(){
+      $("gpDlg").close();
+      return refreshLists();
+    }).catch(function(e){ say("Could not save the folder: " + e.message); });
+  });
+  $("gpDelete").addEventListener("click", function(){
+    if (!gpEditing) return;
+    if (!confirm("Delete the folder “" + gpEditing.name +
+                 "”? Everything inside it moves up one level, nothing is lost.")) return;
+    C.deleteGroup(gpEditing.id).then(function(){
+      $("gpDlg").close();
+      return refreshLists();
+    }).catch(function(e){ say("Could not delete the folder: " + e.message); });
+  });
 
   /* ---------------- notebook dialog ---------------- */
   var nbEditing = null, nbColour = "slate";
@@ -3846,6 +4320,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("nbDelete").style.display = nb ? "" : "none";
     $("nbDuplicate").style.display = nb ? "" : "none";
     buildSwatches();
+    fillGroupSelect($("nbGroup"), nb ? nb.groupId : "", null);
     $("nbDlg").showModal();
     /* A new notebook arrives pre-named with the next in the series, selected
        rather than just filled in, so typing over it costs one keystroke. */
@@ -3867,9 +4342,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("nbSave").addEventListener("click", function(){
     var name = $("nbName").value.trim();
     if (!name){ $("nbName").focus(); return; }
+    var group = $("nbGroup").value || null;
     var p = nbEditing
-      ? C.updateNotebook(nbEditing.id, {name:name, colour:nbColour})
-      : C.createNotebook(name, nbColour);
+      ? C.updateNotebook(nbEditing.id, {name:name, colour:nbColour, groupId:group})
+      : C.createNotebook(name, nbColour).then(function(nb){
+          return group ? C.updateNotebook(nb.id, {groupId:group}).then(function(){ return nb; }) : nb;
+        });
     p.then(function(nb){
       $("nbDlg").close();
       if (nbEditing) return refreshLists();
@@ -5117,6 +5595,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     uiScale: 100,
     backupGap: 1,
     defaultZoom: 1,
+    pageFlow: true,    /* scrolling past the end carries on to the next page */
     smooth: 40,        /* handwriting smoothing, per cent; 0 turns it off */
     zoomMin: 50,       /* zoom limits, per cent, honoured by buttons and pinch */
     zoomMax: 300
@@ -5166,6 +5645,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setAutoScroll").checked = cfg.autoScroll;
     $("setWake").checked = cfg.wakeLock;
     $("setPinch").checked = cfg.pinchZoom;
+    $("setPageFlow").checked = cfg.pageFlow !== false;
     $("setTapType").checked = cfg.tapToType;
     $("setSpell").checked = cfg.spellcheck !== false;
     $("setSymbols").checked = cfg.symbols !== false;
@@ -5209,6 +5689,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     bindCheck("setHover", "hoverDot");
     bindCheck("setAutoScroll", "autoScroll");
     bindCheck("setPinch", "pinchZoom");
+    bindCheck("setPageFlow", "pageFlow");
     bindCheck("setTapType", "tapToType");
     $("setSpell").addEventListener("change", function(){
       cfg.spellcheck = this.checked; saveCfg(); applySpell();
@@ -7195,6 +7676,97 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   $("paper").addEventListener("scroll", queueSavePlace, { passive: true });
 
+  /* ---- 20c. scrolling past the end flows into the next page ----
+     Pages are separate records with their own ink layer, so this moves you to
+     the next page rather than stitching them into one giant scroller: the
+     canvas is sized to the viewport and a single tall surface would have to
+     redraw every stroke of every page.
+     An accumulator, not a plain "you hit the bottom" test, because reaching
+     the end of a page is completely normal — you have to keep pushing past it
+     to mean it. The same threshold serves the wheel, one finger and two. */
+  var flow = { acc: 0, dir: 0, busy: false, cueTimer: null };
+  var FLOW_PUSH = 140;        /* how much overscroll counts as "go on" */
+
+  function pageOrder(){
+    return state.notes.slice().sort(function(a, b){
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+  }
+  function neighbourPage(dir){
+    var list = pageOrder();
+    var i = -1;
+    list.forEach(function(n, k){ if (n.id === state.noteId) i = k; });
+    if (i < 0) return null;
+    return list[i + dir] || null;
+  }
+  function showFlowCue(note, dir){
+    var cue = $("flowCue");
+    if (!cue) return;
+    cue.textContent = (dir > 0 ? "↓  " : "↑  ") + C.displayTitle(note);
+    cue.hidden = false;
+    cue.classList.add("on");
+    clearTimeout(flow.cueTimer);
+    flow.cueTimer = setTimeout(function(){
+      cue.classList.remove("on");
+      setTimeout(function(){ cue.hidden = true; }, 260);
+    }, 1100);
+  }
+  /* at the top edge, at the bottom edge, or neither */
+  function edgeOf(p){
+    if (p.scrollTop <= 0) return -1;
+    if (p.scrollTop + p.clientHeight >= p.scrollHeight - 1) return 1;
+    return 0;
+  }
+  function flowTo(dir){
+    if (flow.busy) return;
+    var next = neighbourPage(dir);
+    if (!next) return;
+    flow.busy = true;
+    flow.acc = 0;
+    var landAtBottom = (dir < 0);
+    showFlowCue(next, dir);
+    flush().then(function(){
+      go({ nbId: state.nbId, noteId: next.id });
+      /* going backwards should land at the foot of the previous page, so the
+         movement reads as one continuous document rather than a jump */
+      setTimeout(function(){
+        var p = $("paper");
+        if (landAtBottom && p) p.scrollTop = Math.max(0, p.scrollHeight - p.clientHeight);
+        flow.busy = false;
+      }, 260);
+    }).catch(function(){ flow.busy = false; });
+  }
+  function pushFlow(dir, amount){
+    if (!cfg.pageFlow || flow.busy || !state.noteId) return;
+    var p = $("paper");
+    if (!p || edgeOf(p) !== dir) { flow.acc = 0; return; }
+    if (dir !== flow.dir){ flow.dir = dir; flow.acc = 0; }
+    flow.acc += amount;
+    if (flow.acc >= FLOW_PUSH) flowTo(dir);
+  }
+  $("paper").addEventListener("wheel", function(e){
+    if (e.deltaY > 0) pushFlow(1, e.deltaY);
+    else if (e.deltaY < 0) pushFlow(-1, -e.deltaY);
+  }, { passive: true });
+  /* Touch: once the scroller is against an edge it stops firing scroll
+     events, so the finger has to be measured directly. This sees one and two
+     finger drags alike because it only watches the first pointer's travel. */
+  var flowTouch = null;
+  $("paper").addEventListener("touchstart", function(e){
+    flowTouch = e.touches.length ? e.touches[0].clientY : null;
+  }, { passive: true });
+  $("paper").addEventListener("touchmove", function(e){
+    if (flowTouch == null || !e.touches.length) return;
+    var y = e.touches[0].clientY;
+    var dy = flowTouch - y;          /* dragging up means going down the page */
+    flowTouch = y;
+    if (dy > 0) pushFlow(1, dy);
+    else if (dy < 0) pushFlow(-1, -dy);
+  }, { passive: true });
+  $("paper").addEventListener("touchend", function(){
+    flowTouch = null; flow.acc = 0;
+  }, { passive: true });
+
   /* ---- 21. only draw the strokes you can actually see ---- */
   /* kept off the stroke itself so it can never be written to disk */
   var boundsCache = (typeof WeakMap === "function") ? new WeakMap() : null;
@@ -8447,6 +9019,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     C.getMeta("recentSearch", []).then(function(r){ state.recentSearch = r || []; });
     C.getMeta("toolMem", null).then(function(m){ if (m) { toolMem = m; restoreTool(ink.tool); paintInkTools(); } });
     C.getMeta("nbFold", {}).then(function(m){ state.nbFold = m || {}; });
+    C.getMeta("gFold", {}).then(function(m){ state.gFold = m || {}; });
+    loadOpenNbs();
     loadCfg();
     buildInkTools(); buildTextPalettes();
     buildPresets(); wireSettings(); wireBarFolds(); paintEdge();
