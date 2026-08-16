@@ -7630,10 +7630,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var c = caretText(20);
     if (!c) return false;
     var txt = c.text;
-    if (txt.slice(-1) !== " ") return false;      /* fires on the space */
+    /* Fires on the space. A space typed at the end of a contenteditable does
+       not arrive as U+0020: the browser substitutes a non-breaking space
+       U+00A0 so it cannot collapse to nothing. Testing for " " alone is why
+       nothing ever expanded while typing at the end of a line. */
+    var sp = txt.slice(-1);
+    if (sp !== " " && sp !== "\u00A0") return false;
     var m = C.symbolFor(txt.slice(0, -1));
     if (!m) return false;
-    return replaceBeforeCaret(m.cut + 1, m.ins + " ");
+    return replaceBeforeCaret(m.cut + 1, m.ins + sp);   /* put the same space back */
   }
   function runInlineMarkdown(){
     if (cfg.markdown === false) return false;
@@ -7648,6 +7653,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (mark === "*" && body.slice(-1) === "*") continue;   /* part of ** */
       var openAt = body.lastIndexOf(mark);
       if (openAt < 0) continue;
+      /* Bold outranks italic. "**bold*" is a half-typed bold, not a finished
+         italic, but the single-star rule used to match it and swallow the
+         stars before the closing "**" could ever arrive. If the opening star
+         is itself part of a "**", stand down and wait for the second star. */
+      if (mark === "*" && openAt > 0 && body.charAt(openAt - 1) === "*") continue;
       var inner = body.slice(openAt + mark.length);
       if (!inner || inner.indexOf(mark) >= 0 || /^\s|\s$/.test(inner)) continue;
       return wrapBeforeCaret(inner.length + mark.length * 2, inner, tag);
