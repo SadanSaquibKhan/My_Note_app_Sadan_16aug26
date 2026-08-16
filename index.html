@@ -338,6 +338,39 @@
     line-height:1.5; padding:16px; text-align:center; color:var(--warn);
     background:var(--warnbg); border-color:var(--warnline);
   }
+  /* a locked picture says so, and stops taking the drag itself */
+  #body figure.imgblock.locked{border-color:var(--rule); border-style:dashed}
+  #body figure.imgblock.locked img{pointer-events:none}
+  #body figure.imgblock.locked::after{
+    content:"\1F512"; position:absolute; top:4px; right:6px;
+    font-size:13px; line-height:1; opacity:.75;
+  }
+  /* the picture being moved, and the line showing where it will land */
+  #body figure.imgblock.moving{opacity:.45}
+  #body .dropline{
+    height:0; border-top:2px solid var(--live); margin:2px 0; pointer-events:none;
+  }
+  /* crop */
+  .cropdlg{
+    position:fixed; inset:0; z-index:60; background:rgba(0,0,0,.72);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+  }
+  .cropdlg[hidden]{display:none}
+  .cropstage{
+    position:relative; max-width:92vw; max-height:76vh; line-height:0;
+    touch-action:none; cursor:crosshair;
+  }
+  .cropstage img{max-width:92vw; max-height:76vh; display:block; user-select:none}
+  .cropsel{
+    position:absolute; border:2px dashed #fff; background:rgba(255,255,255,.16);
+    display:none; pointer-events:none;
+  }
+  .cropsel.on{display:block}
+  .cropbar{
+    display:flex; align-items:center; gap:8px; width:92vw; max-width:640px;
+    background:var(--panel); border-radius:8px; padding:8px 10px;
+  }
+  .cropbar .hint{margin:0}
   #body blockquote{
     margin:var(--lead) 0; padding:2px 0 2px 16px;
     border-left:3px solid var(--rule); color:var(--ink-2);
@@ -1078,8 +1111,24 @@
         <button class="ghost" id="imgRight" title="Align right">&#8677;</button>
         <button class="ghost" id="imgAlt" title="Describe the picture">Alt</button>
         <button class="ghost" id="imgCaption">Caption</button>
+        <button class="ghost" id="imgCrop" title="Crop this picture">Crop</button>
+        <button class="ghost" id="imgUncrop" title="Put back the whole picture">Uncrop</button>
+        <button class="ghost" id="imgMove" title="Move this picture somewhere else in the page">Move</button>
+        <button class="ghost" id="imgLock" title="Lock so it cannot be moved or resized by accident">Lock</button>
         <button class="ghost danger" id="imgRemove">Remove</button>
         <button class="ghost" id="imgDone">Done</button>
+      </div>
+      <div class="cropdlg" id="cropBox" hidden>
+        <div class="cropstage" id="cropStage">
+          <img id="cropImg" alt="">
+          <div class="cropsel" id="cropSel"></div>
+        </div>
+        <div class="cropbar">
+          <span class="hint" id="cropHint">Drag a box over the part you want to keep.</span>
+          <span class="grow"></span>
+          <button type="button" class="btn" id="cropCancel">Cancel</button>
+          <button type="button" class="btn primary" id="cropApply">Crop</button>
+        </div>
       </div>
       <div class="tagrow" id="noteTags" hidden></div>
       <div class="pagewrap">
@@ -2959,10 +3008,16 @@ var MarginCore = (function(){
       getAll("notebooks"), getAll("notes"), getAll("practices"), getAll("assets"), allMeta()
     ]).then(function(r){
       return Promise.all(r[3].map(function(a){
-        if (!a.blob) return Promise.resolve(a);
-        return blobToData(a.blob).then(function(d){
+        if (!a.blob && !a.orig) return Promise.resolve(a);
+        /* `orig` is the pristine copy kept when a picture is cropped. It is a
+           Blob like `blob` is, and JSON.stringify turns a Blob into {}, so it
+           has to be encoded here too. Left alone it would import as an empty
+           object and Uncrop would then replace a good picture with nothing. */
+        return Promise.all([blobToData(a.blob), blobToData(a.orig)]).then(function(d){
           var c = {}; Object.keys(a).forEach(function(k){ c[k] = a[k]; });
-          c.blob = null; c.data = d; return c;
+          c.blob = null; c.data = d[0];
+          c.orig = null; c.origData = d[1];
+          return c;
         });
       })).then(function(assets){ r[3] = assets; return r; });
     }).then(function(r){
@@ -3049,6 +3104,13 @@ var MarginCore = (function(){
         r.blob = dataToBlob(r.data);
         delete r.data;
       }
+      if (r.origData && !r.orig){
+        r.orig = dataToBlob(r.origData);
+        delete r.origData;
+      }
+      /* an older backup, or one written before crop existed, can carry an
+         `orig` that survived JSON as a bare {}; that is not a picture */
+      if (r.orig && typeof r.orig === "object" && !(r.orig instanceof Blob)) r.orig = null;
     }
     if (kind === "note"){
       if (r.starred === undefined) r.starred = false;
@@ -5771,6 +5833,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return C.reviveAsset(id).then(function(){ return C.getAsset(id); }).then(function(a){
         fig.textContent = "";
         fig.style.width = (fig.getAttribute("data-pct") || 70) + "%";
+        /* the lock lives on the figure, so it has to be re-applied every time
+           the picture is rebuilt, not just when the button is pressed */
+        fig.classList.toggle("locked", fig.getAttribute("data-lock") === "1");
         if (!a || !a.blob){
           fig.classList.add("missing");
           fig.textContent = "This picture is missing.";
@@ -5802,9 +5867,40 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     pickedImage = { fig: fig, asset: asset };
     fig.classList.add("on");
     $("imgBar").hidden = false;
+    paintImgBar();
   }
+  /* ---- 10. locking, cropping and moving a picture ----
+     Lock is only a guard against a stray hand: it blocks resize, crop and
+     move, and it is stored on the figure so it survives a reload.
+     Crop keeps the original bytes under `orig` on the asset and writes the
+     cropped result to `blob`, so Uncrop is exact rather than approximate. It
+     is stored once: cropping an already-cropped picture does not overwrite
+     the pristine copy, otherwise "revert" would only ever undo the last
+     crop and the original would be lost after two. */
+  function isLocked(fig){ return !!fig && fig.getAttribute("data-lock") === "1"; }
+  function lockedStop(){
+    if (pickedImage && isLocked(pickedImage.fig)){
+      hint("This picture is locked. Tap Unlock first.");
+      return true;
+    }
+    return false;
+  }
+  function paintImgBar(){
+    if (!pickedImage) return;
+    var locked = isLocked(pickedImage.fig);
+    var a = pickedImage.asset || {};
+    $("imgLock").textContent = locked ? "Unlock" : "Lock";
+    $("imgLock").setAttribute("aria-pressed", locked ? "true" : "false");
+    $("imgUncrop").disabled = !a.orig;
+    $("imgCrop").disabled = locked;
+    $("imgMove").disabled = locked;
+    $("imgSmaller").disabled = locked;
+    $("imgBigger").disabled = locked;
+  }
+
   function imgResize(delta){
     if (!pickedImage) return;
+    if (lockedStop()) return;
     var pct = Math.max(20, Math.min(100, Number(pickedImage.fig.getAttribute("data-pct") || 70) + delta));
     pickedImage.fig.setAttribute("data-pct", pct);
     pickedImage.fig.style.width = pct + "%";
@@ -5826,6 +5922,170 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     pickedImage = null;
     $("imgBar").hidden = true;
   });
+  /* ---- lock ---- */
+  $("imgLock").addEventListener("click", function(){
+    if (!pickedImage) return;
+    var on = !isLocked(pickedImage.fig);
+    if (on) pickedImage.fig.setAttribute("data-lock", "1");
+    else pickedImage.fig.removeAttribute("data-lock");
+    pickedImage.fig.classList.toggle("locked", on);
+    paintImgBar();
+    markDirty(); flush();
+    hint(on ? "Locked. It cannot be moved or resized until you unlock it."
+            : "Unlocked.");
+  });
+
+  /* ---- crop ---- */
+  var crop = { sel: null, drag: null };
+  function openCrop(){
+    if (!pickedImage || lockedStop()) return;
+    var a = pickedImage.asset;
+    if (!a || !a.blob) return;
+    var url = URL.createObjectURL(a.blob);
+    var img = $("cropImg");
+    img.onload = function(){
+      $("cropBox").hidden = false;
+      crop.sel = null;
+      $("cropSel").classList.remove("on");
+      $("cropHint").textContent = "Drag a box over the part you want to keep.";
+    };
+    img.src = url;
+    crop.url = url;
+  }
+  function closeCrop(){
+    $("cropBox").hidden = true;
+    if (crop.url){ URL.revokeObjectURL(crop.url); crop.url = null; }
+    $("cropImg").removeAttribute("src");
+    crop.sel = null; crop.drag = null;
+  }
+  (function wireCropDrag(){
+    var stage = $("cropStage"), sel = $("cropSel");
+    function local(e){
+      var r = $("cropImg").getBoundingClientRect();
+      return {
+        x: Math.max(0, Math.min(r.width,  e.clientX - r.left)),
+        y: Math.max(0, Math.min(r.height, e.clientY - r.top)),
+        w: r.width, h: r.height
+      };
+    }
+    function paint(){
+      if (!crop.sel){ sel.classList.remove("on"); return; }
+      var img = $("cropImg");
+      var off = img.offsetLeft, offT = img.offsetTop;
+      sel.classList.add("on");
+      sel.style.left = (off + crop.sel.x) + "px";
+      sel.style.top = (offT + crop.sel.y) + "px";
+      sel.style.width = crop.sel.w + "px";
+      sel.style.height = crop.sel.h + "px";
+    }
+    stage.addEventListener("pointerdown", function(e){
+      var p = local(e);
+      crop.drag = { x0: p.x, y0: p.y };
+      crop.sel = { x: p.x, y: p.y, w: 0, h: 0 };
+      try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+      paint();
+      e.preventDefault();
+    });
+    stage.addEventListener("pointermove", function(e){
+      if (!crop.drag) return;
+      var p = local(e);
+      crop.sel = {
+        x: Math.min(crop.drag.x0, p.x), y: Math.min(crop.drag.y0, p.y),
+        w: Math.abs(p.x - crop.drag.x0), h: Math.abs(p.y - crop.drag.y0)
+      };
+      paint();
+    });
+    stage.addEventListener("pointerup", function(){
+      crop.drag = null;
+      if (crop.sel && (crop.sel.w < 8 || crop.sel.h < 8)){
+        crop.sel = null; paint();
+        $("cropHint").textContent = "That box was too small. Try again.";
+      }
+    });
+  })();
+  $("cropCancel").addEventListener("click", closeCrop);
+  $("cropApply").addEventListener("click", function(){
+    if (!pickedImage){ closeCrop(); return; }
+    if (!crop.sel){ $("cropHint").textContent = "Drag a box first."; return; }
+    var img = $("cropImg");
+    var shown = img.getBoundingClientRect();
+    /* the box is in displayed pixels; the crop must happen in the picture's
+       own pixels, so scale by however much the browser shrank it to fit */
+    var sx = (img.naturalWidth || shown.width) / shown.width;
+    var sy = (img.naturalHeight || shown.height) / shown.height;
+    var cx = Math.round(crop.sel.x * sx), cy = Math.round(crop.sel.y * sy);
+    var cw = Math.max(1, Math.round(crop.sel.w * sx));
+    var ch = Math.max(1, Math.round(crop.sel.h * sy));
+    var cv = document.createElement("canvas");
+    cv.width = cw; cv.height = ch;
+    var ctx = cv.getContext("2d");
+    if (!ctx){ say("This device cannot crop pictures."); closeCrop(); return; }
+    ctx.drawImage(img, cx, cy, cw, ch, 0, 0, cw, ch);
+    var asset = pickedImage.asset;
+    cv.toBlob(function(b){
+      if (!b){ say("Could not crop that picture."); closeCrop(); return; }
+      var patch = { blob: b, w: cw, h: ch };
+      /* keep the pristine copy exactly once */
+      if (!asset.orig) patch.orig = asset.blob;
+      C.saveAsset(asset.id, patch).then(function(){
+        Object.keys(patch).forEach(function(k){ asset[k] = patch[k]; });
+        closeCrop();
+        return hydrateImages();
+      }).then(function(){
+        markDirty(); flush();
+        hint("Cropped. Uncrop puts the whole picture back.");
+      }).catch(function(e){ say("Could not save the crop: " + e.message); });
+    }, "image/jpeg", 0.9);
+  });
+  $("imgCrop").addEventListener("click", openCrop);
+  $("imgUncrop").addEventListener("click", function(){
+    if (!pickedImage || lockedStop()) return;
+    var asset = pickedImage.asset;
+    if (!asset || !asset.orig){ hint("This picture has not been cropped."); return; }
+    var back = asset.orig;
+    C.saveAsset(asset.id, { blob: back, orig: null }).then(function(){
+      asset.blob = back; asset.orig = null;
+      return hydrateImages();
+    }).then(function(){
+      paintImgBar(); markDirty(); flush();
+      hint("The whole picture is back.");
+    }).catch(function(e){ say("Could not undo the crop: " + e.message); });
+  });
+
+  /* ---- move ---- */
+  /* Moving is done by picking the picture up and tapping where it should go,
+     rather than a live drag. A drag would fight the page scroll and the ink
+     layer for the same pointer, and on a tablet that means a picture that
+     jumps whenever you try to scroll past it. */
+  var moving = null;
+  function startMove(){
+    if (!pickedImage || lockedStop()) return;
+    moving = pickedImage.fig;
+    moving.classList.add("moving");
+    $("imgMove").setAttribute("aria-pressed", "true");
+    hint("Now tap the line in the page where this picture should go.");
+  }
+  function cancelMove(){
+    if (moving) moving.classList.remove("moving");
+    moving = null;
+    $("imgMove").setAttribute("aria-pressed", "false");
+  }
+  $("imgMove").addEventListener("click", function(){
+    if (moving) cancelMove(); else startMove();
+  });
+  $("body").addEventListener("click", function(e){
+    if (!moving) return;
+    var fig = moving;
+    if (e.target === fig || fig.contains(e.target)) return;   /* tapped itself */
+    var block = e.target;
+    while (block && block.parentNode !== $("body")) block = block.parentNode;
+    if (!block || block === fig){ cancelMove(); return; }
+    $("body").insertBefore(fig, block);
+    cancelMove();
+    markDirty(); flush();
+    hint("Moved.");
+  }, true);
+
   $("imgBtn").addEventListener("click", function(){ $("imgFile").click(); });
   $("camBtn").addEventListener("click", function(){ $("camFile").click(); });
   function wireFilePicker(id){
@@ -7635,6 +7895,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* ---------- 7. image alignment, alt text, lazy decode ---------- */
   function alignImage(how){
     if (!pickedImage) return;
+    if (lockedStop()) return;      /* a lock covers where it sits, too */
     pickedImage.fig.setAttribute("data-align", how);
     applyImageAlign(pickedImage.fig);
     markDirty(); flush();
