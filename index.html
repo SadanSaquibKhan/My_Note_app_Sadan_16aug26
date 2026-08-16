@@ -65,8 +65,14 @@
   }
 
   *{box-sizing:border-box}
-  html,body{height:100%; margin:0; overscroll-behavior:none}
+  /* Pinned to the width as well as the height. height:100% alone left the
+     page free to lay out narrower than the window, which is what put the app
+     in the top-left corner with dead space around it. 100dvh tracks the
+     visual viewport, so the bottom edge follows Chrome's address bar as it
+     hides and shows instead of stopping short of it. */
+  html,body{height:100%; min-height:100dvh; width:100%; margin:0; overscroll-behavior:none}
   body{
+    min-width:100%; max-width:100%; overflow-x:hidden;
     background:var(--ground); color:var(--ink);
     font-family:"Segoe UI",system-ui,sans-serif; font-size:15px;
     display:flex; flex-direction:column;
@@ -119,8 +125,11 @@
   .list{flex:0 0 320px; background:var(--panel); border-right:1px solid var(--rule)}
   .doc{flex:1}
 
+  /* also wraps: this row gained Folder and Insert, which pushed the + off
+     the edge on a narrow pane */
   .panehead{
-    flex:none; display:flex; align-items:center; gap:8px; padding:11px 14px;
+    flex:none; display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    padding:11px 14px;
     border-bottom:1px solid var(--rule); background:var(--panel);
   }
   .panehead h2{
@@ -197,8 +206,12 @@
   .empty b{color:var(--ink); font-weight:600}
 
   /* ---------- editor ---------- */
+  /* Wraps like .fmtbar already did. Without it this row ran off the right
+     edge and the last buttons (Pin, and the zoom controls before it) were
+     simply unreachable — there was no scrollbar to get at them either. */
   .docbar{
-    flex:none; display:flex; align-items:center; gap:8px; padding:9px 14px;
+    flex:none; display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    padding:9px 14px;
     border-bottom:1px solid var(--rule); background:var(--panel);
   }
   #noteTitle{
@@ -1397,6 +1410,12 @@
           <option value="light">Always light</option>
           <option value="dark">Always dark</option>
         </select>
+      </div>
+      <div class="field">
+        <button type="button" class="btn" id="screenBtn">Check how the screen is being used</button>
+        <div class="pressbox" id="screenBox" hidden>
+          <p class="hint" id="screenOut"></p>
+        </div>
       </div>
       <div class="field">
         <button type="button" class="btn" id="pressBtn">Test what my pen reports</button>
@@ -8746,6 +8765,43 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return ratio > 1.15 && window.innerWidth > 0;
     } catch (e) { return false; }
   }
+  /* A plain readout of the numbers that decide the layout. Guessing at why
+     the page is laid out narrower than the screen from a photograph does not
+     work; this says outright whether the document is filling the window and
+     which of the two is short. */
+  function screenReport(){
+    var vv = window.visualViewport;
+    var doc = document.documentElement;
+    var win = window.innerWidth || 0;
+    var body = document.body ? document.body.getBoundingClientRect().width : 0;
+    var lines = [
+      "window: " + win + " × " + (window.innerHeight || 0),
+      "screen: " + ((window.screen && window.screen.width) || "?") + " × " +
+                   ((window.screen && window.screen.height) || "?"),
+      "page box: " + Math.round(body) + " wide, document " + doc.clientWidth,
+      "pixel ratio: " + (window.devicePixelRatio || 1),
+      vv ? ("visual viewport: " + Math.round(vv.width) + " × " + Math.round(vv.height) +
+            ", scale " + (vv.scale || 1)) : "visual viewport: not reported"
+    ];
+    var fills = win > 0 && Math.abs(body - win) <= 2;
+    lines.push(fills
+      ? "✓ the page is filling the window."
+      : "✗ the page is " + Math.round(body) + "px wide inside a " + win +
+        "px window — something is holding it narrow.");
+    if (desktopSiteOn()){
+      lines.push("Chrome's “Desktop site” looks to be on. Turn it off in the ⋮ menu.");
+    }
+    return lines.join("\n");
+  }
+  $("screenBtn").addEventListener("click", function(){
+    var box = $("screenBox");
+    box.hidden = !box.hidden;
+    if (!box.hidden){
+      $("screenOut").style.whiteSpace = "pre-line";
+      $("screenOut").textContent = screenReport();
+    }
+  });
+
   function checkViewport(){
     if (!desktopSiteOn()) return;
     C.getMeta("hideDesktopTip", 0).then(function(h){
