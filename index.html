@@ -431,6 +431,25 @@
   .flowcue.on{opacity:1; transform:translate(-50%, 0)}
   .flowcue[hidden]{display:none}
 
+  /* corner grips on the selected picture. Big enough for a fingertip, which
+     is why they overhang the corner rather than sitting inside it. */
+  #body figure.imgblock .imggrip{
+    position:absolute; width:22px; height:22px; border-radius:50%;
+    background:var(--live); border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.35);
+    touch-action:none; z-index:2;
+  }
+  #body figure.imgblock .imggrip-nw{left:-11px; top:-11px; cursor:nwse-resize}
+  #body figure.imgblock .imggrip-ne{right:-11px; top:-11px; cursor:nesw-resize}
+  #body figure.imgblock .imggrip-sw{left:-11px; bottom:-11px; cursor:nesw-resize}
+  #body figure.imgblock .imggrip-se{right:-11px; bottom:-11px; cursor:nwse-resize}
+  #body figure.imgblock.on{touch-action:none}
+  /* the line showing where a dragged picture will land */
+  .dropmark{
+    position:fixed; height:0; border-top:3px solid var(--live);
+    z-index:58; pointer-events:none;
+  }
+  .dropmark[hidden]{display:none}
+
   /* a locked picture says so, and stops taking the drag itself */
   #body figure.imgblock.locked{border-color:var(--rule); border-style:dashed}
   #body figure.imgblock.locked img{pointer-events:none}
@@ -1451,10 +1470,14 @@
       </div>
       <div class="field">
         <label for="setSmooth">Handwriting smoothing <b id="smoothOut"></b></label>
-        <input type="range" id="setSmooth" min="0" max="100" step="10">
+        <input type="range" id="setSmooth" min="0" max="50" step="5">
         <p class="hint">Steadies the wobble in a stroke. Higher is neater but
         rounder; 0 leaves your writing exactly as drawn. Applies to new strokes
         only, so nothing already written is changed.</p>
+        <label class="check"><input type="checkbox" id="setCurves"> Draw strokes as curves rather than straight joins</label>
+        <p class="hint">Rounds the corners between the points the pen reported.
+        This changes only how the ink is drawn, not what is stored, so it
+        improves writing you have already done and costs nothing to turn off.</p>
       </div>
       <div class="field">
         <label for="setZoomMin">Smallest zoom <b id="zoomMinOut"></b></label>
@@ -1648,6 +1671,8 @@
 <input type="file" id="camFile" accept="image/*" capture="environment" hidden>
 <input type="file" id="anyFile" multiple hidden>
 <div class="flowcue" id="flowCue" hidden></div>
+<div class="dropmark" id="dropMark" hidden></div>
+<div class="holdmenu" id="imgMenu" hidden></div>
 <div class="holdmenu" id="holdMenu" hidden></div>
 <button class="immerseout" id="immerseOut" hidden>Show the tools</button>
 
@@ -1680,7 +1705,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b13";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b14";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -2357,6 +2382,24 @@ var MarginCore = (function(){
     if (!best) return fallback;
     return seriesName(best.stem, best.max + 1, best.pad);
   }
+  /* Reading order for pages. It has to follow the numbers in the titles, not
+     the order the records were made: a page inserted between p2 and p3 is
+     created last of all, so ordering by createdAt put it at the very end and
+     scrolling through the notebook visited it out of sequence.
+     Pages with no number in the title keep to creation order and sit after
+     the numbered ones, which is the only sensible place for them. */
+  function sortPages(list){
+    return list.slice().sort(function(a, b){
+      var pa = splitSeries(a && a.title), pb = splitSeries(b && b.title);
+      if (pa && pb){
+        if (pa.stem === pb.stem && pa.num !== pb.num) return pa.num - pb.num;
+        if (pa.stem !== pb.stem) return pa.stem < pb.stem ? -1 : 1;
+      } else if (pa && !pb) return -1;
+      else if (!pa && pb) return 1;
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+  }
+
   /* Which existing pages an insert at `fromNum` has to push up, highest
      first so two pages never momentarily hold the same number. */
   function renumberPlan(titles, stem, fromNum){
@@ -2569,9 +2612,7 @@ var MarginCore = (function(){
      happens to be sorted in, so the suggestion does not change when you
      switch the sort. */
   function pagesInOrder(nbId){
-    return notesIn(nbId).then(function(list){
-      return list.slice().sort(function(a, b){ return (a.createdAt||0) - (b.createdAt||0); });
-    });
+    return notesIn(nbId).then(function(list){ return sortPages(list); });
   }
   function suggestNotebookName(){
     return allNotebooks().then(function(list){
@@ -3514,7 +3555,7 @@ var MarginCore = (function(){
     updateGroup:updateGroup, moveGroup:moveGroup, deleteGroup:deleteGroup,
     wouldCycle:wouldCycle,
     splitSeries:splitSeries, seriesName:seriesName, nextSeriesName:nextSeriesName,
-    renumberPlan:renumberPlan, suggestNotebookName:suggestNotebookName,
+    renumberPlan:renumberPlan, sortPages:sortPages, suggestNotebookName:suggestNotebookName,
     suggestPageTitle:suggestPageTitle, insertPageAfter:insertPageAfter,
     INK_TOOLS:INK_TOOLS, INK_COLOURS:INK_COLOURS, INK_WIDTHS:INK_WIDTHS,
     INK_WIDTH_LABELS:INK_WIDTH_LABELS, W_FINE:W_FINE, W_MED:W_MED, W_BROAD:W_BROAD,
@@ -4896,6 +4937,34 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     ctx.lineTo(p[i+3], p[i+4]);
     ctx.stroke();
   }
+  /* Draw the stroke as curves instead of straight joins.
+     Each piece runs from the midpoint of one pair of samples to the midpoint
+     of the next, bending around the sample between them. Curving through the
+     midpoints rather than the samples themselves is what makes the joins
+     seamless: consecutive pieces share an endpoint and a tangent, so there is
+     no visible corner where one ends and the next begins.
+     Smoothing (which moves points) and this (which only draws them
+     differently) are worth having together: this alone cannot remove a
+     tremor, and smoothing alone still draws faceted straight lines. */
+  function strokeCurved(ctx, s){
+    var p = s.pts, n = p.length / 3;
+    if (n < 2) return;
+    for (var i = 0; i < n - 1; i++){
+      var x0 = p[i*3], y0 = p[i*3+1], r0 = p[i*3+2];
+      var x1 = p[(i+1)*3], y1 = p[(i+1)*3+1], r1 = p[(i+1)*3+2];
+      /* the first and last pieces reach the real ends, so the stroke starts
+         and stops where the nib did rather than half a sample short */
+      var ax = (i === 0) ? x0 : (p[(i-1)*3] + x0) / 2;
+      var ay = (i === 0) ? y0 : (p[(i-1)*3+1] + y0) / 2;
+      var bx = (i === n - 2) ? x1 : (x0 + x1) / 2;
+      var by = (i === n - 2) ? y1 : (y0 + y1) / 2;
+      ctx.beginPath();
+      ctx.lineWidth = C.penWidth(s.width, (r0 + r1) / 2);
+      ctx.moveTo(ax, ay);
+      ctx.quadraticCurveTo(x0, y0, bx, by);
+      ctx.stroke();
+    }
+  }
   function drawStroke(ctx, s){
     ctx.save();
     ctx.lineCap = "round"; ctx.lineJoin = "round";
@@ -4911,8 +4980,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       ctx.beginPath();
       ctx.arc(p[0], p[1], C.penWidth(s.width, p[2]) / 2, 0, Math.PI * 2);
       ctx.fillStyle = inkHex(s.colour); ctx.fill();
-    } else {
+    } else if (cfg.curves === false){
       for (var i = 0; i + 5 < p.length; i += 3) strokeSegment(ctx, s, i);
+    } else {
+      strokeCurved(ctx, s);
     }
     ctx.restore();
   }
@@ -5725,7 +5796,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     backupGap: 1,
     defaultZoom: 1,
     pageFlow: true,    /* scrolling past the end carries on to the next page */
-    smooth: 40,        /* handwriting smoothing, per cent; 0 turns it off */
+    smooth: 20,        /* handwriting smoothing, per cent; 0 turns it off */
+    curves: true,      /* draw strokes as curves, not straight joins */
     zoomMin: 50,       /* zoom limits, per cent, honoured by buttons and pinch */
     zoomMax: 300
   };
@@ -5786,8 +5858,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (C.setPressure) C.setPressure(cfg.pressure || "normal");
     $("setUIScale").value = cfg.uiScale || 100;
     $("uiScaleOut").textContent = (cfg.uiScale || 100) + "%";
+    /* the slider used to run to 100; a config saved then would sit off the
+       end of the new one and read back as the maximum on first touch */
+    if (cfg.smooth > 50) { cfg.smooth = 50; saveCfg(); }
     $("setSmooth").value = cfg.smooth;
     $("smoothOut").textContent = cfg.smooth ? cfg.smooth + "%" : "off";
+    $("setCurves").checked = cfg.curves !== false;
     $("setZoomMin").value = cfg.zoomMin;
     $("setZoomMax").value = cfg.zoomMax;
     $("zoomMinOut").textContent = cfg.zoomMin + "%";
@@ -5861,6 +5937,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       cfg.smooth = Number(this.value);
       $("smoothOut").textContent = cfg.smooth ? cfg.smooth + "%" : "off";
       saveCfg();
+    });
+    $("setCurves").addEventListener("change", function(){
+      cfg.curves = this.checked;
+      saveCfg();
+      redrawAll();          /* it is a drawing choice, so it shows at once */
     });
     /* The two limits are kept from crossing: whichever one is dragged pushes
        the other ahead of it, so the pair is always a usable range. */
@@ -6457,10 +6538,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         im.src = url;
         im.alt = "";
         fig.appendChild(im);
-        fig.addEventListener("click", function(){
-          if (fig.classList.contains("on")){ openViewer(url); return; }
-          selectImage(fig, a);
-        });
+        /* No per-figure listener here. hydrateImages() runs again on every
+           re-render, and addEventListener stacked a fresh copy each time: the
+           first tap selected the picture, the second stacked handler saw it
+           already selected and threw the full-screen viewer open. One
+           delegated handler on the page replaces all of them. */
         var cap = fig.getAttribute("data-cap");
         if (cap){
           var fc = document.createElement("figcaption");
@@ -6473,11 +6555,46 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   var pickedImage = null;
   function selectImage(fig, asset){
-    if (pickedImage && pickedImage.fig) pickedImage.fig.classList.remove("on");
+    if (pickedImage && pickedImage.fig){
+      pickedImage.fig.classList.remove("on");
+      stripGrips(pickedImage.fig);
+    }
     pickedImage = { fig: fig, asset: asset };
     fig.classList.add("on");
+    addGrips(fig);
     $("imgBar").hidden = false;
     paintImgBar();
+  }
+  function deselectImage(){
+    if (pickedImage && pickedImage.fig){
+      pickedImage.fig.classList.remove("on");
+      stripGrips(pickedImage.fig);
+    }
+    pickedImage = null;
+    $("imgBar").hidden = true;
+  }
+  /* The grips are decoration, not content. They are contenteditable="false"
+     and stripped again the moment the picture is deselected, because #body is
+     saved as innerHTML and anything left behind is written into the note. */
+  function addGrips(fig){
+    if (isLocked(fig)) return;
+    stripGrips(fig);
+    ["nw","ne","sw","se"].forEach(function(c){
+      var g = document.createElement("span");
+      g.className = "imggrip imggrip-" + c;
+      g.setAttribute("data-grip", c);
+      g.setAttribute("contenteditable", "false");
+      fig.appendChild(g);
+    });
+  }
+  function stripGrips(fig){
+    if (!fig) return;
+    Array.prototype.slice.call(fig.querySelectorAll(".imggrip")).forEach(function(g){ g.remove(); });
+  }
+  /* belt and braces: never let a grip reach the saved html */
+  function stripAllGrips(){
+    Array.prototype.slice.call($("body").querySelectorAll(".imggrip"))
+      .forEach(function(g){ g.remove(); });
   }
   /* ---- 10. locking, cropping and moving a picture ----
      Lock is only a guard against a stray hand: it blocks resize, crop and
@@ -6527,11 +6644,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("imgBar").hidden = true;
     markDirty(); flush();
   });
-  $("imgDone").addEventListener("click", function(){
-    if (pickedImage && pickedImage.fig) pickedImage.fig.classList.remove("on");
-    pickedImage = null;
-    $("imgBar").hidden = true;
-  });
+  $("imgDone").addEventListener("click", deselectImage);
   /* ---- lock ---- */
   $("imgLock").addEventListener("click", function(){
     if (!pickedImage) return;
@@ -6539,6 +6652,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (on) pickedImage.fig.setAttribute("data-lock", "1");
     else pickedImage.fig.removeAttribute("data-lock");
     pickedImage.fig.classList.toggle("locked", on);
+    /* a locked picture shows no grips: they only offer moves it will refuse */
+    if (on) stripAllGrips(); else addGrips(pickedImage.fig);
     paintImgBar();
     markDirty(); flush();
     hint(on ? "Locked. It cannot be moved or resized until you unlock it."
@@ -6694,6 +6809,166 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     cancelMove();
     markDirty(); flush();
     hint("Moved.");
+  }, true);
+
+  /* ---- handling a picture with a finger ----
+     One tap selects and shows four corner grips. Dragging the middle moves
+     it, dragging a grip resizes it, and a long press opens everything else.
+     Full screen is on a double tap, deliberately: it used to be one tap,
+     which meant the picture flew open every time you meant to pick it up. */
+  var imgAct = null, imgHoldTimer = null, lastImgTap = 0;
+
+  function figOf(t){
+    if (!t) return null;
+    var el = t.nodeType === 3 ? t.parentNode : t;
+    return (el && el.closest) ? el.closest("figure.imgblock") : null;
+  }
+  function dropMark(y){
+    var d = $("dropMark");
+    var r = $("paper").getBoundingClientRect();
+    d.style.left = r.left + "px";
+    d.style.width = r.width + "px";
+    d.style.top = y + "px";
+    d.hidden = false;
+  }
+  function clearDropMark(){ $("dropMark").hidden = true; }
+  /* which top-level block the pointer is sitting above */
+  function blockAt(clientY){
+    var kids = Array.prototype.slice.call($("body").children);
+    for (var i = 0; i < kids.length; i++){
+      var r = kids[i].getBoundingClientRect();
+      if (clientY < r.top + r.height / 2) return kids[i];
+    }
+    return null;
+  }
+
+  $("body").addEventListener("pointerdown", function(e){
+    var fig = figOf(e.target);
+    if (!fig) return;
+    e.preventDefault();
+    e.stopPropagation();            /* never let this start a pen stroke */
+
+    var now = Date.now();
+    if (fig.classList.contains("on") && now - lastImgTap < 320){
+      lastImgTap = 0;
+      var url0 = imgUrls[fig.getAttribute("data-img")];
+      if (url0) openViewer(url0);
+      return;
+    }
+    lastImgTap = now;
+
+    if (!fig.classList.contains("on")){
+      C.getAsset(fig.getAttribute("data-img")).then(function(a){ selectImage(fig, a); });
+      return;
+    }
+    if (isLocked(fig)){
+      /* still allow the menu, so it can be unlocked again */
+      imgHoldTimer = setTimeout(function(){ openImageMenu(fig, e.clientX, e.clientY); }, cfg.holdMs || 700);
+      return;
+    }
+    var grip = (e.target.getAttribute && e.target.getAttribute("data-grip")) || null;
+    imgAct = {
+      fig: fig, grip: grip, moved: false,
+      x0: e.clientX, y0: e.clientY,
+      pct0: Number(fig.getAttribute("data-pct") || 70)
+    };
+    imgHoldTimer = setTimeout(function(){
+      imgAct = null;
+      openImageMenu(fig, e.clientX, e.clientY);
+    }, cfg.holdMs || 700);
+  }, true);
+
+  document.addEventListener("pointermove", function(e){
+    if (!imgAct) return;
+    var dx = e.clientX - imgAct.x0, dy = e.clientY - imgAct.y0;
+    if (!imgAct.moved && Math.abs(dx) + Math.abs(dy) < 8) return;
+    imgAct.moved = true;
+    clearTimeout(imgHoldTimer);          /* a drag is not a long press */
+    if (imgAct.grip){
+      /* the left-hand grips grow the picture when dragged outward, so the
+         gesture matches the side you took hold of */
+      var host = $("body").getBoundingClientRect().width || 600;
+      var dir = (imgAct.grip === "nw" || imgAct.grip === "sw") ? -1 : 1;
+      var pct = Math.round(imgAct.pct0 + (dx * dir / host) * 200);
+      pct = Math.max(15, Math.min(100, pct));
+      imgAct.fig.setAttribute("data-pct", pct);
+      imgAct.fig.style.width = pct + "%";
+    } else {
+      imgAct.fig.classList.add("moving");
+      dropMark(e.clientY);
+    }
+  });
+
+  document.addEventListener("pointerup", function(e){
+    clearTimeout(imgHoldTimer);
+    if (!imgAct) return;
+    var act = imgAct; imgAct = null;
+    clearDropMark();
+    act.fig.classList.remove("moving");
+    if (!act.moved) return;                  /* a tap, already handled */
+    if (act.grip){
+      var pct = Number(act.fig.getAttribute("data-pct") || 70);
+      C.saveAsset(act.fig.getAttribute("data-img"), { pct: pct });
+      markDirty(); flush();
+      return;
+    }
+    var before = blockAt(e.clientY);
+    if (before !== act.fig){
+      if (before) $("body").insertBefore(act.fig, before);
+      else $("body").appendChild(act.fig);
+      markDirty(); flush();
+    }
+  });
+
+  /* tapping the page, away from any picture, puts it down again */
+  $("body").addEventListener("pointerdown", function(e){
+    if (!pickedImage) return;
+    if (figOf(e.target)) return;
+    deselectImage();
+  });
+
+  /* ---- the long-press menu for a picture ---- */
+  function openImageMenu(fig, x, y){
+    C.getAsset(fig.getAttribute("data-img")).then(function(a){
+      selectImage(fig, a);
+      var m = $("imgMenu");
+      m.innerHTML = "";
+      var locked = isLocked(fig);
+      var items = [
+        [locked ? "Unlock" : "Lock", function(){ $("imgLock").click(); }],
+        ["Crop…", function(){ $("imgCrop").click(); }],
+        ["Undo the crop", function(){ $("imgUncrop").click(); }, !a || !a.orig],
+        ["Align left", function(){ alignImage("left"); }],
+        ["Centre", function(){ alignImage("center"); }],
+        ["Align right", function(){ alignImage("right"); }],
+        ["Describe it (alt text)", function(){ $("imgAlt").click(); }],
+        ["Caption…", function(){ $("imgCaption").click(); }],
+        ["Open full screen", function(){
+          var u = imgUrls[fig.getAttribute("data-img")];
+          if (u) openViewer(u);
+        }],
+        ["Remove", function(){ $("imgRemove").click(); }]
+      ];
+      items.forEach(function(it){
+        var b = document.createElement("button");
+        b.type = "button"; b.className = "holditem";
+        b.textContent = it[0];
+        if (it[2]) b.disabled = true;
+        if (it[0] === "Remove") b.classList.add("danger");
+        b.addEventListener("click", function(){ closeImageMenu(); it[1](); });
+        m.appendChild(b);
+      });
+      var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+      m.style.left = Math.min(Math.max(8, x - 20), Math.max(8, vw - 240)) + "px";
+      m.style.top = Math.min(Math.max(8, y - 10), Math.max(8, vh - 380)) + "px";
+      m.hidden = false;
+    });
+  }
+  function closeImageMenu(){ $("imgMenu").hidden = true; }
+  document.addEventListener("pointerdown", function(e){
+    if ($("imgMenu").hidden) return;
+    if (e.target.closest && e.target.closest("#imgMenu")) return;
+    closeImageMenu();
   }, true);
 
   $("imgBtn").addEventListener("click", function(){ $("imgFile").click(); });
@@ -7816,11 +8091,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var flow = { acc: 0, dir: 0, busy: false, cueTimer: null };
   var FLOW_PUSH = 140;        /* how much overscroll counts as "go on" */
 
-  function pageOrder(){
-    return state.notes.slice().sort(function(a, b){
-      return (a.createdAt || 0) - (b.createdAt || 0);
-    });
-  }
+  /* the same reading order the data layer uses, so scrolling on from a page
+     and the page numbers never disagree */
+  function pageOrder(){ return C.sortPages(state.notes); }
   function neighbourPage(dir){
     var list = pageOrder();
     var i = -1;
