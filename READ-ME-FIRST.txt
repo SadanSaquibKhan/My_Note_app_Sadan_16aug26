@@ -1,0 +1,29 @@
+Margin — installing on the Galaxy Tab S10+
+==========================================
+
+Everything here is one folder. There is no build step and no server code.
+
+1. Make a GitHub repository (public is fine) and upload ALL the files in this
+   folder to the root of it: index.html, manifest.webmanifest, sw.js and the
+   three .png icons.
+
+2. Repository -> Settings -> Pages -> Source: "Deploy from a branch",
+   branch "main", folder "/ (root)". Save. Wait a minute or two.
+
+3. GitHub gives you a URL like  https://<you>.github.io/<repo>/
+   Open that in Chrome on the tab.
+
+4. Chrome menu -> "Add to Home screen" (or "Install app").
+   It now opens full screen with no address bar and works with no network.
+
+Notes
+-----
+- It must be served over https for the offline worker to run. Opening
+  index.html straight off the tablet's storage will still work as a page, but
+  it will not install and will not cache.
+- Your notes live in the tablet's IndexedDB, not in the repository. Uploading
+  a new index.html never touches them.
+- When you upload a newer index.html, also change the CACHE line at the top of
+  sw.js (e.g. margin-2026-08-15-v2) or the tab will keep serving the old copy.
+- On the Windows laptop, either open the same GitHub Pages URL, or use the
+  standalone .html file with the .bat launcher.
