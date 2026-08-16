@@ -445,6 +445,35 @@
   .favpop .swatchrow{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px}
   .favpop .widthrow{display:flex; gap:6px; align-items:center; flex-wrap:wrap}
 
+  /* which page you are on, shown while you scroll and then fading out. The
+     scroll percentage alone never answered the question you actually have. */
+  .pagetag{
+    position:fixed; right:14px; top:50%; transform:translateY(-50%);
+    z-index:74; pointer-events:none;
+    background:var(--panel); color:var(--ink); border:1px solid var(--rule);
+    border-radius:999px; padding:6px 12px;
+    font-family:var(--mono); font-size:11px; letter-spacing:.1em;
+    box-shadow:0 6px 20px var(--shadow);
+    opacity:0; transition:opacity .16s ease;
+  }
+  .pagetag.on{opacity:1}
+  .pagetag[hidden]{display:none}
+
+  /* at the foot of a page: carry on, or make room to carry on */
+  .endkit{
+    position:fixed; right:16px; bottom:16px; z-index:74;
+    display:flex; gap:8px; align-items:center;
+  }
+  .endkit[hidden]{display:none}
+  .endkit button{
+    min-height:44px; padding:0 14px; border-radius:999px;
+    background:var(--panel); color:var(--ink); border:1px solid var(--ink);
+    font-family:var(--mono); font-size:11px; letter-spacing:.1em;
+    box-shadow:0 8px 24px var(--shadow);
+  }
+  .endkit button:hover{border-color:var(--live); color:var(--live)}
+  body[data-immerse="1"] .endkit{display:none !important}
+
   /* the banner shown when scrolling carries you into another page */
   .flowcue{
     position:fixed; left:50%; top:14%; transform:translate(-50%, -8px);
@@ -486,6 +515,14 @@
   }
   #body figure.imgblock.pdfpage img{width:100%; height:auto; border-radius:0}
   #body figure.imgblock.pdfpage::after{content:none}
+  /* On a page that came from a PDF the sheet IS the PDF page: no ruled lines
+     showing through it, no side padding shrinking it, and none of the tall
+     run-off at the foot that a written page wants. The result is one PDF page
+     filling one notebook page at its own proportions. */
+  body.pdfpaper .paper{background:var(--field)}
+  body.pdfpaper .sheet{padding:0; max-width:none}
+  body.pdfpaper #body{min-height:0; padding-top:0}
+  body.pdfpaper #body p:last-child{margin:0}
 
   /* a locked picture says so, and stops taking the drag itself */
   #body figure.imgblock.locked{border-color:var(--rule); border-style:dashed}
@@ -899,6 +936,12 @@
      mid-sentence. When the panels fold away to write, it goes with them and
      gives the line back to the page. body.keepfoot opts out. */
   body[data-focus="1"]:not(.keepfoot) .docfoot{display:none}
+  /* and whenever the pen is actually in your hand. body.nokeys is set the
+     moment the pen comes near (typing is switched off then), so this covers
+     writing even with the side panels still open — which is when the footer
+     was still stealing a line. */
+  body.nokeys:not(.keepfoot) .docfoot{display:none}
+  body.penning:not(.keepfoot) .docfoot{display:none}
   .danger:hover{border-color:var(--warn); color:var(--warn)}
 
   .blank{
@@ -1575,6 +1618,7 @@
           bigger. &ldquo;Wipe an area&rdquo; in the ink bar uses roughly double this.</p>
         </div>
         <div class="field">
+          <label class="check"><input type="checkbox" id="setPenBtnErase"> The pen&rsquo;s side button turns the eraser on and off</label>
           <label class="check"><input type="checkbox" id="setTapErase"> Double-tap with the pen to turn the eraser on and off</label>
           <p class="hint">A way in when the S&nbsp;Pen side button never reaches
           the browser &mdash; on Samsung it is usually claimed by Air Actions
@@ -1859,6 +1903,11 @@
 <div class="holdmenu favpop" id="favPop" hidden></div>
 <div class="flowcue" id="flowCue" hidden></div>
 <div class="dropmark" id="dropMark" hidden></div>
+<div class="pagetag" id="pageTag" hidden></div>
+<div class="endkit" id="endKit" hidden>
+  <button type="button" id="endInsert" title="Put a new page after this one">&#10010; page</button>
+  <button type="button" id="endNext" title="Go to the next page">next &#8595;</button>
+</div>
 <div class="holdmenu" id="imgMenu" hidden></div>
 <div class="holdmenu" id="holdMenu" hidden></div>
 <button class="immerseout" id="immerseOut" hidden>Show the tools</button>
@@ -1892,7 +1941,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b17";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b18";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4486,6 +4535,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     paintStar();
     paintTags();
     paintPracBadge();
+    /* the foot-of-page buttons have to be judged again on every page, not
+       only when something scrolls: a short page is at its own end already */
+    if (typeof paintEndKit === "function") setTimeout(paintEndKit, 260);
+    /* a PDF page has no ruled lines under it and no page padding fighting it */
+    document.body.classList.toggle("pdfpaper",
+      (state.note.html || "").indexOf("data-pdfpage") > -1);
     $("pinBtn").setAttribute("aria-pressed", state.note.pinned ? "true" : "false");
     $("pinBtn").classList.toggle("on", !!state.note.pinned);
     paintFoot();
@@ -6396,7 +6451,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     defaultZoom: 1,
     pageFlow: true,    /* scrolling past the end carries on to the next page */
     eraserSize: 22,    /* how wide the eraser bites, in page units */
-    tapErase: true,    /* double-tap the nib to toggle the eraser */
+    tapErase: true,       /* double-tap the nib to toggle the eraser */
+    penButtonErase: true, /* the pen's side button toggles the eraser */
     favBar: false,     /* the floating favourites bar */
     favTools: ["pen", "marker", "eraser", "lasso", "img", "cam"],
     favPos: null,      /* {x, y}, re-clamped to the window on load */
@@ -6483,6 +6539,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setEraser").value = cfg.eraserSize;
     $("eraserOut").textContent = cfg.eraserSize + " px";
     $("setTapErase").checked = cfg.tapErase !== false;
+    $("setPenBtnErase").checked = cfg.penButtonErase !== false;
     $("setGlide").value = cfg.glideSpeed;
     $("glideOut").textContent = cfg.glideSpeed ? cfg.glideSpeed + "%" : "off";
     $("setGlideStop").value = cfg.glideStop;
@@ -6524,6 +6581,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     bindCheck("setPageFlow", "pageFlow");
     bindCheck("setHints", "hints");
     bindCheck("setTapErase", "tapErase");
+    bindCheck("setPenBtnErase", "penButtonErase");
     $("setFavBar").addEventListener("change", function(){
       cfg.favBar = this.checked; saveCfg(); buildFavBar();
     });
@@ -7345,6 +7403,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       applyPenButton(e);
     }, true);
   });
+  /* And the last route it can take. Some builds deliver the barrel press as a
+     plain secondary mousedown with no pointer event carrying the button bits
+     at all, so nothing above ever sees it. Guarded on the last pointer having
+     been a pen, or a real mouse right-click would switch tools too. */
+  document.addEventListener("mousedown", function(e){
+    if (e.button !== 2) return;
+    if (lastPointerKind !== "pen") return;
+    if (btn.held) return;                 /* the pointer path already has it */
+    if (cfg.penButtonErase === false) return;
+    e.preventDefault();
+    togglePenEraser("the pen's side button");
+  }, true);
 
   /* ---- keyboard out of the way while the pen is in use ---- */
   function setTypingEnabled(on){
@@ -8307,6 +8377,37 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      spot you are holding, rather than to a toolbar at the top of the screen. */
   var hold = { timer: null, x: 0, y: 0, moved: false };
 
+  /* ---- two taps with a finger go back to typing ----
+     Deliberately the finger and not the pen: the pen's double tap is the
+     eraser, and the two must not fight. It reads naturally anyway — you put
+     the pen down and tap the page with a finger to start typing again. */
+  var backToType = { last: 0, x: 0, y: 0 };
+  $("paper").addEventListener("pointerup", function(e){
+    if (e.pointerType !== "touch") return;
+    if (ink.mode === "type") return;
+    if (!state.note) return;
+    var t = Date.now();
+    var near = backToType.last &&
+               Math.abs(e.clientX - backToType.x) < 32 &&
+               Math.abs(e.clientY - backToType.y) < 32 &&
+               (t - backToType.last) < 420;
+    if (near){
+      backToType.last = 0;
+      if (ink.penNear) return;        /* the pen is still in play; leave it be */
+      setMode("type");
+      setTypingEnabled(true);
+      var p = caretAtPoint(e.clientX, e.clientY);
+      if (p){
+        var sel = window.getSelection();
+        if (sel){ sel.removeAllRanges(); sel.addRange(p); }
+      }
+      $("body").focus();
+      hint("Typing. The Write button puts the pen back.");
+      return;
+    }
+    backToType.last = t; backToType.x = e.clientX; backToType.y = e.clientY;
+  });
+
   /* ---- the browser's own menu must not gatecrash the long press ----
      Holding a finger or the pen on the page raised Chrome's context menu
      (Back / Refresh / Save as / Inspect) on top of Margin's own spot menu.
@@ -8321,13 +8422,57 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }, true);
 
   $("paper").addEventListener("contextmenu", function(e){
-    if (lastPointerKind === "touch" || lastPointerKind === "pen"){
+    if (lastPointerKind === "pen"){
+      /* Chrome maps a stylus barrel-button press to a right-click rather than
+         to pointer `buttons`, and on Android that is often the ONLY trace of
+         the S Pen's side button a web page ever sees — the pointer events
+         arrive with the button bits clear. Suppressing the menu (which we
+         must) was therefore also throwing away the press itself.
+         Treated as a toggle, not a hold: a right-click gives one event with
+         no matching release, so there is no way to know when the button was
+         let go. */
       e.preventDefault();
+      if (cfg.penButtonErase !== false) togglePenEraser("the pen's side button");
       return;
     }
+    if (lastPointerKind === "touch"){ e.preventDefault(); return; }
     /* a mouse right-click while our own menu is up: ours wins */
     if (!$("holdMenu").hidden || ($("imgMenu") && !$("imgMenu").hidden)) e.preventDefault();
   });
+
+  /* one way in for every route to the eraser that is a toggle rather than a
+     hold: the side button as a right-click, and the pen's double tap */
+  var lastPenToggle = 0;
+  function togglePenEraser(why){
+    /* One press of the button can arrive as BOTH a secondary mousedown and a
+       contextmenu. Toggling on each would cancel itself out and look exactly
+       like the button doing nothing — which is the bug this whole feature has
+       been chasing. First one through wins; the rest of the press is ignored. */
+    var t = Date.now();
+    if (t - lastPenToggle < 500) return;
+    lastPenToggle = t;
+    penSeen.route = why;
+    penSeen.everErased = true;
+    if (typeof paintPenReport === "function") paintPenReport();
+    if (ink.tool === "eraser"){
+      ink.tool = tapErase.was || "pen";
+    } else {
+      tapErase.was = ink.tool;
+      ink.tool = "eraser";
+    }
+    /* a half-drawn stroke is abandoned, exactly as the held button does */
+    var S = ink.surfaces[ink.active];
+    if (S && S.drawing && S.drawing.stroke){
+      var st = S.drawing.stroke;
+      S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
+      S.drawing = null;
+      S.redraw();
+    }
+    paintInkTools();
+    hint(ink.tool === "eraser"
+      ? "Eraser on (" + why + ")."
+      : "Pen again.");
+  }
   /* Android also raises a long-press "callout" over images and links that is
      separate from contextmenu, and it cannot be cancelled from script. */
   $("paper").style.webkitTouchCallout = "none";
@@ -9323,6 +9468,58 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     })();
   }
   $("paper").addEventListener("scroll", queueSavePlace, { passive: true });
+
+  /* ---- 20d. which page am I on, and what happens at the foot of it ----
+     The page name rides alongside while you scroll and fades when you stop.
+     Near the bottom a small pair of buttons appears: one makes the next page,
+     one goes to it. Writing near the bottom already grows the page (see
+     growForInk), so this is about moving on rather than about room. */
+  var pageTagTimer = null;
+  function showPageTag(){
+    var el = $("pageTag");
+    if (!el || !state.note) return;
+    var list = pageOrder();
+    var i = -1;
+    list.forEach(function(n, k){ if (n.id === state.noteId) i = k; });
+    var name = (state.note.title || "").trim() || C.displayTitle(state.note);
+    el.textContent = name + (i >= 0 ? "   " + (i + 1) + " / " + list.length : "");
+    el.hidden = false;
+    el.classList.add("on");
+    clearTimeout(pageTagTimer);
+    pageTagTimer = setTimeout(function(){
+      el.classList.remove("on");
+      setTimeout(function(){ el.hidden = true; }, 220);
+    }, 1100);
+  }
+  function paintEndKit(){
+    var kit = $("endKit"), p = $("paper");
+    if (!kit || !p) return;
+    if (!state.note || state.view !== "note"){ kit.hidden = true; return; }
+    var atEnd = (p.scrollTop + p.clientHeight) >= (p.scrollHeight - 90);
+    kit.hidden = !atEnd;
+    if (!kit.hidden){
+      var next = neighbourPage(1);
+      $("endNext").hidden = !next;
+      $("endNext").textContent = next
+        ? "next ↓ " + ((next.title || "").trim() || C.displayTitle(next))
+        : "next ↓";
+    }
+  }
+  $("paper").addEventListener("scroll", function(){
+    showPageTag();
+    paintEndKit();
+  }, { passive: true });
+
+  $("endInsert").addEventListener("click", function(){
+    /* the same insert the list pane offers, so the numbering cascade and the
+       renaming are handled in exactly one place */
+    if ($("insertPageBtn")) $("insertPageBtn").click();
+  });
+  $("endNext").addEventListener("click", function(){
+    var next = neighbourPage(1);
+    if (!next) return;
+    flush().then(function(){ go({ nbId: state.nbId, noteId: next.id }); });
+  });
 
   /* ---- 20c. scrolling past the end flows into the next page ----
      Pages are separate records with their own ink layer, so this moves you to
@@ -10478,7 +10675,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       " · buttons " + penSeen.buttons + (bits.length ? " (" + bits.join(", ") + ")" : "") +
       " · button " + penSeen.button +
       (penSeen.everErased
-        ? " — the side button IS reaching Margin and switches to erase."
+        ? " — the side button IS reaching Margin" +
+          (penSeen.route ? " (as " + penSeen.route + ")" : "") + " and switches to erase."
         : " — no side-button press seen yet. If pressing it changes nothing here, " +
           "Android has taken the button: turn off Air Actions / screen-off memo for the S Pen.");
     el.classList.toggle("bad", !penSeen.everErased);
