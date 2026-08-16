@@ -419,6 +419,28 @@
   .nbopenlist[hidden]{display:none}
   .nbopenlist .row{width:100%}
 
+  /* ---- the favourites bar ----
+     A thin column of the tools you actually reach for, parked wherever suits
+     your hand rather than at the top of the screen. z-index sits above the
+     edge tab (75) and below the spot menus (80), so a menu still covers it.
+     touch-action:none because it floats over #paper, which is itself
+     touch-action:none — without it a drag here would try to scroll the page. */
+  .favbar{
+    position:fixed; z-index:76; display:flex; flex-direction:column; gap:4px;
+    padding:5px; background:var(--panel); border:1px solid var(--ink);
+    border-radius:8px; box-shadow:0 14px 40px var(--shadow); touch-action:none;
+  }
+  .favbar[hidden]{display:none}
+  .favbar button{
+    min-width:42px; min-height:42px; padding:0; font-size:16px; line-height:1;
+    background:transparent; border:1px solid var(--rule); border-radius:5px;
+  }
+  .favbar button[aria-pressed="true"]{background:var(--ink); color:var(--panel); border-color:var(--ink)}
+  .favgrip{cursor:grab; color:var(--ink-2); letter-spacing:-2px; min-height:26px !important}
+  .favpop{min-width:0; padding:8px; z-index:81}
+  .favpop .swatchrow{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px}
+  .favpop .widthrow{display:flex; gap:6px; align-items:center; flex-wrap:wrap}
+
   /* the banner shown when scrolling carries you into another page */
   .flowcue{
     position:fixed; left:50%; top:14%; transform:translate(-50%, -8px);
@@ -682,6 +704,8 @@
   body[data-immerse="1"] .inktools,
   body[data-immerse="1"] .tagrow,
   body[data-immerse="1"] .docfoot{display:none !important}
+  /* Immerse means everything away, and the floating bar is no exception */
+  body[data-immerse="1"] .favbar{display:none !important}
   body.nofmt .fmtbar{display:none !important}
   body.nodoc .docbar{display:none !important}
   body.notags .tagrow{display:none !important}
@@ -1547,6 +1571,8 @@
         <label class="check"><input type="checkbox" id="setDocBar"> Note actions (star, practice, modes, zoom)</label>
         <label class="check"><input type="checkbox" id="setFmtBar"> Typing and formatting</label>
         <label class="check"><input type="checkbox" id="setTagRow"> Tags</label>
+        <label class="check"><input type="checkbox" id="setFavBar"> Favourites bar, floating (drag it where you like)</label>
+        <div id="favPick" class="favpick"></div>
         <p class="hint">Immerse hides every bar at once; a single button brings them back.</p>
       </div>
       <div class="field">
@@ -1712,6 +1738,10 @@
 <input type="file" id="imgFile" accept="image/*" multiple hidden>
 <input type="file" id="camFile" accept="image/*" capture="environment" hidden>
 <input type="file" id="anyFile" multiple hidden>
+<div class="favbar" id="favBar" hidden>
+  <button type="button" class="favgrip" id="favGrip" aria-label="Move the favourites bar" title="Drag to move">&#8942;&#8942;</button>
+</div>
+<div class="holdmenu favpop" id="favPop" hidden></div>
 <div class="flowcue" id="flowCue" hidden></div>
 <div class="dropmark" id="dropMark" hidden></div>
 <div class="holdmenu" id="imgMenu" hidden></div>
@@ -1747,7 +1777,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b14";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b15";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5484,6 +5514,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       $("mode_" + m).setAttribute("aria-pressed", ink.mode === m ? "true" : "false");
     });
     paintModeChip();
+    /* Last, and guarded. Every repaint path in the app ends here, so hooking
+       in at this one point keeps the floating bar in step with all ~25 of
+       them; but nothing above this line is allowed to be skipped if the bar
+       is missing or half-built. */
+    if (typeof paintFavBar === "function"){ try { paintFavBar(); } catch (e) {} }
   }
 
   function buildInkTools(){
@@ -5561,10 +5596,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   ["auto","write","type"].forEach(function(m){
     $("mode_" + m).addEventListener("click", function(){ setMode(m); });
   });
+  /* the floating bar follows the same rule as the ink bar: gone while typing */
   function setMode(m){
     ink.mode = m;
     C.setMeta("inkMode", m);
     $("inkTools").hidden = (m === "type");
+    if (typeof buildFavBar === "function") buildFavBar();
     updateTouchAction(); paintInkTools();
   }
   $("inkUndo").addEventListener("click", function(){ activeSurface().doUndo(); });
@@ -6104,6 +6141,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     backupGap: 1,
     defaultZoom: 1,
     pageFlow: true,    /* scrolling past the end carries on to the next page */
+    favBar: false,     /* the floating favourites bar */
+    favTools: ["pen", "marker", "eraser", "lasso", "img", "cam"],
+    favPos: null,      /* {x, y}, re-clamped to the window on load */
     glideSpeed: 100,   /* how fast the page carries on after the finger lifts */
     glideStop: 50,     /* how long it takes to come to rest */
     keepFoot: false,   /* keep the note footer on screen even while writing */
@@ -6161,6 +6201,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setPinch").checked = cfg.pinchZoom;
     $("setPageFlow").checked = cfg.pageFlow !== false;
     $("setHints").checked = cfg.hints !== false;
+    $("setFavBar").checked = cfg.favBar === true;
+    buildFavPick();
     $("setKeepFoot").checked = cfg.keepFoot === true;
     $("setTapType").checked = cfg.tapToType;
     $("setSpell").checked = cfg.spellcheck !== false;
@@ -6216,6 +6258,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     bindCheck("setPinch", "pinchZoom");
     bindCheck("setPageFlow", "pageFlow");
     bindCheck("setHints", "hints");
+    $("setFavBar").addEventListener("change", function(){
+      cfg.favBar = this.checked; saveCfg(); buildFavBar();
+    });
     bindCheck("setKeepFoot", "keepFoot");
     bindCheck("setTapType", "tapToType");
     $("setSpell").addEventListener("change", function(){
@@ -6333,6 +6378,194 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     { tool:"pencil", colour:"ink", width:C.INK_WIDTHS[C.W_MED] },
     { tool:"marker", colour:"amber", width:C.INK_WIDTHS[C.W_BROAD] }
   ];
+  /* ================= the favourites bar =================
+     Nothing here re-implements a tool. Every entry either delegates to the
+     button that already exists in the ink bar, or runs the same three lines
+     buildInkTools uses to apply a colour or a width — so per-tool memory,
+     lasso clearing and mode switching all keep working with one owner. */
+  var FAV_ITEMS = {
+    pen:    { label: "✎", title: "Pen",        ink: true },
+    pencil: { label: "✏", title: "Pencil",     ink: true },
+    marker: { label: "░", title: "Highlighter",ink: true },
+    eraser: { label: "⌫", title: "Eraser",     ink: true },
+    lasso:  { label: "◌", title: "Lasso",      ink: true },
+    img:    { label: "ὛC", title: "Insert a picture", run: function(){ $("imgFile").click(); } },
+    cam:    { label: "▣", title: "Take a photo",      run: function(){ $("camFile").click(); } },
+    undo:   { label: "↶", title: "Undo",              run: function(){ globalUndo(); } },
+    redo:   { label: "↷", title: "Redo",              run: function(){ globalRedo(); } }
+  };
+  var FAV_ORDER = ["pen","pencil","marker","eraser","lasso","img","cam","undo","redo"];
+
+  function favClamp(x, y){
+    var el = $("favBar");
+    var w = (el && el.offsetWidth) || 54, h = (el && el.offsetHeight) || 220;
+    var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+    return { x: Math.max(4, Math.min(x, vw - w - 4)),
+             y: Math.max(4, Math.min(y, vh - h - 4)) };
+  }
+  function placeFavBar(){
+    var el = $("favBar");
+    if (!el || el.hidden) return;
+    var p = cfg.favPos || { x: 8, y: Math.round((window.innerHeight || 768) * 0.28) };
+    /* always re-clamped: a position saved on the laptop would otherwise land
+       off-screen on the tablet */
+    p = favClamp(p.x, p.y);
+    el.style.left = p.x + "px";
+    el.style.top = p.y + "px";
+  }
+  function buildFavBar(){
+    var host = $("favBar");
+    if (!host) return;
+    host.hidden = !cfg.favBar || ink.mode === "type";
+    Array.prototype.slice.call(host.querySelectorAll("button")).forEach(function(b){
+      if (b.id !== "favGrip") b.remove();
+    });
+    if (host.hidden) return;
+    (cfg.favTools || []).forEach(function(key){
+      var it = FAV_ITEMS[key];
+      if (!it) return;
+      var b = document.createElement("button");
+      b.type = "button";
+      b.dataset.fav = key;
+      b.title = it.title + (it.ink ? " — tap again for its settings" : "");
+      b.textContent = it.label;
+      b.addEventListener("click", function(e){
+        e.preventDefault(); e.stopPropagation();
+        if (it.ink){
+          /* second tap on the tool you are already holding opens its
+             settings beside the button, which is the whole point */
+          if (ink.tool === key){ openFavPop(b, key); return; }
+          var real = $("tool_" + key);
+          if (real) real.click();
+          return;
+        }
+        it.run();
+      });
+      host.appendChild(b);
+    });
+    placeFavBar();
+    paintFavBar();
+  }
+  /* which tools the bar carries — one tick box each, in Settings */
+  function buildFavPick(){
+    var host = $("favPick");
+    if (!host) return;
+    host.textContent = "";
+    FAV_ORDER.forEach(function(key){
+      var it = FAV_ITEMS[key];
+      var lab = document.createElement("label");
+      lab.className = "check";
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = (cfg.favTools || []).indexOf(key) > -1;
+      cb.addEventListener("change", function(){
+        var list = (cfg.favTools || []).slice();
+        var at = list.indexOf(key);
+        if (this.checked && at < 0) list.push(key);
+        if (!this.checked && at > -1) list.splice(at, 1);
+        /* kept in a fixed order so the bar does not reshuffle itself
+           depending on the order the boxes happened to be ticked */
+        cfg.favTools = FAV_ORDER.filter(function(k){ return list.indexOf(k) > -1; });
+        saveCfg(); buildFavBar();
+      });
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(" " + it.title));
+      host.appendChild(lab);
+    });
+  }
+
+  function paintFavBar(){
+    var host = $("favBar");
+    if (!host || host.hidden) return;
+    Array.prototype.slice.call(host.querySelectorAll("button[data-fav]")).forEach(function(b){
+      var k = b.dataset.fav;
+      b.setAttribute("aria-pressed", (FAV_ITEMS[k] && FAV_ITEMS[k].ink && ink.tool === k) ? "true" : "false");
+    });
+  }
+  /* the little settings panel next to a tool: colour and thickness */
+  function openFavPop(btn, tool){
+    var m = $("favPop");
+    m.innerHTML = "";
+    var row = document.createElement("div");
+    row.className = "swatchrow";
+    C.INK_COLOURS.forEach(function(c){
+      var s = document.createElement("button");
+      s.type = "button"; s.className = "swatchbtn"; s.dataset.colour = c;
+      s.style.background = inkHex(c);
+      s.setAttribute("aria-pressed", c === ink.colour ? "true" : "false");
+      s.addEventListener("click", function(){
+        ink.colour = c;
+        if (ink.tool === "eraser") ink.tool = "pen";
+        rememberCurrentTool(); paintInkTools();
+        openFavPop(btn, ink.tool);        /* keep it open, repaint the ticks */
+      });
+      row.appendChild(s);
+    });
+    var wrow = document.createElement("div");
+    wrow.className = "widthrow";
+    C.INK_WIDTHS.forEach(function(w, i){
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "widthbtn"; b.dataset.w = w;
+      b.setAttribute("aria-label", C.INK_WIDTH_LABELS[i] || String(w));
+      b.setAttribute("aria-pressed", Number(w) === Number(ink.width) ? "true" : "false");
+      var dot = document.createElement("i");
+      var px = Math.max(4, Math.round(w * 2.4));
+      dot.style.width = dot.style.height = px + "px";
+      b.appendChild(dot);
+      b.addEventListener("click", function(){
+        ink.width = w;
+        if (ink.tool === "eraser") ink.tool = "pen";
+        rememberCurrentTool(); paintInkTools();
+        openFavPop(btn, ink.tool);
+      });
+      wrow.appendChild(b);
+    });
+    if (tool !== "eraser" && tool !== "lasso"){ m.appendChild(row); m.appendChild(wrow); }
+    else {
+      var p = document.createElement("p");
+      p.className = "hint";
+      p.style.margin = "0";
+      p.textContent = tool === "eraser"
+        ? "The eraser uses the size set in the ink bar."
+        : "Lasso: use the Box / Free button in the ink bar.";
+      m.appendChild(p);
+    }
+    var r = btn.getBoundingClientRect();
+    var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+    m.hidden = false;
+    m.style.left = Math.min(Math.max(8, r.right + 8), Math.max(8, vw - m.offsetWidth - 8)) + "px";
+    m.style.top = Math.min(Math.max(8, r.top), Math.max(8, vh - m.offsetHeight - 8)) + "px";
+  }
+  function closeFavPop(){ if ($("favPop")) $("favPop").hidden = true; }
+  document.addEventListener("pointerdown", function(e){
+    if ($("favPop").hidden) return;
+    if (e.target.closest && e.target.closest("#favPop, #favBar")) return;
+    closeFavPop();
+  }, true);
+
+  /* dragging the bar, copied from the practice sheet's grip */
+  var favDrag = null;
+  $("favGrip").addEventListener("pointerdown", function(e){
+    var r = $("favBar").getBoundingClientRect();
+    favDrag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    try { $("favGrip").setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault(); e.stopPropagation();   /* never start a stroke or a long press */
+  });
+  document.addEventListener("pointermove", function(e){
+    if (!favDrag) return;
+    var p = favClamp(e.clientX - favDrag.dx, e.clientY - favDrag.dy);
+    $("favBar").style.left = p.x + "px";
+    $("favBar").style.top = p.y + "px";
+  });
+  document.addEventListener("pointerup", function(){
+    if (!favDrag) return;
+    favDrag = null;
+    var r = $("favBar").getBoundingClientRect();
+    cfg.favPos = { x: Math.round(r.left), y: Math.round(r.top) };
+    saveCfg();
+  });
+  window.addEventListener("resize", function(){ setTimeout(placeFavBar, 80); });
+
   function buildPresets(){
     var host = $("penPresets");
     host.textContent = "";
@@ -9968,7 +10201,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     loadOpenNbs();
     loadCfg();
     buildInkTools(); buildTextPalettes();
-    buildPresets(); wireSettings(); wireBarFolds(); paintEdge();
+    buildPresets(); buildFavBar(); wireSettings(); wireBarFolds(); paintEdge();
     setMode(ink.mode);
     updateTouchAction();
     paintInkTools();
