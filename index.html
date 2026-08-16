@@ -647,6 +647,21 @@
     vertical-align:super; cursor:default;
   }
   #body span.anchor.flash{background:var(--live-soft); border-radius:2px}
+  /* The working marker draws its glyph from ::before and holds no text of its
+     own, so plainText(), the note preview, search and the Markdown export all
+     see nothing — the rough working stays out of the clean note, which is the
+     whole point of the practice space. */
+  #body span.pracpin{
+    display:inline-block; width:1.1em; text-align:center; cursor:pointer;
+    color:var(--live); font-size:.95em; vertical-align:baseline;
+    user-select:none; -webkit-user-select:none;
+  }
+  #body span.pracpin::before{content:"\25E7"}
+  /* an anchor Margin dropped itself, so a way back can be exact: no glyph,
+     but still a real box for the jump to scroll to */
+  #body span.anchor.autoanchor{font-size:0; padding:0; color:transparent}
+  #body span.anchor.autoanchor.flash{background:var(--live-soft)}
+  #body span.pracpin:hover{background:var(--live-soft); border-radius:2px}
   .filechip{
     display:inline-flex; align-items:center; gap:6px; padding:4px 10px; margin:0 3px;
     border:1px solid var(--rule); border-radius:16px; background:var(--slab);
@@ -1045,6 +1060,11 @@
         <span class="rowmain"><span class="rowtitle">All rough working</span></span>
         <span class="count" id="pracAllCount">0</span>
       </button>
+      <button type="button" class="row" id="marksRow">
+        <i class="swatch star">&#9873;</i>
+        <span class="rowmain"><span class="rowtitle">Bookmarks</span></span>
+        <span class="count" id="marksCount">0</span>
+      </button>
       <button type="button" class="row" id="starredRow">
         <i class="swatch star">&#9733;</i>
         <span class="rowmain"><span class="rowtitle">Starred</span></span>
@@ -1113,6 +1133,7 @@
           <button class="ghost" id="gRedo" title="Redo (Ctrl+Y)" disabled>&#8631;</button>
         </span>
         <button class="ghost" id="starBtn" aria-pressed="false">&#9734; Star</button>
+        <button class="ghost" id="markBtn" aria-pressed="false" title="Bookmark this page and name the topic that starts here">&#9873; Bookmark</button>
         <button class="ghost" id="pracBtn" title="Rough working for this note">Practice</button>
         <span class="segmented modes">
           <button type="button" id="mode_auto" aria-pressed="true" title="Pen writes, finger works the text">Auto</button>
@@ -2769,10 +2790,16 @@ var MarginCore = (function(){
   }
 
   /* ---------- backlinks ---------- */
+  /* A link to a named spot is stored as data-to="nt:<id>#sp_x", so testing for
+     the id followed by a closing quote never matched one and every spot link
+     was missing from the backlinks list. Accept either terminator. */
   function backlinks(noteId){
     return allNotes().then(function(l){
+      var base = 'data-to="nt:' + noteId;
       return l.filter(function(n){
-        return n.id !== noteId && (n.html || "").indexOf('data-to="nt:' + noteId + '"') > -1;
+        if (n.id === noteId) return false;
+        var h = n.html || "";
+        return h.indexOf(base + '"') > -1 || h.indexOf(base + '#') > -1;
       });
     });
   }
@@ -2818,10 +2845,11 @@ var MarginCore = (function(){
   function notesSnapshot(){
     return getAll("notes").then(function(all){
       var live_ = all.filter(live);
-      var counts = {}, starred = [], weak = [];
+      var counts = {}, starred = [], weak = [], marks = [];
       live_.forEach(function(n){
         counts[n.notebookId] = (counts[n.notebookId] || 0) + 1;
         if (n.starred) starred.push(n);
+        if (n.bookmark) marks.push(n);
         var t = n.tags || [];
         if (n.starred || t.indexOf("weak") > -1 || t.indexOf("weak-topic") > -1) weak.push(n);
       });
@@ -2829,6 +2857,12 @@ var MarginCore = (function(){
         all: live_,
         counts: counts,
         starred: sortNotes(starred),
+        /* bookmarks read best grouped by notebook and then in page order,
+           because that is how the topics actually follow one another */
+        marks: marks.sort(function(a, b){
+          if (a.notebookId !== b.notebookId) return a.notebookId < b.notebookId ? -1 : 1;
+          return sortPages([a, b])[0] === a ? -1 : 1;
+        }),
         weak: weak.sort(function(a, b){ return (a.revisedAt || 0) - (b.revisedAt || 0); })
       };
     });
@@ -3457,6 +3491,7 @@ var MarginCore = (function(){
       if (r.pinned === undefined) r.pinned = false;
       if (!Array.isArray(r.tags)) r.tags = [];
       if (r.deletedVia === undefined) r.deletedVia = null;
+      if (r.bookmark === undefined) r.bookmark = null;
     }
     if (kind === "group"){
       if (r.parentId === undefined) r.parentId = null;
@@ -3629,7 +3664,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     filter: "", sort: "edited", trash: [], zoom: 1, query: "", hits: [], prac: {},
     starred: [], recent: [], weak: [], pracAll: [], audio: [], lastLink: null,
     allNotes: [], inkNotes: {}, attNotes: {}, audNotes: {}, nbLast: null,
-    groups: [], gFold: {},
+    groups: [], gFold: {}, marks: [],
     dirty: false, saving: false
   };
 
@@ -3641,6 +3676,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (p[0] === "trash") return {view:"trash", nbId:null, noteId:null};
     if (p[0] === "search") return {view:"search", nbId:null, noteId:null};
     if (p[0] === "starred") return {view:"starred", nbId:null, noteId:null};
+    if (p[0] === "marks") return {view:"marks", nbId:null, noteId:null};
     if (p[0] === "weak") return {view:"weak", nbId:null, noteId:null};
     if (p[0] === "practice") return {view:"pracAll", nbId:null, noteId:null};
     if (p[0] === "nb" && p[1]){
@@ -3654,6 +3690,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (route.trash) h = "#/trash";
     else if (route.search) h = "#/search";
     else if (route.starred) h = "#/starred";
+    else if (route.marks) h = "#/marks";
     else if (route.weak) h = "#/weak";
     else if (route.pracAll) h = "#/practice";
     else if (route.nbId) h = "#/nb/" + route.nbId + (route.noteId ? "/note/" + route.noteId : "");
@@ -3872,6 +3909,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("trashRow").setAttribute("aria-current", state.view === "trash" ? "true" : "false");
     $("starredCount").textContent = state.starred.length;
     $("starredRow").setAttribute("aria-current", state.view === "starred" ? "true" : "false");
+    $("marksCount").textContent = (state.marks || []).length;
+    $("marksRow").setAttribute("aria-current", state.view === "marks" ? "true" : "false");
     $("weakCount").textContent = state.weak.length;
     $("weakRow").setAttribute("aria-current", state.view === "weak" ? "true" : "false");
     $("pracAllCount").textContent = state.pracAll.length;
@@ -3988,11 +4027,65 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
   }
 
+  /* ---- bookmarks ----
+     A bookmark is a page plus the name of the topic that starts on it. The
+     topic is kept as its own field rather than only being glued onto the page
+     title, so renaming or renumbering the page never loses it — but it is
+     also shown appended to the title, which is how the user thinks of it
+     (p45_topic_alpha). */
+  function paintMarks(){
+    var host = $("noteList"); host.textContent = "";
+    $("listTitle").textContent = "Bookmarks";
+    $("addNote").style.visibility = "hidden";
+    $("editNotebook").style.visibility = "hidden";
+    if ($("insertPageBtn")) $("insertPageBtn").style.visibility = "hidden";
+    $("filter").parentNode.hidden = true;
+    $("searchBar").hidden = true;
+    var marks = state.marks || [];
+    if (!marks.length){
+      host.innerHTML = '<div class="empty"><b>No bookmarks yet.</b><br>' +
+        'Open a page and tap <b>Bookmark</b> to mark the topic that starts there.</div>';
+      return;
+    }
+    var nbName = {};
+    state.notebooks.forEach(function(nb){ nbName[nb.id] = nb.name; });
+    var lastNb = null;
+    marks.forEach(function(n){
+      if (n.notebookId !== lastNb){
+        lastNb = n.notebookId;
+        var head = document.createElement("div");
+        head.className = "empty";
+        head.style.padding = "8px 14px 2px";
+        head.innerHTML = "<b>" + esc(nbName[n.notebookId] || "Notebook") + "</b>";
+        host.appendChild(head);
+      }
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "row";
+      var m = document.createElement("span"); m.className = "rowmain";
+      var t = document.createElement("span"); t.className = "rowtitle";
+      t.textContent = markLabel(n);
+      var s = document.createElement("span"); s.className = "rowsub";
+      s.textContent = C.preview(n, 60) || "Empty page";
+      m.appendChild(t); m.appendChild(s);
+      b.appendChild(m);
+      b.addEventListener("click", function(){
+        flush(); go({ nbId:n.notebookId, noteId:n.id });
+      });
+      host.appendChild(b);
+    });
+  }
+  /* "p45_topic_alpha" — the page name with its topic on the end */
+  function markLabel(n){
+    var base = (n.title && n.title.trim()) ? n.title.trim() : C.displayTitle(n);
+    return n.bookmark ? base + "_" + n.bookmark : base;
+  }
+
   function paintNotes(){
     $("searchBar").hidden = true;
     if (state.view === "trash") return paintTrash();
     if (state.view === "search") return paintSearch();
     if (state.view === "starred") return paintStarred();
+    if (state.view === "marks") return paintMarks();
     if (state.view === "weak") return paintWeak();
     if (state.view === "pracAll"){
       C.practiceAll().then(function(l){ state.pracAll = l; paintPracticeAll(); });
@@ -4193,7 +4286,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var snap = r[2];
       void snap;
       state.allNotes = snap.all; state.counts = snap.counts;
-      state.starred = snap.starred; state.weak = snap.weak;
+      state.starred = snap.starred; state.weak = snap.weak; state.marks = snap.marks || [];
       state.trash = r[3]; state.prac = r[4];
       indexAssets();
       paintNotebooks(); paintTrashRow(); paintNotes(); paintCrumbs(); paintRecent();
@@ -4231,7 +4324,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       state.trash = res[4];
       var snap = res[5];
       state.allNotes = snap.all; state.counts = snap.counts;
-      state.starred = snap.starred; state.weak = snap.weak;
+      state.starred = snap.starred; state.weak = snap.weak; state.marks = snap.marks || [];
       state.prac = res[6];
       indexAssets();
       if (r.view === "search") runSearch();
@@ -4638,6 +4731,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   $("trashRow").addEventListener("click", function(){ flush(); go({trash:true}); });
   $("starredRow").addEventListener("click", function(){ flush(); go({starred:true}); });
+  $("marksRow").addEventListener("click", function(){ flush(); go({marks:true}); });
   $("emptyTrash").addEventListener("click", function(){
     if (!state.trash.length) return;
     if (!confirm("Erase all " + state.trash.length + " item(s) for good? This cannot be undone.")) return;
@@ -5691,7 +5785,34 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("starBtn").setAttribute("aria-pressed", on ? "true" : "false");
     $("starBtn").classList.toggle("on", on);
     $("starBtn").textContent = on ? "\u2605 Starred" : "\u2606 Star";
+    paintMarkBtn();
   }
+  function paintMarkBtn(){
+    var b = $("markBtn");
+    if (!b) return;
+    var mark = state.note && state.note.bookmark;
+    b.setAttribute("aria-pressed", mark ? "true" : "false");
+    b.classList.toggle("on", !!mark);
+    b.textContent = mark ? "\u2691 " + mark : "\u2691 Bookmark";
+  }
+  /* Bookmarking asks for the topic that starts here, because a bookmark with
+     no name is just a page you once visited. Clearing the name removes it. */
+  $("markBtn").addEventListener("click", function(){
+    if (!state.note) return;
+    var cur = state.note.bookmark || "";
+    var v = window.prompt(
+      cur ? "Rename this bookmark, or clear the box to remove it:"
+          : "What topic starts on this page?", cur);
+    if (v === null) return;
+    var topic = v.trim().replace(/\s+/g, "_");
+    var id = state.note.id;
+    C.saveNote(id, { bookmark: topic || null }).then(function(n){
+      if (state.note && state.note.id === id) state.note = n;
+      paintMarkBtn();
+      hint(topic ? "Bookmarked as " + markLabel(n) : "Bookmark removed.");
+      return refreshLists();
+    }).catch(dbFail("Could not save the bookmark"));
+  });
 
   /* internal links */
   $("linkBtn").addEventListener("click", function(){
@@ -5738,6 +5859,35 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   /* The href is the real route, not "#". If the click handler ever fails to
      run, the link still goes somewhere sensible instead of dumping you home. */
+  /* Drop an invisible anchor at the caret and return a reference to it, so a
+     way back can aim at this exact line instead of the top of the page.
+     It carries no glyph — unlike a spot you named on purpose, this one is
+     bookkeeping and should not clutter the writing. Zero font-size rather
+     than display:none, so it still has a box for scrollIntoView to find. */
+  function anchorHere(label){
+    var out = { ref: null, href: null };
+    if (!state.note) return out;
+    try {
+      var id = "sp_" + C.newId("a").slice(2, 12);
+      var el = document.createElement("span");
+      el.className = "anchor autoanchor";
+      el.setAttribute("id", id);
+      el.setAttribute("data-name", label || "link");
+      el.setAttribute("contenteditable", "false");
+      var sel = window.getSelection();
+      if (sel && sel.rangeCount && $("body").contains(sel.anchorNode)){
+        var r = sel.getRangeAt(0).cloneRange();
+        r.collapse(true);
+        r.insertNode(el);
+      } else {
+        $("body").appendChild(el);
+      }
+      out.ref = "nt:" + state.note.id + "#" + id;
+      out.href = "#/nb/" + state.note.notebookId + "/note/" + state.note.id + "#" + id;
+    } catch (e) { /* an anchor is a nicety; the link itself still works */ }
+    return out;
+  }
+
   function insertLink(target, label, href){
     var a = document.createElement("a");
     a.className = "ilink";
@@ -5752,8 +5902,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       $("body").appendChild(a);
     }
     state.lastLink = { to: target, href: href || "#/", label: label };
+    var here = anchorHere(label);
     markDirty(); flush();
-    offerReturnLink(state.lastLink);
+    offerReturnLink(state.lastLink, here.ref, here.href);
   }
   $("linkFind").addEventListener("input", buildLinkList);
   $("linkCancel").addEventListener("click", function(){ $("linkDlg").close(); });
@@ -7353,6 +7504,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     m.innerHTML = "";
     var items = [
       ["Mark this spot", markSpot],
+      ["Work this out here…", pracHere],
       ["Copy a link to this spot", copySpotLink],
       ["Paste the last link here", pasteLink],
       ["Link to another note\u2026", function(){ $("linkBtn").click(); }],
@@ -7398,6 +7550,55 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     return r;
   }
+
+  /* ---- rough working, anchored where you were stuck ----
+     The practice sheet was reachable only from the Practice button, which
+     made it a property of the whole page. Working is not like that: it
+     belongs to the line that prompted it. This puts a small marker at the
+     spot and hangs a working page off it.
+     The marker stores the practice record's own pr_ id, never its position in
+     the list: pages are addressed by ordinal everywhere else, and an ordinal
+     silently means something different as soon as another page is added. */
+  function openPracticeById(id){
+    if (!state.note) return Promise.resolve();
+    return C.practicePages(state.note.id).then(function(list){
+      var i = -1;
+      list.forEach(function(p, k){ if (p.id === id) i = k; });
+      if (i < 0){ say("That working page is no longer there."); return; }
+      return openPractice(i);
+    });
+  }
+  function pracHere(x, y){
+    if (!state.note) return;
+    return C.addPracticePage(state.note.id).then(function(p){
+      var el = document.createElement("span");
+      el.className = "pracpin";
+      el.setAttribute("contenteditable", "false");
+      el.setAttribute("data-pracid", p.id);
+      el.setAttribute("title", "Rough working — tap to open");
+      var r = caretAtPoint(x, y);
+      r.insertNode(el);
+      markDirty();
+      return flush().then(function(){ return openPracticeById(p.id); });
+    }).catch(dbFail("Could not start a working page"));
+  }
+  /* tap the marker to open its working page again */
+  $("body").addEventListener("click", function(e){
+    var pin = e.target.closest ? e.target.closest("span.pracpin") : null;
+    if (!pin) return;
+    e.preventDefault();
+    openPracticeById(pin.getAttribute("data-pracid"));
+  });
+  /* long press / right click takes the marker out, leaving the working page
+     itself reachable from the Practice button and All rough working */
+  $("body").addEventListener("contextmenu", function(e){
+    var pin = e.target.closest ? e.target.closest("span.pracpin") : null;
+    if (!pin) return;
+    e.preventDefault();
+    if (!confirm("Take out this working marker? The working itself is kept.")) return;
+    pin.remove();
+    markDirty(); flush();
+  });
 
   function markSpot(x, y){
     var name = window.prompt("Name this spot", "");
@@ -7448,8 +7649,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     a.textContent = state.lastLink.label;
     var r = caretAtPoint(x, y);
     r.insertNode(a);
+    var here = anchorHere(state.lastLink.label);
     markDirty(); flush();
-    offerReturnLink(state.lastLink);
+    offerReturnLink(state.lastLink, here.ref, here.href);
   }
 
   async function pasteClipboard(x, y){
@@ -7493,30 +7695,45 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }, true);
 
   /* ---- a link there should come with a way back ---- */
-  function offerReturnLink(link){
+  /* ---- every link comes with a way back ----
+     This used to raise a notice and wait for a tap. Two problems with that:
+     the way back only existed if you happened to say yes, and the notice
+     rewired the shared OK button and never put it back — so the next
+     unrelated message inherited the old label and the old handler, and
+     pressing it wrote a return link into a note you had stopped thinking
+     about. It is automatic now, and touches nothing shared.
+     `fromRef` lets the return point at the exact spot rather than the top of
+     the page; it is only available when the caller made an anchor there. */
+  function offerReturnLink(link, fromRef, fromHref){
     var m = /^nt:([^#]+)/.exec(link.to || "");
-    if (!m || !state.note) return;
+    if (!m || !state.note) return Promise.resolve();
     var targetId = m[1];
-    if (targetId === state.note.id) return;
+    if (targetId === state.note.id) return Promise.resolve();
     var fromNote = state.note;
-    $("noticeText").textContent = "Add a link in that note pointing back here?";
-    $("notice").hidden = false;
-    $("noticeOk").textContent = "Add a way back";
-    $("noticeOk").onclick = function(){
-      $("notice").hidden = true;
-      $("noticeOk").textContent = "OK";
-      $("noticeOk").onclick = null;
-      C.getNote(targetId).then(function(t){
-        if (!t) return;
-        var back = '<p><a class="ilink" data-to="nt:' + fromNote.id + '" href="#/nb/' +
-                   fromNote.notebookId + "/note/" + fromNote.id + '">Back to ' +
-                   escText(C.displayTitle(fromNote)) + "</a></p>";
-        return C.saveNote(t.id, { html: (t.html || "") + back });
-      }).then(function(){
-        say("A way back was added to that note.");
-        refreshLists();
-      });
-    };
+    var ref = fromRef || ("nt:" + fromNote.id);
+    var href = fromHref || ("#/nb/" + fromNote.notebookId + "/note/" + fromNote.id);
+    var backA = '<a class="ilink" data-to="' + ref + '" href="' + href + '">Back to ' +
+                escText(C.displayTitle(fromNote)) + "</a>";
+    return C.getNote(targetId).then(function(t){
+      if (!t) return;
+      var html = t.html || "";
+      /* pasting the same link in several places must not stack up copies of
+         the same way back in the target */
+      if (html.indexOf('data-to="' + ref + '"') > -1) return;
+      /* if the outbound link aimed at a named spot, put the way back beside
+         that spot rather than at the bottom of the page */
+      var spot = /#(sp_[A-Za-z0-9_]+)$/.exec(link.to || "");
+      if (spot){
+        var re = new RegExp('(<span[^>]*id="' + spot[1] + '"[^>]*>[\\s\\S]*?<\\/span>)');
+        if (re.test(html)){
+          return C.saveNote(t.id, { html: html.replace(re, "$1 " + backA) });
+        }
+      }
+      return C.saveNote(t.id, { html: html + "<p>" + backA + "</p>" });
+    }).then(function(){
+      hint("A way back was added to that note.");
+      return refreshLists();
+    }).catch(function(){ /* the outbound link still stands */ });
   }
 
   /* jumping to an anchor after the note loads */
@@ -8145,16 +8362,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var placeTimer = null, placeRestoring = false;
 
   function savePlace(){
-    if (!state.nbId || !state.noteId) return;
+    if (!state.noteId) return;
     if (placeRestoring) return;      /* do not record the scroll we just set */
     var p = $("paper");
-    C.setMeta(placeKey(state.nbId), {
-      noteId: state.noteId,
-      top: p ? p.scrollTop : 0,
-      left: p ? p.scrollLeft : 0,
-      zoom: state.zoom,
-      at: Date.now()
-    });
+    var top = p ? p.scrollTop : 0, left = p ? p.scrollLeft : 0;
+    /* Two records, deliberately. The notebook one answers "where was I in
+       this notebook", the page one answers "where was I on this page" — and
+       the second is what makes jumping to a bookmark and coming back, or
+       hopping between pages, land where you actually were rather than at the
+       top. Without it only the single most recent page per notebook was
+       remembered. */
+    if (state.nbId){
+      C.setMeta(placeKey(state.nbId), {
+        noteId: state.noteId, top: top, left: left, zoom: state.zoom, at: Date.now()
+      });
+    }
+    C.setMeta("nplace:" + state.noteId, { top: top, left: left, at: Date.now() });
   }
   function queueSavePlace(){
     clearTimeout(placeTimer);
