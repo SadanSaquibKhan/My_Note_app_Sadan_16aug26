@@ -357,11 +357,23 @@
     font-size:var(--body-size); line-height:var(--lead); color:var(--ink);
     padding-top:calc(var(--lead) - 5px); padding-bottom:20vh;
     min-height:var(--page-h);
+    /* the frame a dragged picture is placed against, matching #body so a
+       placed picture sits in the same spot in the preview and on the page */
+    position:relative;
   }
+  /* Exactly the rule the real page uses. It said `auto` here, so a picture
+     sat centred in the preview and jumped to the left margin the moment that
+     page became the one being written on. */
   .prevpeek-body figure.imgblock, .nextpeek-body figure.imgblock{
-    margin:var(--lead) auto; position:relative; line-height:0;
-    border:1px solid transparent;
+    margin:var(--lead) 0; position:relative; line-height:0;
+    border:1px solid transparent; width:70%;
   }
+  .prevpeek-body figure.imgblock[data-align="center"],
+  .nextpeek-body figure.imgblock[data-align="center"]{margin-left:auto; margin-right:auto}
+  .prevpeek-body figure.imgblock[data-align="right"],
+  .nextpeek-body figure.imgblock[data-align="right"]{margin-left:auto; margin-right:0}
+  .prevpeek-body figure.imgblock[data-free="1"],
+  .nextpeek-body figure.imgblock[data-free="1"]{margin:0}
   .prevpeek-body figure.imgblock img, .nextpeek-body figure.imgblock img{
     width:100%; height:auto; display:block; border-radius:3px;
   }
@@ -524,6 +536,18 @@
   }
   .nbtab .nbclose:hover{opacity:1}
   .nbtabmenu{flex:0 0 auto; align-self:center}
+
+  /* The mirror of the edge tab that brings the panels back. It was an
+     ordinary ghost button in a row of ghost buttons, which is why it could
+     not be found; this makes it read as the thing that closes the panel. */
+  .panelfold{
+    margin-left:auto; order:9;
+    min-width:40px; min-height:40px; padding:0;
+    font-size:17px; line-height:1;
+    background:var(--slab); border:1px solid var(--ink-2); border-radius:6px;
+    color:var(--ink);
+  }
+  .panelfold:hover{border-color:var(--live); color:var(--live)}
   .nbopenlist{
     border-bottom:1px solid var(--rule); background:var(--panel); padding:4px 0;
   }
@@ -2176,7 +2200,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b32";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b33";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9270,12 +9294,28 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      Deliberately the finger and not the pen: the pen's double tap is the
      eraser, and the two must not fight. It reads naturally anyway — you put
      the pen down and tap the page with a finger to start typing again. */
-  var backToType = { last: 0, x: 0, y: 0 };
+  var backToType = { last: 0, x: 0, y: 0, downX: 0, downY: 0, downAt: 0, moved: false };
+  /* A tap is a finger that goes down and comes up in the same place. Watching
+     only where each touch ENDED meant two scrolls that happened to finish
+     near one another counted as a double tap — which is why the keyboard kept
+     appearing while scrolling from one page to the next. */
+  $("paper").addEventListener("pointerdown", function(e){
+    if (e.pointerType !== "touch") return;
+    backToType.downX = e.clientX; backToType.downY = e.clientY;
+    backToType.downAt = Date.now(); backToType.moved = false;
+  }, true);
+  $("paper").addEventListener("pointermove", function(e){
+    if (e.pointerType !== "touch" || backToType.moved) return;
+    if (Math.abs(e.clientX - backToType.downX) > 10 ||
+        Math.abs(e.clientY - backToType.downY) > 10) backToType.moved = true;
+  }, true);
   $("paper").addEventListener("pointerup", function(e){
     if (e.pointerType !== "touch") return;
     if (ink.mode === "type") return;
     if (!state.note) return;
     var t = Date.now();
+    /* travelled, or dwelled: either way it was not a tap */
+    if (backToType.moved || (t - backToType.downAt) > 320){ backToType.last = 0; return; }
     var near = backToType.last &&
                Math.abs(e.clientX - backToType.x) < 32 &&
                Math.abs(e.clientY - backToType.y) < 32 &&
@@ -10507,6 +10547,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     peekUrls[which] = [];
     var figs = Array.prototype.slice.call(host.querySelectorAll("figure.imgblock"));
     figs.forEach(function(fig){
+      /* the same width and placement the live page gives it, so nothing
+         shifts when this page becomes the one being written on */
+      fig.style.width = (fig.getAttribute("data-pct") || 70) + "%";
+      if (fig.getAttribute("data-free") === "1") applyImagePlace(fig);
       var id = fig.getAttribute("data-img");
       if (!id) return;
       C.getAsset(id).then(function(a){
@@ -10517,10 +10561,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         im.src = url; im.alt = "";
         fig.textContent = "";
         fig.appendChild(im);
-        /* the page it belongs to may need re-measuring now the picture has
-           given it its real height */
-        if (typeof redrawAll === "function") setTimeout(redrawAll, 30);
+        /* The page has its real height only now the picture is in it, so the
+           handwriting canvas over it has to be re-sized and re-drawn — it was
+           measured against a page that had a gap where this picture is. */
+        setTimeout(function(){
+          repaintPeekInk();
+          if (typeof redrawAll === "function") redrawAll();
+        }, 30);
       }).catch(function(){});
+    });
+  }
+
+  /* re-draw both neighbours' handwriting against their current size */
+  function repaintPeekInk(){
+    ["prevPeekInk", "nextPeekInk"].forEach(function(id){
+      var cv = document.getElementById(id);
+      if (cv) paintPeekInk(id, cv.getAttribute("data-for"));
     });
   }
 
