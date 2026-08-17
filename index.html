@@ -1096,6 +1096,15 @@
   .setgroup > summary::after{content:"\25BE"; margin-left:auto; transition:transform .15s ease}
   .setgroup[open] > summary{color:var(--ink); border-bottom:1px solid var(--rule)}
   .setgroup[open] > summary::after{transform:rotate(180deg)}
+  /* A vertical drag that starts on a slider scrolls the dialog instead of
+     dragging the slider. Without this there was often nowhere on screen to
+     put a finger that was not a control, so trying to scroll changed a
+     setting by accident. Sideways still adjusts the slider. */
+  .settings input[type=range]{touch-action:pan-y}
+  .settings select, .settings .check{touch-action:pan-y}
+  .setfoot{flex-wrap:wrap; gap:8px}
+  .setcount{margin:0; flex:0 1 auto}
+  .setcount.changed{color:var(--live); font-weight:600}
   .setgroup > .field{padding:0 14px}
   .setgroup > .field:first-of-type{padding-top:14px}
   .setgroup > .field:last-child{padding-bottom:14px}
@@ -1874,10 +1883,12 @@
         </div>
       </details>
     </div>
-    <div class="dlg-foot">
-      <span class="hint" style="margin:0">Every change is saved as you make it.</span>
+    <div class="dlg-foot setfoot">
+      <span class="hint setcount" id="setCount">No changes yet</span>
       <span class="grow"></span>
-      <button type="button" class="btn primary" id="setClose">Done</button>
+      <button type="button" class="btn" id="setUndo" disabled>Undo changes</button>
+      <button type="button" class="btn" id="setReset">Reset all</button>
+      <button type="button" class="btn primary" id="setClose">OK</button>
     </div>
   </form>
 </dialog>
@@ -2064,7 +2075,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b24";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b25";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5275,6 +5286,31 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("body").addEventListener("paste", function(e){
     var dt = e.clipboardData || window.clipboardData;
     if (!dt) return;
+
+    /* A screenshot on the tablet arrives as a FILE on the clipboard, with no
+       text and no html at all — so this handler used to take the empty text
+       branch and paste nothing. Pictures are looked for first now, which also
+       covers copying an image out of any other app. */
+    var pics = [];
+    var files = dt.files ? Array.prototype.slice.call(dt.files) : [];
+    files.forEach(function(f){ if (f && /^image\//.test(f.type)) pics.push(f); });
+    if (!pics.length && dt.items){
+      Array.prototype.slice.call(dt.items).forEach(function(it){
+        if (it && it.kind === "file" && /^image\//.test(it.type || "")){
+          var f = it.getAsFile();
+          if (f) pics.push(f);
+        }
+      });
+    }
+    if (pics.length){
+      e.preventDefault();
+      (function next(){
+        if (!pics.length){ hint("Pasted."); return; }
+        insertImageFile(pics.shift()).then(next);
+      })();
+      return;
+    }
+
     var html = dt.getData("text/html");
     e.preventDefault();
     if (html){
@@ -5687,7 +5723,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       ink.penNear = false;
       document.body.classList.remove("pennear");
       updateTouchAction(); paintModeChip();
-      setTypingEnabled(true);
+      /* same rule as a tap: the pen simply going away is not a request for
+         the keyboard, and making the page editable here would raise it the
+         moment a hand touched down */
+      if (cfg.tapToType !== false || ink.mode === "type") setTypingEnabled(true);
     }, (typeof cfg === "object" && cfg.penAway) || 1600);
     if (!was){
       /* Bringing the pen back to the page is the clearest possible statement
@@ -6680,6 +6719,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     tapErase: true,       /* double-tap the nib to toggle the eraser */
     penButtonErase: true, /* the pen's side button toggles the eraser */
     dblType: true,        /* two finger-taps open the keyboard */
+    cfgRev: 0,            /* which one-time setting migrations have been done */
     holdErase: true,      /* hold the nib down to toggle the eraser */
     holdEraseMs: 650,     /* how long that hold has to be */
     favBar: false,     /* the floating favourites bar */
@@ -6697,16 +6737,37 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     zoomMax: 300
   };
   var CFG_KEYS = Object.keys(cfg);
+  /* the shipped values, kept aside so "Reset all" has something to go back to */
+  var CFG_DEFAULTS = JSON.parse(JSON.stringify(cfg));
 
+  /* Changing a default only reaches someone who has never opened Settings:
+     everyone else has the old value written to disk and keeps it for ever.
+     These are the few defaults worth pushing through to an existing config,
+     each one done exactly once. */
+  var CFG_REV = 2;
+  function migrateCfg(saved){
+    var rev = Number(saved && saved.cfgRev) || 0;
+    if (rev < 2){
+      /* a single tap made the page editable, which is what raised the
+         keyboard; two taps is the deliberate version */
+      cfg.tapToType = false;
+      cfg.dblType = true;
+    }
+    cfg.cfgRev = CFG_REV;
+    return rev !== CFG_REV;
+  }
   function loadCfg(){
     return C.getMeta("cfg", null).then(function(saved){
       if (saved) CFG_KEYS.forEach(function(k){ if (k in saved) cfg[k] = saved[k]; });
+      var moved = migrateCfg(saved);
       applyCfg();
+      if (moved) C.setMeta("cfg", cfg);
     });
   }
   function saveCfg(){
     ink.hideLists = cfg.collapseOnWrite;
     applyCfg();
+    if (typeof noteCfgTouched === "function") noteCfgTouched();
     return C.setMeta("cfg", cfg);
   }
   function applyCfg(){
@@ -6740,6 +6801,37 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   /* ---- settings panel ---- */
+  /* how things stood when Settings was opened, and before a Reset */
+  var cfgOpened = null, cfgBeforeReset = null;
+  function countCfgChanges(){
+    if (!cfgOpened) return 0;
+    var n = 0;
+    CFG_KEYS.forEach(function(k){
+      if (k === "cfgRev") return;
+      if (JSON.stringify(cfg[k]) !== JSON.stringify(cfgOpened[k])) n++;
+    });
+    return n;
+  }
+  function paintCfgCount(){
+    var el = $("setCount");
+    if (!el) return;
+    var n = countCfgChanges();
+    el.textContent = n === 0 ? "No changes yet"
+                   : n === 1 ? "1 setting changed"
+                   : n + " settings changed";
+    el.classList.toggle("changed", n > 0);
+    $("setUndo").disabled = (n === 0);
+  }
+  /* every control writes through saveCfg, so the count can be kept there */
+  function noteCfgTouched(){ if ($("setDlg").open) paintCfgCount(); }
+  function openSettings(){
+    cfgOpened = JSON.parse(JSON.stringify(cfg));
+    cfgBeforeReset = null;
+    $("setReset").textContent = "Reset all";
+    paintCfgCount();
+    $("setDlg").showModal();
+  }
+
   function buildSettings(){
     $("setCollapseWrite").checked = cfg.collapseOnWrite;
     $("setCollapseType").checked = cfg.collapseOnType;
@@ -6939,6 +7031,38 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setBtn").addEventListener("click", function(){ buildSettings(); $("setDlg").showModal(); });
     $("setClose").addEventListener("click", function(){ $("setDlg").close(); });
     $("setX").addEventListener("click", function(){ $("setDlg").close(); });
+
+    /* ---- knowing what you changed, and being able to take it back ----
+       Settings apply the instant you touch them, which is right until you
+       change one by accident and cannot tell which. The footer keeps a count
+       against how things were when the dialog opened, and can put them back. */
+    $("setUndo").addEventListener("click", function(){
+      if (!cfgOpened) return;
+      var n = countCfgChanges();
+      CFG_KEYS.forEach(function(k){ cfg[k] = cfgOpened[k]; });
+      saveCfg(); buildSettings(); paintCfgCount();
+      hint(n + (n === 1 ? " setting put back." : " settings put back."));
+    });
+    $("setReset").addEventListener("click", function(){
+      if (cfgBeforeReset){
+        /* second press: put back exactly what the reset swept away */
+        CFG_KEYS.forEach(function(k){ cfg[k] = cfgBeforeReset[k]; });
+        cfgBeforeReset = null;
+        saveCfg(); buildSettings(); paintCfgCount();
+        $("setReset").textContent = "Reset all";
+        hint("Your settings are back.");
+        return;
+      }
+      if (!confirm("Put every setting back to how it arrived?")) return;
+      /* kept so the reset itself can be undone */
+      cfgBeforeReset = JSON.parse(JSON.stringify(cfg));
+      CFG_KEYS.forEach(function(k){
+        if (k !== "cfgRev") cfg[k] = CFG_DEFAULTS[k];
+      });
+      saveCfg(); buildSettings(); paintCfgCount();
+      $("setReset").textContent = "Undo reset";
+      say("Every setting is back to how it arrived. The same button now undoes that.");
+    });
   }
 
   /* ---- screen wake lock ---- */
@@ -7261,7 +7385,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     Array.prototype.forEach.call(document.querySelectorAll("#setDlg .setgroup"), function(g, i){
       g.open = (i === 4);        /* "The favourites bar" */
     });
-    $("setDlg").showModal();
+    openSettings();
     var g = document.querySelectorAll("#setDlg .setgroup")[4];
     if (g && g.scrollIntoView) setTimeout(function(){ g.scrollIntoView({ block: "start" }); }, 40);
   });
@@ -7861,6 +7985,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       updateTouchAction();
       paintModeChip();
     }
+    /* THE reason a single tap still opened the keyboard. Making the page
+       editable is what raises the keyboard on Android — the tap does not have
+       to be "handled" anywhere, the browser does it. So the setting has to be
+       honoured HERE, not only in the code that moves the caret. With single
+       tap off, the page stays uneditable until two taps ask for it. */
+    if (cfg.tapToType === false && ink.mode !== "type") return;
     setTypingEnabled(true);
   }
 
@@ -7938,6 +8068,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
             PDF_MAX_PAGES + ".");
       }
       var firstId = null;
+      var madeIds = [];      /* so the whole import can be undone in one go */
       /* Carry on the notebook's own numbering rather than starting a series
          of its own, so the PDF lands as the pages that come next: if the
          notebook ends at p5 the PDF becomes p6, p7, p8 … in order. */
@@ -7957,6 +8088,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
                 var title = C.seriesName(seed.stem, seed.num + (n - 1), seed.pad);
                 return C.createNote(nbId, title).then(function(note){
                   if (!firstId) firstId = note.id;
+                  madeIds.push(note.id);
                   return C.createImage(note.id, r.blob, r.w, r.h).then(function(asset){
                     /* data-pdfpage makes the page take the shape of the sheet
                        it came from, and marks it as one to be left alone:
@@ -7974,15 +8106,40 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
             });
           })(i);
         }
-        return chain.then(function(){ return { firstId: firstId, total: total, stem: stem }; });
+        return chain.then(function(){
+          return { firstId: firstId, total: total, stem: stem, ids: madeIds.slice() };
+        });
       });
     }).then(function(r){
       $("notice").hidden = true;
+      /* the whole import is one undoable act: the pages are tombstoned
+         together, exactly as deleting them by hand would, and come back
+         together on redo */
+      pushBigOp({
+        label: r.total + " page" + (r.total === 1 ? "" : "s") + " from " + r.stem,
+        undo: function(){
+          return r.ids.reduce(function(ch, id){
+            return ch.then(function(){ return C.deleteNote(id); });
+          }, Promise.resolve()).then(function(){
+            return refreshLists().then(function(){ go({ nbId: nbId }); });
+          });
+        },
+        redo: function(){
+          return r.ids.reduce(function(ch, id){
+            return ch.then(function(){ return C.restoreNote(id); });
+          }, Promise.resolve()).then(function(){
+            return refreshLists().then(function(){
+              if (r.firstId) go({ nbId: nbId, noteId: r.firstId });
+            });
+          });
+        }
+      });
       return refreshLists().then(function(){
         if (r.firstId) go({ nbId: nbId, noteId: r.firstId });
         say(r.total + " page" + (r.total === 1 ? "" : "s") + " of " + r.stem +
             " added. Write on them like any other page — the picture is locked " +
-            "so it cannot be dragged out of place.");
+            "so it cannot be dragged out of place. Undo takes the whole import " +
+            "back out again.");
       });
     }).catch(function(e){
       $("notice").hidden = true;
@@ -8137,8 +8294,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return false;
   }
   function paintImgBar(){
-    if (!pickedImage) return;
+    if (!pickedImage || !pickedImage.fig) return;
     var locked = isLocked(pickedImage.fig);
+    /* the record may not have arrived yet: selection is immediate so the
+       first touch can drag, and the asset is filled in a moment later */
     var a = pickedImage.asset || {};
     $("imgLock").textContent = locked ? "Unlock" : "Lock";
     $("imgLock").setAttribute("aria-pressed", locked ? "true" : "false");
@@ -8155,7 +8314,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var pct = Math.max(20, Math.min(100, Number(pickedImage.fig.getAttribute("data-pct") || 70) + delta));
     pickedImage.fig.setAttribute("data-pct", pct);
     pickedImage.fig.style.width = pct + "%";
-    C.saveAsset(pickedImage.asset.id, { pct: pct });
+    /* by the figure's own id, not the loaded record: the record may still be
+       on its way and the size must save regardless */
+    C.saveAsset(pickedImage.fig.getAttribute("data-img"), { pct: pct });
     markDirty(); flush();
   }
   $("imgSmaller").addEventListener("click", function(){ imgResize(-10); });
@@ -8189,7 +8350,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function openCrop(){
     if (!pickedImage || lockedStop()) return;
     var a = pickedImage.asset;
-    if (!a || !a.blob) return;
+    if (!a || !a.blob){ hint("Still loading that picture — try again in a moment."); return; }
     var url = URL.createObjectURL(a.blob);
     var img = $("cropImg");
     img.onload = function(){
@@ -8379,18 +8540,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        removing. */
     if (fig.getAttribute("data-pdfpage") === "1") return;
 
-    var now = Date.now();
-    if (fig.classList.contains("on") && now - lastImgTap < 320){
-      lastImgTap = 0;
-      var url0 = imgUrls[fig.getAttribute("data-img")];
-      if (url0 && !isLocked(fig)) openViewer(url0);
-      return;
-    }
-    lastImgTap = now;
-
+    /* Nothing opens full screen from a tap any more, not even two taps. A
+       picture in a page is something you move and size; looking at it whole
+       is on the long-press menu, where you go when you mean it. */
     if (!fig.classList.contains("on")){
-      C.getAsset(fig.getAttribute("data-img")).then(function(a){ selectImage(fig, a); });
-      return;
+      /* Selected AT ONCE, then the record is filled in behind. Fetching the
+         asset first and selecting in the callback meant the first touch was
+         swallowed: by the time it landed your finger had gone, so nothing
+         could be dragged until you touched a second time. */
+      selectImage(fig, null);
+      C.getAsset(fig.getAttribute("data-img")).then(function(a){
+        if (pickedImage && pickedImage.fig === fig){
+          pickedImage.asset = a;
+          paintImgBar();
+        }
+      });
+      /* deliberately falls through, so this same touch can already drag */
     }
     if (isLocked(fig)){
       /* still allow the menu, so it can be unlocked again */
@@ -10722,22 +10887,99 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
     return { v: best, S: bestS };
   }
+  /* ---- undo that takes you to what changed ----
+     Undoing something off the top of the screen used to look like nothing had
+     happened. The op knows which strokes it touched, so their bounds say where
+     to look; for typing the caret already knows. */
+  function opBounds(op){
+    if (!op) return null;
+    var ss = op.ss ? op.ss.map(function(x){ return x.s || x; }) : (op.s ? [op.s] : []);
+    return ss.length ? C.inkBounds(ss) : null;
+  }
+  function revealBounds(b){
+    if (!b) return;
+    var p = $("paper"), z = state.zoom || 1;
+    if (!p) return;
+    var top = b.minY * z, bottom = b.maxY * z;
+    var view = p.clientHeight;
+    if (top >= p.scrollTop + 40 && bottom <= p.scrollTop + view - 40) return;  /* already on screen */
+    p.scrollTo({ top: Math.max(0, (top + bottom) / 2 - view / 2), behavior: "smooth" });
+    setTimeout(redrawAll, 260);
+  }
+  function revealCaret(){
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return;
+    var node = sel.anchorNode;
+    var el = node && (node.nodeType === 3 ? node.parentNode : node);
+    if (el && el.scrollIntoView){
+      try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
+    }
+  }
+
+  /* Document-level undo, for things that are bigger than one page — bringing
+     a PDF in makes a whole run of pages, and that has to come out again in
+     one go. Ordered against the ink and text stacks by the same counter, so
+     the newest thing is always what undoes first. */
+  var bigOps = [], bigRedo = [];
+  function pushBigOp(op){
+    op.seq = nextSeq();
+    bigOps.push(op);
+    bigRedo.length = 0;
+    paintGlobalUndo();
+  }
+  function bigTop(which){
+    var list = which === "undo" ? bigOps : bigRedo;
+    if (!list.length) return -1;
+    var op = list[list.length - 1];
+    return which === "undo" ? (op.seq || 0) : (op.undoneAt || 0);
+  }
+
   function globalUndo(){
     var i = inkTop("undo");
     var t = textHist.past.length ? (textHist.past[textHist.past.length - 1].seq || 0) : -1;
-    if (i.v < 0 && t < 0){ hint("Nothing to undo."); return; }
-    if (i.v >= t && i.S) i.S.doUndo(); else textUndo();
+    var g = bigTop("undo");
+    if (i.v < 0 && t < 0 && g < 0){ hint("Nothing to undo."); return; }
+    if (g >= i.v && g >= t){
+      var op = bigOps.pop();
+      op.undoneAt = nextRedoSeq();
+      bigRedo.push(op);
+      Promise.resolve(op.undo()).then(function(){ hint("Undid: " + op.label); paintGlobalUndo(); });
+      return;
+    }
+    if (i.v >= t && i.S){
+      var top = i.S.undo[i.S.undo.length - 1];
+      i.S.doUndo();
+      revealBounds(opBounds(top));
+    } else {
+      textUndo();
+      revealCaret();
+    }
     paintGlobalUndo();
   }
   function globalRedo(){
     var i = inkTop("redo");
     var t = textHist.future.length ? (textHist.future[textHist.future.length - 1].undoneAt || 0) : -1;
-    if (i.v < 0 && t < 0){ hint("Nothing to redo."); return; }
-    if (i.v >= t && i.S) i.S.doRedo(); else textRedo();
+    var g = bigTop("redo");
+    if (i.v < 0 && t < 0 && g < 0){ hint("Nothing to redo."); return; }
+    if (g >= i.v && g >= t){
+      var op = bigRedo.pop();
+      op.seq = nextSeq();
+      bigOps.push(op);
+      Promise.resolve(op.redo()).then(function(){ hint("Put back: " + op.label); paintGlobalUndo(); });
+      return;
+    }
+    if (i.v >= t && i.S){
+      var top = i.S.redo[i.S.redo.length - 1];
+      i.S.doRedo();
+      revealBounds(opBounds(top));
+    } else {
+      textRedo();
+      revealCaret();
+    }
     paintGlobalUndo();
   }
-  function anyUndo(){ return inkTop("undo").v >= 0 || textHist.past.length > 0; }
-  function anyRedo(){ return inkTop("redo").v >= 0 || textHist.future.length > 0; }
+  function anyUndo(){ return inkTop("undo").v >= 0 || textHist.past.length > 0 || bigOps.length > 0; }
+  function anyRedo(){ return inkTop("redo").v >= 0 || textHist.future.length > 0 || bigRedo.length > 0; }
   function paintGlobalUndo(){
     var u = $("gUndo"), r = $("gRedo");
     if (u) u.disabled = !anyUndo();
