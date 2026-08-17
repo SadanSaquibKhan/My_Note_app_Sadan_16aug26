@@ -505,6 +505,14 @@
   }
   .favbar button[aria-pressed="true"]{background:var(--ink); color:var(--panel); border-color:var(--ink)}
   .favgrip{cursor:grab; color:var(--ink-2); letter-spacing:-2px; min-height:26px !important}
+  .favmini, .favedit{min-height:28px !important; font-size:13px; color:var(--ink-2)}
+  /* what is left when the bar is minimised: one dot you can still drag */
+  .favdot{
+    position:fixed; z-index:76; width:44px; height:44px; padding:0; border-radius:50%;
+    background:var(--panel); color:var(--live); border:1px solid var(--ink);
+    box-shadow:0 8px 24px var(--shadow); font-size:15px; touch-action:none;
+  }
+  .favdot[hidden]{display:none}
   .favpop{min-width:0; padding:8px; z-index:81}
   .favpop .swatchrow{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px}
   .favpop .widthrow{display:flex; gap:6px; align-items:center; flex-wrap:wrap}
@@ -1676,7 +1684,8 @@
           <label class="check"><input type="checkbox" id="setHints"> Show the small passing messages (&ldquo;Zoom unlocked&rdquo;, &ldquo;Undo&rdquo;&hellip;)</label>
           <label class="check"><input type="checkbox" id="setKeepFoot"> Keep the note footer on screen while writing</label>
           <label class="check"><input type="checkbox" id="setWake"> Keep the screen awake</label>
-          <label class="check"><input type="checkbox" id="setTapType"> Tapping blank page starts typing there</label>
+          <label class="check"><input type="checkbox" id="setTapType"> A single tap on blank page starts typing there</label>
+        <label class="check"><input type="checkbox" id="setDblType"> Two taps with a finger open the keyboard</label>
           <label class="check"><input type="checkbox" id="setSpell"> Check spelling as I type</label>
           <label class="check"><input type="checkbox" id="setSymbols"> Expand typed shortcuts (-&gt; becomes an arrow)</label>
           <label class="check"><input type="checkbox" id="setMarkdown"> Inline markdown for bold, italic and code</label>
@@ -1705,11 +1714,16 @@
           bigger. &ldquo;Wipe an area&rdquo; in the ink bar uses roughly double this.</p>
         </div>
         <div class="field">
-          <label class="check"><input type="checkbox" id="setPenBtnErase"> The pen&rsquo;s side button turns the eraser on and off</label>
+          <label class="check"><input type="checkbox" id="setHoldErase"> Hold the nib still on the page to turn the eraser on and off</label>
+          <label for="setHoldEraseMs">&hellip;after <b id="holdEraseOut"></b></label>
+          <input type="range" id="setHoldEraseMs" min="300" max="1500" step="50">
           <label class="check"><input type="checkbox" id="setTapErase"> Double-tap with the pen to turn the eraser on and off</label>
-          <p class="hint">A way in when the S&nbsp;Pen side button never reaches
-          the browser &mdash; on Samsung it is usually claimed by Air Actions
-          before any web page sees it. Two quick taps in the same spot.</p>
+          <label class="check"><input type="checkbox" id="setPenBtnErase"> The pen&rsquo;s side button turns the eraser on and off</label>
+          <p class="hint"><b>Holding the nib is the one that works on this
+          tablet.</b> Samsung&rsquo;s One UI takes the S&nbsp;Pen side button
+          for Air Actions before Chrome is ever told about it, so no web page
+          can see it &mdash; the setting above is left on in case you turn Air
+          Actions off (Settings &rarr; Advanced features &rarr; S Pen).</p>
         </div>
         <div class="field">
           <label for="setPenAway">How long the pen stays present after it lifts <b id="penAwayOut"></b></label>
@@ -1986,8 +2000,11 @@
 <input type="file" id="pdfFile" accept="application/pdf,.pdf" hidden>
 <input type="file" id="anyFile" multiple hidden>
 <div class="favbar" id="favBar" hidden>
-  <button type="button" class="favgrip" id="favGrip" aria-label="Move the favourites bar" title="Drag to move">&#8942;&#8942;</button>
+  <button type="button" class="favgrip" id="favGrip" aria-label="Move the favourites bar" title="Drag to move" data-help="Drag this to move the favourites bar anywhere on the screen.">&#8942;&#8942;</button>
+  <button type="button" class="favmini" id="favMini" aria-label="Minimise the favourites bar" title="Minimise" data-help="Shrinks the bar to a single button. Tap that to bring it back.">&#8722;</button>
+  <button type="button" class="favedit" id="favEdit" aria-label="Choose what is on the bar" title="Choose what is on the bar" data-help="Opens the settings for this bar, where you choose which pens and tools it carries.">&#9998;</button>
 </div>
+<button type="button" class="favdot" id="favDot" hidden aria-label="Show the favourites bar" title="Favourites">&#9670;</button>
 <div class="holdmenu favpop" id="favPop" hidden></div>
 <div class="flowcue" id="flowCue" hidden></div>
 <div class="dropmark" id="dropMark" hidden></div>
@@ -2030,7 +2047,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b21";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b22";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5656,6 +5673,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       setTypingEnabled(true);
     }, (typeof cfg === "object" && cfg.penAway) || 1600);
     if (!was){
+      /* Bringing the pen back to the page is the clearest possible statement
+         that you have finished typing. It puts writing mode back and picks up
+         the pen or pencil you were last using, rather than leaving you in the
+         keyboard wondering why the nib does nothing. */
+      if (ink.mode === "type"){
+        setMode("auto");
+        var back = (ink.tool === "eraser" || ink.tool === "lasso")
+          ? (tapErase.was || "pen") : ink.tool;
+        ink.tool = back;
+        if (typeof restoreTool === "function") restoreTool(back);
+        hint("Writing again with the " + back + ".");
+      }
       updateTouchAction();
       paintModeChip();
       $("inkTools").hidden = false;
@@ -5702,7 +5731,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       /* catch a coasting page: without this the pen could lay a stroke while
          the paper was still sliding underneath it */
       stopGlide();
-      if (e.pointerType === "pen"){ penDetected(); applyPenButton(e); }
+      if (e.pointerType === "pen"){ penDetected(); applyPenButton(e); armPenHold(S, e); }
       else { handOverToTyping(e); if (S.name === "note") armHold(e); }
       if (touchGesture(S, e, "down")) return;
       if (fingerPanDown(S, e)) return;
@@ -5717,6 +5746,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (e.pointerType === "pen"){
         penDetected();
         applyPenButton(e);
+        movePenHold(e);
         if (cfg.hoverDot){
           var nb = $("hoverNib");
           nb.style.left = e.clientX + "px"; nb.style.top = e.clientY + "px";
@@ -5750,6 +5780,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
     function up(e){
       cancelHold();
+      clearPenHold();
       touchGesture(S, e, "up");
       fingerPanUp(e);
       if (e && e.pointerType === "pen"){
@@ -6608,7 +6639,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     autoScroll: true,
     wakeLock: false,
     pinchZoom: true,
-    tapToType: true,
+    /* A single tap used to put the caret down and raise the keyboard, which
+       meant the keyboard appeared every time a hand brushed the page. Two
+       taps is the deliberate version of the same thing. */
+    tapToType: false,
     holdMs: 700,
     showDocBar: true,
     showFmtBar: true,
@@ -6628,9 +6662,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     eraserSize: 22,    /* how wide the eraser bites, in page units */
     tapErase: true,       /* double-tap the nib to toggle the eraser */
     penButtonErase: true, /* the pen's side button toggles the eraser */
+    dblType: true,        /* two finger-taps open the keyboard */
+    holdErase: true,      /* hold the nib down to toggle the eraser */
+    holdEraseMs: 650,     /* how long that hold has to be */
     favBar: false,     /* the floating favourites bar */
     favTools: ["pen_ink", "pen_blue", "pen_red", "hl_amber", "eraser", "lasso", "undo"],
     penHelp: true,     /* hover the pen over a control to hear what it does */
+    favMin: false,     /* the favourites bar shrunk to its dot */
     favPos: null,      /* {x, y}, re-clamped to the window on load */
     glideSpeed: 100,   /* how fast the page carries on after the finger lifts */
     glideStop: 50,     /* how long it takes to come to rest */
@@ -6700,6 +6738,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     buildFavPick();
     $("setKeepFoot").checked = cfg.keepFoot === true;
     $("setTapType").checked = cfg.tapToType;
+    $("setDblType").checked = cfg.dblType !== false;
     $("setSpell").checked = cfg.spellcheck !== false;
     $("setSymbols").checked = cfg.symbols !== false;
     $("setMarkdown").checked = cfg.markdown !== false;
@@ -6717,6 +6756,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("eraserOut").textContent = cfg.eraserSize + " px";
     $("setTapErase").checked = cfg.tapErase !== false;
     $("setPenBtnErase").checked = cfg.penButtonErase !== false;
+    $("setHoldErase").checked = cfg.holdErase !== false;
+    $("setHoldEraseMs").value = cfg.holdEraseMs;
+    $("holdEraseOut").textContent = (cfg.holdEraseMs / 1000).toFixed(2) + "s";
     $("setGlide").value = cfg.glideSpeed;
     $("glideOut").textContent = cfg.glideSpeed ? cfg.glideSpeed + "%" : "off";
     $("setGlideStop").value = cfg.glideStop;
@@ -6764,11 +6806,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     bindCheck("setTapErase", "tapErase");
     bindCheck("setPenBtnErase", "penButtonErase");
     bindCheck("setPenHelp", "penHelp");
+    bindCheck("setHoldErase", "holdErase");
+    $("setHoldEraseMs").addEventListener("input", function(){
+      cfg.holdEraseMs = Number(this.value);
+      $("holdEraseOut").textContent = (cfg.holdEraseMs / 1000).toFixed(2) + "s";
+      saveCfg();
+    });
     $("setFavBar").addEventListener("change", function(){
       cfg.favBar = this.checked; saveCfg(); buildFavBar();
     });
     bindCheck("setKeepFoot", "keepFoot");
     bindCheck("setTapType", "tapToType");
+    bindCheck("setDblType", "dblType");
     $("setSpell").addEventListener("change", function(){
       cfg.spellcheck = this.checked; saveCfg(); applySpell();
     });
@@ -6993,9 +7042,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     el.style.top = p.y + "px";
   }
   function buildFavBar(){
-    var host = $("favBar");
+    var host = $("favBar"), dot = $("favDot");
     if (!host) return;
-    host.hidden = !cfg.favBar || ink.mode === "type";
+    /* Deliberately NOT hidden in typing mode any more. The bar is how you get
+       back to a pen, so taking it away exactly when you want it was wrong. */
+    var off = !cfg.favBar;
+    host.hidden = off || cfg.favMin === true;
+    if (dot){
+      dot.hidden = off || cfg.favMin !== true;
+      var p = cfg.favPos || { x: 8, y: Math.round((window.innerHeight || 768) * 0.28) };
+      dot.style.left = Math.max(4, Math.min(p.x, (window.innerWidth || 1024) - 52)) + "px";
+      dot.style.top = Math.max(4, Math.min(p.y, (window.innerHeight || 768) - 52)) + "px";
+    }
     Array.prototype.slice.call(host.querySelectorAll("button")).forEach(function(b){
       if (b.id !== "favGrip") b.remove();
     });
@@ -7170,6 +7228,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     saveCfg();
   });
   window.addEventListener("resize", function(){ setTimeout(placeFavBar, 80); });
+
+  $("favMini").addEventListener("click", function(e){
+    e.preventDefault(); e.stopPropagation();
+    cfg.favMin = true; saveCfg(); buildFavBar();
+  });
+  $("favDot").addEventListener("click", function(e){
+    e.preventDefault(); e.stopPropagation();
+    cfg.favMin = false; saveCfg(); buildFavBar();
+  });
+  $("favEdit").addEventListener("click", function(e){
+    e.preventDefault(); e.stopPropagation();
+    /* straight to the group that holds the tick boxes, already open */
+    buildSettings();
+    Array.prototype.forEach.call(document.querySelectorAll("#setDlg .setgroup"), function(g, i){
+      g.open = (i === 4);        /* "The favourites bar" */
+    });
+    $("setDlg").showModal();
+    var g = document.querySelectorAll("#setDlg .setgroup")[4];
+    if (g && g.scrollIntoView) setTimeout(function(){ g.scrollIntoView({ block: "start" }); }, 40);
+  });
 
   function buildPresets(){
     var host = $("penPresets");
@@ -7606,6 +7684,36 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      tool comes straight back when it is let go. */
   var btn = { held: false, was: null };
   var tapErase = { last: 0, x: 0, y: 0, id: null, was: "pen" };
+
+  /* ---- hold the nib down to switch to the eraser ----
+     Margin's own timer, not Android's long press. Waiting for the browser to
+     raise a contextmenu made this work sometimes and not others, because
+     whether that event arrives at all depends on what else the system decided
+     to do with the press. This fires on our own clock every time.
+     It is the route that works on this tablet: the S Pen's side button is
+     taken by One UI before Chrome is told about it, so nothing in this file
+     can see it, no matter where it listens. */
+  var penHold = { timer: null, x: 0, y: 0, S: null, fired: false };
+  function armPenHold(S, e){
+    clearPenHold();
+    if (cfg.holdErase === false) return;
+    if (ink.tool === "lasso") return;          /* a lasso needs a long drag */
+    penHold.S = S; penHold.x = e.clientX; penHold.y = e.clientY; penHold.fired = false;
+    penHold.timer = setTimeout(function(){
+      penHold.fired = true;
+      togglePenEraser("holding the nib down");
+    }, Math.max(300, Number(cfg.holdEraseMs) || 650));
+  }
+  function movePenHold(e){
+    if (!penHold.timer) return;
+    if (Math.abs(e.clientX - penHold.x) > 9 || Math.abs(e.clientY - penHold.y) > 9){
+      clearPenHold();                          /* you are writing, not holding */
+    }
+  }
+  function clearPenHold(){
+    clearTimeout(penHold.timer);
+    penHold.timer = null;
+  }
   /* What a barrel button looks like is not consistent across stacks:
        buttons bit 2  (0x02)  barrel button, the spec answer
        buttons bit 5  (0x20)  the eraser end of the pen
@@ -8703,6 +8811,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
                (t - backToType.last) < 420;
     if (near){
       backToType.last = 0;
+      if (cfg.dblType === false) return;
       if (ink.penNear) return;        /* the pen is still in play; leave it be */
       setMode("type");
       setTypingEnabled(true);
@@ -8763,11 +8872,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          down. Toggling here as well would immediately switch it back — which
          is why the button worked one press and not the next. */
       if (btn.held) return;
-      /* Holding the nib against the page is a long press, not the button.
-         Without this, resting the pen for a moment switched to the eraser and
-         resting it again switched back — the behaviour you saw, on the wrong
-         gesture entirely. */
-      if (looksLikeLongPress()) return;
+      /* Two different presses arrive here as the same event and cannot be
+         told apart except by how long the nib has been down.
+         On this tablet the long press is the one that actually arrives: the
+         S Pen's side button is taken by One UI before Chrome ever sees it, so
+         no listener anywhere in this file can reach it. Holding the nib is
+         therefore the route that works, and it is a deliberate gesture with
+         its own setting rather than an accident. */
+      if (looksLikeLongPress()){
+        if (cfg.holdErase !== false) togglePenEraser("holding the nib down");
+        return;
+      }
       if (cfg.penButtonErase !== false) togglePenEraser("the pen's side button");
       return;
     }
