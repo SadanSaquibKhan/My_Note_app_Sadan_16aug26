@@ -229,6 +229,23 @@
   /* every bar in the document pane, held inside the pane no matter what is
      put on it later */
   .docbar, .fmtbar, .inktools, .lassobar, .tagrow{min-width:0; max-width:100%}
+  /* One scrolling row, not a wall of wrapped rows. The bars are the widest
+     furniture in the app and wrapping them ate a third of the screen; a single
+     row you swipe sideways gives almost all of it back. A soft fade at the
+     right edge says there is more to reach. */
+  .fmtbar, .inktools{
+    flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden;
+    scrollbar-width:none; -webkit-overflow-scrolling:touch;
+    -webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 22px),transparent);
+            mask-image:linear-gradient(90deg,#000 calc(100% - 22px),transparent);
+  }
+  .fmtbar::-webkit-scrollbar, .inktools::-webkit-scrollbar{display:none}
+  .fmtbar > *, .inktools > *{flex:none}
+  /* a touch more compact so more fits before you have to scroll at all */
+  .docbar .ghost, .fmtbar .ghost, .fmtbar button, .inktools .ghost{
+    padding:7px 9px; min-height:34px; letter-spacing:.06em;
+  }
+  .docbar{gap:6px; padding:8px 12px}
   .docbar > *, .fmtbar > *, .inktools > *{max-width:100%}
   #noteTitle{
     flex:1; min-width:0; padding:8px 10px; min-height:38px;
@@ -825,6 +842,8 @@
     border:1px dashed var(--rule); border-radius:8px; flex:0 0 auto;
   }
   .eraserdot i{display:block; border-radius:50%; background:var(--ink); opacity:.8}
+  .btnhide{display:grid; grid-template-columns:1fr 1fr; gap:2px 14px; margin-top:4px}
+  .btnhide .check{margin:0}
   .cropbar.up{top:-52px; bottom:auto}
   .cropbar .btn{min-height:38px; padding:0 14px; font-size:12px}
   #body blockquote{
@@ -2035,8 +2054,16 @@
           <label>Which bars to show</label>
           <label class="check"><input type="checkbox" id="setDocBar"> Note actions (star, practice, modes, zoom)</label>
           <label class="check"><input type="checkbox" id="setFmtBar"> Typing and formatting</label>
+          <label class="check"><input type="checkbox" id="setInkBar"> Pen tools</label>
           <label class="check"><input type="checkbox" id="setTagRow"> Tags</label>
-          <p class="hint">Immerse hides every bar at once; a single button brings them back.</p>
+          <p class="hint">Immerse hides every bar at once; a single button brings
+          them back. &ldquo;Show the tools&rdquo; brings them back with typing and
+          pen folded, so you start on the small note bar.</p>
+        </div>
+        <div class="field">
+          <label>Buttons on the note bar</label>
+          <p class="hint">Untick anything you never use and it leaves the bar.</p>
+          <div id="btnHideList" class="btnhide"></div>
         </div>
         <div class="field">
           <label for="setTheme">Appearance</label>
@@ -2290,7 +2317,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b38";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b39";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -7097,6 +7124,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     showFmtBar: true,
     showTagRow: true,
     showInkBar: true,
+    hideBtns: {},      /* note-bar buttons turned off one by one in Settings */
     spellcheck: true,
     symbols: true,
     markdown: true,
@@ -7286,7 +7314,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("zoomMaxOut").textContent = cfg.zoomMax + "%";
     $("setDocBar").checked = cfg.showDocBar;
     $("setFmtBar").checked = cfg.showFmtBar;
+    $("setInkBar").checked = cfg.showInkBar !== false;
     $("setTagRow").checked = cfg.showTagRow;
+    buildBtnHide();
     $("setBackupGap").value = cfg.backupGap;
     $("backupGapOut").textContent = cfg.backupGap + (cfg.backupGap === 1 ? " day" : " days");
     $("setHold").value = cfg.holdMs;
@@ -7355,8 +7385,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       cfg.uiScale = Number(this.value); $("uiScaleOut").textContent = cfg.uiScale + "%";
       saveCfg(); applyUIScale(); setTimeout(redrawAll, 40);
     });
-    bindCheck("setDocBar", "showDocBar");
-    bindCheck("setFmtBar", "showFmtBar");
+    ["setDocBar","showDocBar"].length;   /* doc + fmt clear their own fold too */
+    $("setDocBar").addEventListener("change", function(){
+      cfg.showDocBar = this.checked; barMin.showDocBar = false; saveCfg(); applyBars();
+    });
+    $("setFmtBar").addEventListener("change", function(){
+      cfg.showFmtBar = this.checked; barMin.showFmtBar = false; saveCfg(); applyBars();
+    });
+    $("setInkBar").addEventListener("change", function(){
+      cfg.showInkBar = this.checked;
+      barMin.showInkBar = false;      /* an explicit choice clears the "for now" fold */
+      saveCfg(); applyBars();
+    });
     bindCheck("setTagRow", "showTagRow");
     $("setBackupGap").addEventListener("input", function(){
       cfg.backupGap = Number(this.value);
@@ -10488,12 +10528,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     setTimeout(redrawAll, 60);
   }
   $("immerseBtn").addEventListener("click", function(){ setImmerse(true); });
-  $("immerseOut").addEventListener("click", function(){ setImmerse(false); });
+  $("immerseOut").addEventListener("click", function(){
+    setImmerse(false);
+    /* land on the small note bar; open typing and pen only when wanted */
+    barMin.showFmtBar = true; barMin.showInkBar = true;
+    applyBars();
+  });
 
   function applyBars(){
     document.body.classList.toggle("nofmt", cfg.showFmtBar === false);
     document.body.classList.toggle("nodoc", cfg.showDocBar === false);
     document.body.classList.toggle("notags", cfg.showTagRow === false);
+    if (typeof applyBtnHide === "function") applyBtnHide();
     setTimeout(redrawAll, 40);
   }
 
@@ -11311,12 +11357,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (typeof paintPrevPeek === "function") paintPrevPeek();
       if (typeof paintPageEnd === "function") paintPageEnd();
     }, 2500);
-    flush().then(function(){
-      go({ nbId: nbId, noteId: id });
-    }).catch(function(){
-      handover.pending = null; handover.busy = false;
-      if (band){ band.style.height = ""; band.style.overflow = ""; }
-    });
+    /* Turn to the next page WITHOUT waiting for the database.
+       flush() reads #body synchronously before it returns, so the page you are
+       leaving is captured for saving right here — but the actual write, and the
+       list refresh that follows it, are left to finish in the background. They
+       used to sit in the critical path: the swap could not happen until a save
+       and a list re-read had both completed, and every one of those
+       milliseconds is time the fling spends carrying you past the join before
+       the page underneath has changed, which is the lurch. */
+    try { flush(); } catch (e) {}
+    go({ nbId: nbId, noteId: id });
   }
 
   /* called from paintDoc once the swapped-to page is mounted and its bands
@@ -11330,44 +11380,50 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     requestAnimationFrame(function(){
       if (band){ band.style.height = ""; band.style.overflow = ""; }
       if (!p){ handover.busy = false; return; }
-      var tries = 0;
-      /* Going forward you arrive near the TOP of the next page, so the position
-         asked for is a small one and it always takes. Going back you arrive
-         near the FOOT of the page you are returning to, so the position is a
-         big one — and if that page has not reached its full height yet the
-         browser quietly clamps it to whatever currently fits and the page lands
-         too high, then lurches when the rest of it appears. That is why going
-         back jumped and going forward did not.
-         So it is re-applied, but ONLY while the scroller is pinned at its own
-         bottom, which is the signature of the clamp. A scroll you made yourself
-         is never touched. */
+      var tries = 0, calm = 0;
+      /* The jump going back had two halves.
+         One: you arrive near the FOOT of the page you are returning to, so the
+         position asked for is a big one, and if that page has not reached its
+         full height yet the browser clamps it to whatever fits and the page
+         lands too high, then lurches as the rest arrives.
+         Two: the page keeps changing height for a few frames after it mounts —
+         handwriting is drawn, images decode, maths is typeset — and each change
+         above your eye shoves what you are looking at.
+         So rather than set the position once, the block you were actually
+         watching is pinned back to where it was, and held there for as long as
+         the page is still settling. It stops as soon as two frames pass with
+         nothing left to correct, so a scroll of your own is never fought for
+         more than a moment. */
+      var pTop0 = p.getBoundingClientRect().top;
       (function settle(){
         var pad = prevPad();
         var want = Math.max(0, pad - pend.keepAt);
         p.scrollTop = want;
-        /* Now put the block you were actually looking at back where it was.
-           The page's top edge got us close; this closes the remaining gap,
-           which is everything the preview and the live page disagreed about
-           between the top of the page and your eye. Measured against the live
-           element, so it is right by construction rather than by hoping the
-           two render identically.
-           Bounded, and skipped if the block cannot be found: a preview whose
-           blocks do not line up one-for-one with the page then leaves the
-           old behaviour rather than throwing the page somewhere absurd. */
+        /* pin the watched block to the screen row it was on at the swap */
+        var moved = 0;
         if (pend.aIdx >= 0){
           var kid = $("body").children[pend.aIdx];
           if (kid){
-            var d = (kid.getBoundingClientRect().top - p.getBoundingClientRect().top) - pend.aOff;
-            if (d && Math.abs(d) < 900){ want = Math.max(0, want + d); p.scrollTop = want; }
+            var now = kid.getBoundingClientRect().top - p.getBoundingClientRect().top;
+            var d = now - pend.aOff;
+            /* bounded: with the preview now styled like the page a real
+               residual is small, so a large d is a block that did not line up
+               one-for-one and is ignored rather than trusted */
+            if (Math.abs(d) > 1 && Math.abs(d) < 400){
+              want = Math.max(0, want + d); p.scrollTop = want; moved = d;
+            }
           }
         }
         padWatch.last = pad;
         padWatch.skip = false;
         redrawAll();
         tries++;
+        /* still short of the mark because the page is not tall enough yet */
         var short = p.scrollTop < want - 2 &&
                     p.scrollTop >= p.scrollHeight - p.clientHeight - 2;
-        if (short && tries < 12){ setTimeout(settle, 50); return; }
+        calm = (Math.abs(moved) <= 1 && !short) ? calm + 1 : 0;
+        if (calm < 2 && tries < 16){ requestAnimationFrame(settle); return; }
+        void pTop0;
         handover.busy = false;
       })();
     });
@@ -11674,7 +11730,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }, true);
   document.addEventListener("pointerup", function(){ edgeSwipe = null; }, true);
 
-  /* ---- 2. every bar folds where it lives, and says how to unfold ---- */
+  /* ---- 2. every bar folds where it lives, and says how to unfold ----
+     Two reasons a bar can be folded: you turned it off in Settings (kept in
+     cfg, permanent), or "Show the tools" folded the big ones for you this time
+     (barMin, forgotten on reload). Either hides it; the restore chip clears
+     both so one tap always brings it back. */
+  var barMin = { showFmtBar: false, showInkBar: false, showDocBar: false, showTagRow: false };
+  function barFolded(b){ return cfg[b.key] === false || barMin[b.key] === true; }
   var BARS = [
     { key: "showDocBar", cls: "nodoc", el: "docbar", label: "Note" },
     { key: "showFmtBar", cls: "nofmt", el: "fmtBar", label: "Typing" },
@@ -11682,21 +11744,71 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     { key: "showTagRow", cls: "notags", el: "noteTags", label: "Tags" }
   ];
   function applyBars(){
-    BARS.forEach(function(b){ document.body.classList.toggle(b.cls, cfg[b.key] === false); });
+    BARS.forEach(function(b){ document.body.classList.toggle(b.cls, barFolded(b)); });
+    applyBtnHide();
     paintBarRail();
     setTimeout(redrawAll, 40);
+  }
+
+  /* the note-bar buttons that are a matter of taste — hidden one by one from
+     Settings, for people who never touch half of them */
+  var HIDEABLE_BTNS = [
+    ["starBtn","Star"], ["markBtn","Bookmark"], ["pracBtn","Practice"],
+    ["drawBtn","Draw"], ["lockBtn","Lock"], ["focusBtn","Focus"],
+    ["jumpTop","Jump to top"], ["jumpBottom","Jump to bottom"],
+    ["outlineBtn","Outline"], ["recBtn","Record"], ["immerseBtn","Immerse"],
+    ["pinBtn","Pin"]
+  ];
+  function applyBtnHide(){
+    HIDEABLE_BTNS.forEach(function(b){
+      var el = $(b[0]);
+      if (el) el.hidden = !!(cfg.hideBtns && cfg.hideBtns[b[0]]);
+    });
+  }
+  function buildBtnHide(){
+    var host = $("btnHideList");
+    if (!host) return;
+    host.textContent = "";
+    HIDEABLE_BTNS.forEach(function(b){
+      var lab = document.createElement("label");
+      lab.className = "check";
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !(cfg.hideBtns && cfg.hideBtns[b[0]]);   /* ticked = shown */
+      cb.addEventListener("change", function(){
+        cfg.hideBtns = cfg.hideBtns || {};
+        if (this.checked) delete cfg.hideBtns[b[0]];
+        else cfg.hideBtns[b[0]] = 1;
+        saveCfg(); applyBtnHide();
+      });
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(" " + b[1]));
+      host.appendChild(lab);
+    });
+  }
+  /* keep the three bar tick boxes in step when a rail chip turns one back on */
+  function syncBarChecks(){
+    if ($("setDocBar")) $("setDocBar").checked = cfg.showDocBar !== false;
+    if ($("setFmtBar")) $("setFmtBar").checked = cfg.showFmtBar !== false;
+    if ($("setInkBar")) $("setInkBar").checked = cfg.showInkBar !== false;
+    if ($("setTagRow")) $("setTagRow").checked = cfg.showTagRow !== false;
   }
   function paintBarRail(){
     var host = $("barRail");
     host.textContent = "";
-    var hidden = BARS.filter(function(b){ return cfg[b.key] === false; });
+    var hidden = BARS.filter(barFolded);
     host.hidden = !hidden.length || document.body.dataset.immerse === "1";
     hidden.forEach(function(b){
       var btn = document.createElement("button");
       btn.type = "button"; btn.className = "barchip";
       btn.textContent = b.label + " \u25BE";
       btn.title = "Show the " + b.label.toLowerCase() + " bar again";
-      btn.addEventListener("click", function(){ cfg[b.key] = true; saveCfg(); });
+      btn.addEventListener("click", function(){
+        barMin[b.key] = false;         /* clear the "for now" fold */
+        cfg[b.key] = true;             /* and the permanent one */
+        saveCfg(); applyBars();
+        if (typeof syncBarChecks === "function") syncBarChecks();
+      });
       host.appendChild(btn);
     });
   }
