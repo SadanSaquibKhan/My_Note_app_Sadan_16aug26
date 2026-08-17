@@ -2317,7 +2317,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b39";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b40";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -8544,6 +8544,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       ink.tool = btn.was || "pen";
       btn.was = null;
       paintInkTools();
+    } else if (!down && typeof btnSpring === "object" && btnSpring.on){
+      /* the button came in by the right-click route, but this pen genuinely
+         reports the release too — so honour it at once rather than waiting for
+         the pen to be lifted away */
+      btnEraseOff();
     }
   }
   /* Listened for on the document as well as on the drawing surface. A barrel
@@ -8567,7 +8572,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (looksLikeLongPress()) return;     /* the nib resting, not the button */
     if (cfg.penButtonErase === false) return;
     e.preventDefault();
-    togglePenEraser("the pen's side button");
+    btnEraseToggle();
   }, true);
 
   /* ---- keyboard out of the way while the pen is in use ---- */
@@ -9889,7 +9894,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         if (cfg.holdErase !== false) holdEraseFired();
         return;
       }
-      if (cfg.penButtonErase !== false) togglePenEraser("the pen's side button");
+      /* the button, held: erase now, come back when you let go or lift away */
+      if (cfg.penButtonErase !== false) btnEraseToggle();
       return;
     }
     if (lastPointerKind === "touch"){ e.preventDefault(); return; }
@@ -9999,6 +10005,55 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       ? "Eraser on (" + why + ")."
       : "Pen again.");
   }
+  /* ---- the side button, held, not toggled ----
+     What you asked for: press and HOLD the button, erase, let go, and the pen
+     you were using comes straight back — the same as holding the nib, but with
+     the button and from a hover.
+     The honest problem: One UI hands Chrome the button as a right-click, which
+     is a single event with no "released" to listen for. So two release signals
+     are used, whichever comes first. If your pen ever DOES report the button in
+     its own events, the moment it clears we come back (the ideal). And in every
+     case, lifting the pen away from the glass comes back too — which is what
+     your hand does the instant you have finished rubbing out. A second press
+     still cancels, so it can never get stuck. */
+  var btnSpring = { on: false, was: null };
+  function btnEraseOn(){
+    if (btnSpring.on) return;
+    btnSpring.on = true;
+    if (ink.tool !== "eraser"){
+      btnSpring.was = ink.tool;
+      penSeen.route = "the pen's side button"; penSeen.everErased = true;
+      if (typeof paintPenReport === "function") paintPenReport();
+      ink.tool = "eraser";
+      var S = ink.surfaces[ink.active];
+      if (S && S.drawing && S.drawing.stroke){
+        var st = S.drawing.stroke;
+        S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
+        S.drawing = { erasing: true, removed: [] };
+        if (st.pts.length >= 3 && S.eraseAt) S.eraseAt(st.pts[0], st.pts[1]);
+        S.redraw();
+      }
+      paintInkTools();
+      hint("Erasing while the button is held. Let go, or lift the pen away, for the pen.");
+    }
+  }
+  function btnEraseOff(){
+    if (!btnSpring.on) return;
+    btnSpring.on = false;
+    if (ink.tool === "eraser"){ ink.tool = btnSpring.was || "pen"; paintInkTools(); }
+    btnSpring.was = null;
+  }
+  function btnEraseToggle(){ if (btnSpring.on) btnEraseOff(); else btnEraseOn(); }
+  /* the pen lifted clear of the screen — but NOT a mere nib-up, so several
+     strokes can be rubbed out on one press */
+  ["pointerleave", "pointerout"].forEach(function(evt){
+    document.addEventListener(evt, function(e){
+      if (e.pointerType !== "pen" && e.pointerType !== "eraser") return;
+      if (evt === "pointerout" && e.relatedTarget) return;   /* still over the page */
+      btnEraseOff();
+    }, true);
+  });
+
   /* Android also raises a long-press "callout" over images and links that is
      separate from contextmenu, and it cannot be cancelled from script. */
   $("paper").style.webkitTouchCallout = "none";
@@ -11159,24 +11214,45 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function paintPeekInk(canvasId, noteId){
     var cv = document.getElementById(canvasId);
     if (!cv) return;
-    var host = cv.parentNode;
-    var w = host.clientWidth, h = host.clientHeight;
-    if (!w || !h) return;
+    var host = cv.parentNode;                 /* .peekpage */
+    var body = host.querySelector(".prevpeek-body, .nextpeek-body");
     var dpr = window.devicePixelRatio || 1;
-    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
-    var ctx = cv.getContext("2d");
-    if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
+    function fit(){
+      var w = host.clientWidth, h = host.clientHeight;
+      if (!w || !h) return null;
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+      var ctx = cv.getContext("2d");
+      if (ctx){ ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h); }
+      return ctx;
+    }
+    fit();                                     /* something on screen at once */
     if (!noteId) return;
     C.getPageInk(noteId).then(function(a){
       /* the page may have moved on while this was loading */
       if (cv.getAttribute("data-for") !== noteId) return;
       var strokes = (a && a.strokes) || [];
-      var c2 = cv.getContext("2d");
+      /* THE reason the two pages did not run together. A page is as tall as its
+         handwriting reaches — growForInk sets the live page to inkDepth+400 —
+         but the preview band held only the words, which for a handwritten page
+         is almost nothing, so the band was one screen tall and the page it
+         previewed was several. Its foot was therefore clipped while you scrolled
+         towards it, and it sprang to full height the instant it became the page
+         you were on: the jump.
+         The band is given the very same height the page will have when it is
+         live, by the very same rule, so the two are one continuous run of
+         paper. */
+      if (body && host.parentNode && !host.parentNode.classList.contains("thin")){
+        var depth = C.inkDepth(strokes);
+        Array.prototype.forEach.call(
+          body.querySelectorAll('figure.imgblock[data-free="1"]'), function(fig){
+            var y = Number(fig.getAttribute("data-y"));
+            if (isFinite(y)) depth = Math.max(depth, y + (fig.offsetHeight || 0));
+          });
+        body.style.minHeight = Math.max(depth + 400, 400) + "px";
+        host.style.minHeight = "0px";          /* size to the body, as the live sheet does */
+      }
+      var c2 = fit();                          /* re-measure against the grown band */
       if (!c2) return;
-      c2.setTransform(dpr, 0, 0, dpr, 0, 0);
-      c2.clearRect(0, 0, w, h);
       strokes.forEach(function(s){ drawStroke(c2, s); });
     }).catch(function(){});
   }
@@ -11194,8 +11270,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var prev = neighbourPage(-1);
     if (!prev){
       /* first page of the notebook: just the marker, and a thin one, so it
-         costs almost nothing at the top of the page */
+         costs almost nothing at the top of the page. The heights a taller
+         previous page left behind are cleared, or the inline value would
+         override the thin rule and leave a screen of blank band. */
       $("prevPeekBody").innerHTML = "";
+      $("prevPeekBody").style.minHeight = "";
+      $("prevPeekPage").style.minHeight = "";
       $("prevPeekLabel").textContent = "start of the first page";
       box.classList.add("thin");
       box.hidden = false;
