@@ -604,10 +604,20 @@
   /* it can carry twenty things now, which is taller than a tablet: the column
      scrolls rather than running off the bottom of the screen */
   .favbar{max-height:calc(100dvh - 80px); overflow-y:auto; overflow-x:hidden}
+  /* one number sizes the whole bar */
+  .favbar{--fav-size:42px}
   .favbar button{
-    min-width:42px; min-height:42px; padding:0; font-size:16px; line-height:1;
+    min-width:var(--fav-size); min-height:var(--fav-size); width:var(--fav-size);
+    padding:0; font-size:calc(var(--fav-size) * 0.38); line-height:1;
     background:transparent; border:1px solid var(--rule); border-radius:5px;
   }
+  .favrow{display:flex; align-items:center; gap:6px}
+  .favrow .check{flex:1; margin:0}
+  .favmove{
+    flex:0 0 auto; width:34px; height:34px; padding:0; font-size:11px;
+    background:transparent; border:1px solid var(--rule); border-radius:4px; color:var(--ink);
+  }
+  .favmove:disabled{opacity:.3}
   .favbar button[aria-pressed="true"]{background:var(--ink); color:var(--panel); border-color:var(--ink)}
   .favgrip{cursor:grab; color:var(--ink-2); letter-spacing:-2px; min-height:26px !important}
   /* the bar's own controls, set apart from the tools by a rule under them */
@@ -728,16 +738,22 @@
     height:0; border-top:2px solid var(--live); margin:2px 0; pointer-events:none;
   }
   /* crop */
+  /* Cropping happens over the picture where it sits, not in a full-screen
+     viewer: you are trimming a picture on a page, and being thrown to a black
+     screen loses all sense of how it will look there. The dimmed backdrop is
+     gone; the page stays visible around it. */
   .cropdlg{
-    position:fixed; inset:0; z-index:60; background:rgba(0,0,0,.72);
-    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+    position:fixed; z-index:60;
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+    background:var(--panel); border:1px solid var(--ink); border-radius:8px;
+    padding:8px; box-shadow:0 18px 50px var(--shadow);
   }
   .cropdlg[hidden]{display:none}
   .cropstage{
-    position:relative; max-width:92vw; max-height:76vh; line-height:0;
+    position:relative; line-height:0;
     touch-action:none; cursor:crosshair;
   }
-  .cropstage img{max-width:92vw; max-height:76vh; display:block; user-select:none}
+  .cropstage img{display:block; user-select:none; max-width:100%; max-height:100%}
   .cropsel{
     position:absolute; border:2px dashed #fff; background:rgba(255,255,255,.16);
     display:none; pointer-events:none;
@@ -1901,10 +1917,24 @@
           <p class="hint">Steadies the wobble in a stroke. Higher is neater but
           rounder; 0 leaves your writing exactly as drawn. Applies to new
           strokes only, so nothing already written is changed.</p>
-          <label class="check"><input type="checkbox" id="setCurves"> Draw strokes as curves rather than straight joins</label>
-          <p class="hint">Rounds the corners between the points the pen
-          reported. This changes only how the ink is drawn, not what is stored,
-          so it improves writing you have already done.</p>
+          <label for="setCurve">Curve between points <b id="curveOut"></b></label>
+          <input type="range" id="setCurve" min="0" max="100" step="5">
+          <p class="hint">Rounds the joins between the points the pen reported.
+          The line still passes through every one of them, so this softens the
+          joins without reshaping your letters. It changes only how the ink is
+          drawn, not what is stored, so it improves writing you have already
+          done &mdash; and 0 gives you plain straight joins back.</p>
+          <label for="setStabilise">Steady my hand <b id="stabiliseOut"></b></label>
+          <input type="range" id="setStabilise" min="0" max="100" step="5">
+          <p class="hint">The line trails the nib slightly, so a tremor never
+          reaches the page at all. Unlike the two above, this works while you
+          write rather than tidying up afterwards, and it keeps corners sharp.
+          High values feel like writing through treacle &mdash; 20 to 40 is
+          usually enough.</p>
+          <p class="hint"><b>Which to use.</b> Try <b>Steady my hand</b> first;
+          it is the one that changes how writing feels. <b>Curve</b> tidies
+          what is already on the page. <b>Smoothing</b> is the strongest and
+          the most likely to round off small letters.</p>
         </div>
       </details>
 
@@ -1933,6 +1963,10 @@
         <div class="field">
           <label class="check"><input type="checkbox" id="setFavBar"> Show the floating favourites bar (drag it where you like)</label>
           <label class="check"><input type="checkbox" id="setPenHelp"> Rest the pen over any button for two seconds to see what it does</label>
+          <label for="setFavSize">Button size <b id="favSizeOut"></b></label>
+          <input type="range" id="setFavSize" min="30" max="72" step="2">
+          <p class="hint">Use the arrows below to put the tools in the order
+          you want them down the bar.</p>
           <p class="hint">Tick what it should carry. Tapping a tool you are
           already holding opens its colour and thickness beside the bar.</p>
           <div id="favPick" class="favpick"></div>
@@ -2200,7 +2234,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b33";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b34";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5672,9 +5706,23 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         ctx.strokeStyle = inkHex(st.colour);
         if (st.tool === "marker"){ ctx.globalAlpha = 0.32; ctx.lineWidth = st.width * 4; }
       }
+      /* The stabiliser. The point that gets drawn is pulled toward the nib
+         rather than placed on it, so the line trails your hand slightly and
+         the tremor never reaches the page in the first place. This is a
+         different thing from smoothing, which averages the samples after the
+         fact: nothing here is undone later, and corners stay corners because
+         the line still travels to every place the pen went. */
+      var k = stabiliseK();
       evs.forEach(function(ev){
         var q = S.toPage(ev);
-        st.pts.push(q.x, q.y, ev.pressure || 0.5);
+        var x = q.x, y = q.y;
+        if (k < 1 && st.pts.length >= 3){
+          var px = st.pts[st.pts.length - 3], py = st.pts[st.pts.length - 2];
+          x = px + (q.x - px) * k;
+          y = py + (q.y - py) * k;
+        }
+        st.pts.push(x, y, ev.pressure || 0.5);
+        S.drawing.raw = { x: q.x, y: q.y, p: ev.pressure || 0.5 };
         if (ctx && st.pts.length >= 6) strokeSegment(ctx, st, st.pts.length - 6);
       });
       if (ctx) ctx.restore();
@@ -5724,6 +5772,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         tapErase.last = nowT; tapErase.x = st.pts[0]; tapErase.y = st.pts[1];
         tapErase.id = st.id;
         if (ink.tool !== "eraser") tapErase.was = ink.tool;
+      }
+      /* The stabilised line trails the nib, so on lifting it would stop short
+         of where you actually finished. The last real position is put back on
+         the end, and the stroke reaches where you meant it to. */
+      if (stabiliseK() < 1 && d.raw && st.pts.length >= 3){
+        var lx = st.pts[st.pts.length - 3], ly = st.pts[st.pts.length - 2];
+        if (Math.abs(d.raw.x - lx) > 0.5 || Math.abs(d.raw.y - ly) > 0.5){
+          st.pts.push(d.raw.x, d.raw.y, d.raw.p);
+        }
       }
       lastStrokeEnd = Date.now();
       if (S.name === "note") setTimeout(growForInk, 0);
@@ -5822,19 +5879,32 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function strokeCurved(ctx, s){
     var p = s.pts, n = p.length / 3;
     if (n < 2) return;
+    /* 0 draws the plain straight joins, 1 is a full Catmull-Rom curve, and
+       everything between is a real dial. The earlier version curved through
+       the MIDPOINTS between samples, which is why it did too much and could
+       not be turned down: the line no longer went through the places the pen
+       actually reported, so it rounded the shape of the letters as well as
+       the wobble between them. This runs the curve THROUGH every sample and
+       only bends how it arrives, which is what a strength control should
+       change. */
+    var t = curveStrength();
+    if (t <= 0){
+      for (var k = 0; k + 5 < p.length; k += 3) strokeSegment(ctx, s, k);
+      return;
+    }
+    var g = t / 6;
     for (var i = 0; i < n - 1; i++){
-      var x0 = p[i*3], y0 = p[i*3+1], r0 = p[i*3+2];
-      var x1 = p[(i+1)*3], y1 = p[(i+1)*3+1], r1 = p[(i+1)*3+2];
-      /* the first and last pieces reach the real ends, so the stroke starts
-         and stops where the nib did rather than half a sample short */
-      var ax = (i === 0) ? x0 : (p[(i-1)*3] + x0) / 2;
-      var ay = (i === 0) ? y0 : (p[(i-1)*3+1] + y0) / 2;
-      var bx = (i === n - 2) ? x1 : (x0 + x1) / 2;
-      var by = (i === n - 2) ? y1 : (y0 + y1) / 2;
+      var i0 = (i > 0 ? i - 1 : i), i3 = (i + 2 < n ? i + 2 : i + 1);
+      var x0 = p[i0*3],     y0 = p[i0*3+1];
+      var x1 = p[i*3],      y1 = p[i*3+1],     r1 = p[i*3+2];
+      var x2 = p[(i+1)*3],  y2 = p[(i+1)*3+1], r2 = p[(i+1)*3+2];
+      var x3 = p[i3*3],     y3 = p[i3*3+1];
       ctx.beginPath();
-      ctx.lineWidth = C.penWidth(s.width, (r0 + r1) / 2);
-      ctx.moveTo(ax, ay);
-      ctx.quadraticCurveTo(x0, y0, bx, by);
+      ctx.lineWidth = C.penWidth(s.width, (r1 + r2) / 2);
+      ctx.moveTo(x1, y1);
+      ctx.bezierCurveTo(x1 + (x2 - x0) * g, y1 + (y2 - y0) * g,
+                        x2 - (x3 - x1) * g, y2 - (y3 - y1) * g,
+                        x2, y2);
       ctx.stroke();
     }
   }
@@ -6118,6 +6188,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var gest = { pts: {}, base: null };
   function touchGesture(S, e, phase){
     if (e.pointerType !== "touch") return false;
+    /* same reason as fingerPanDown: a picture being handled owns the gesture */
+    if (phase === "down" && e.target && e.target.closest &&
+        e.target.closest("figure.imgblock")) return false;
     var blocking = ink.lock || ink.penNear || ink.mode === "write";
     /* Two fingers are always a pinch/pan, even when one finger is still
        scrolling the page natively. */
@@ -6408,6 +6481,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return cfg.shapeMode;
     }
     return cfg.shapes === false ? "off" : "hold";
+  }
+  function curveStrength(){
+    var v = Number(cfg.curvePct);
+    if (!isFinite(v)) v = (cfg.curves === false) ? 0 : 60;   /* the old switch */
+    return Math.max(0, Math.min(100, v)) / 100;
+  }
+  /* How far the drawn point lags the nib. 0 follows it exactly; higher lets
+     the line trail the pen, which is what takes the tremor out AS you write
+     rather than tidying it afterwards. Kept below 0.85 so the line can never
+     fall so far behind that it stops keeping up with fast writing. */
+  function stabiliseK(){
+    var v = Number(cfg.stabilise);
+    if (!isFinite(v) || v <= 0) return 1;
+    return 1 - Math.min(100, v) / 100 * 0.85;
   }
   function smoothStrength(){
     var pct = Number(cfg.smooth);
@@ -6961,13 +7048,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     favTools: ["pen_ink", "pen_blue", "pen_red", "hl_amber", "eraser", "lasso", "undo"],
     penHelp: true,     /* hover the pen over a control to hear what it does */
     favMin: false,     /* the favourites bar shrunk to its dot */
+    favSize: 42,       /* how big its buttons are */
     favPos: null,      /* {x, y}, re-clamped to the window on load */
     glideSpeed: 100,   /* how fast the page carries on after the finger lifts */
     glideStop: 50,     /* how long it takes to come to rest */
     keepFoot: false,   /* keep the note footer on screen even while writing */
     hints: true,       /* the small passing messages along the bottom */
     smooth: 20,        /* handwriting smoothing, per cent; 0 turns it off */
-    curves: true,      /* draw strokes as curves, not straight joins */
+    curves: true,      /* kept so an older config still means something */
+    curvePct: 60,      /* how much the joins between points are rounded */
+    stabilise: 30,     /* how far the drawn line trails the nib */
     zoomMin: 50,       /* zoom limits, per cent, honoured by buttons and pinch */
     zoomMax: 300
   };
@@ -7079,6 +7169,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setHints").checked = cfg.hints !== false;
     $("setFavBar").checked = cfg.favBar === true;
     $("setPenHelp").checked = cfg.penHelp !== false;
+    $("setFavSize").value = cfg.favSize;
+    $("favSizeOut").textContent = cfg.favSize + " px";
     buildFavPick();
     $("setKeepFoot").checked = cfg.keepFoot === true;
     $("setTapType").checked = cfg.tapToType;
@@ -7110,7 +7202,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
                                   : cfg.glideStop > 75 ? "slowly" : "medium";
     $("setSmooth").value = cfg.smooth;
     $("smoothOut").textContent = cfg.smooth ? cfg.smooth + "%" : "off";
-    $("setCurves").checked = cfg.curves !== false;
+    $("setCurve").value = Math.round(curveStrength() * 100);
+    $("curveOut").textContent = Math.round(curveStrength() * 100) + "%";
+    $("setStabilise").value = cfg.stabilise;
+    $("stabiliseOut").textContent = cfg.stabilise ? cfg.stabilise + "%" : "off";
     $("setZoomMin").value = cfg.zoomMin;
     $("setZoomMax").value = cfg.zoomMax;
     $("zoomMinOut").textContent = cfg.zoomMin + "%";
@@ -7150,6 +7245,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     bindCheck("setTapErase", "tapErase");
     bindCheck("setPenBtnErase", "penButtonErase");
     bindCheck("setPenHelp", "penHelp");
+    $("setFavSize").addEventListener("input", function(){
+      cfg.favSize = Number(this.value);
+      $("favSizeOut").textContent = cfg.favSize + " px";
+      saveCfg(); buildFavBar();
+    });
     bindCheck("setHoldErase", "holdErase");
     $("setHoldEraseMs").addEventListener("input", function(){
       cfg.holdEraseMs = Number(this.value);
@@ -7220,10 +7320,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       $("smoothOut").textContent = cfg.smooth ? cfg.smooth + "%" : "off";
       saveCfg();
     });
-    $("setCurves").addEventListener("change", function(){
-      cfg.curves = this.checked;
+    $("setCurve").addEventListener("input", function(){
+      cfg.curvePct = Number(this.value);
+      cfg.curves = cfg.curvePct > 0;      /* the old switch, kept in step */
+      $("curveOut").textContent = cfg.curvePct + "%";
       saveCfg();
       redrawAll();          /* it is a drawing choice, so it shows at once */
+    });
+    $("setStabilise").addEventListener("input", function(){
+      cfg.stabilise = Number(this.value);
+      $("stabiliseOut").textContent = cfg.stabilise ? cfg.stabilise + "%" : "off";
+      saveCfg();
     });
     /* The two limits are kept from crossing: whichever one is dragged pushes
        the other ahead of it, so the pair is always a usable range. */
@@ -7424,6 +7531,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        back to a pen, so taking it away exactly when you want it was wrong. */
     var off = !cfg.favBar;
     host.hidden = off || cfg.favMin === true;
+    host.style.setProperty("--fav-size", (Number(cfg.favSize) || 42) + "px");
     if (dot){
       dot.hidden = off || cfg.favMin !== true;
       var p = cfg.favPos || { x: 8, y: Math.round((window.innerHeight || 768) * 0.28) };
@@ -7487,31 +7595,69 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     paintFavBar();
   }
   /* which tools the bar carries — one tick box each, in Settings */
+  /* What is on the bar, and in what order. The chosen ones come first, in the
+     order they will appear, each with arrows to move it; the rest follow to
+     be ticked on. The order used to be forced back to a fixed list, so it
+     could not be arranged at all. */
   function buildFavPick(){
     var host = $("favPick");
     if (!host) return;
     host.textContent = "";
-    FAV_ORDER.forEach(function(key){
+    var chosen = (cfg.favTools || []).filter(function(k){ return FAV_ITEMS[k]; });
+
+    function row(key, on, idx){
       var it = FAV_ITEMS[key];
+      var line = document.createElement("div");
+      line.className = "favrow";
       var lab = document.createElement("label");
       lab.className = "check";
       var cb = document.createElement("input");
       cb.type = "checkbox";
-      cb.checked = (cfg.favTools || []).indexOf(key) > -1;
+      cb.checked = on;
       cb.addEventListener("change", function(){
         var list = (cfg.favTools || []).slice();
         var at = list.indexOf(key);
         if (this.checked && at < 0) list.push(key);
         if (!this.checked && at > -1) list.splice(at, 1);
-        /* kept in a fixed order so the bar does not reshuffle itself
-           depending on the order the boxes happened to be ticked */
-        cfg.favTools = FAV_ORDER.filter(function(k){ return list.indexOf(k) > -1; });
-        saveCfg(); buildFavBar();
+        cfg.favTools = list;
+        saveCfg(); buildFavBar(); buildFavPick();
       });
       lab.appendChild(cb);
       lab.appendChild(document.createTextNode(" " + it.title));
-      host.appendChild(lab);
-    });
+      line.appendChild(lab);
+      if (on){
+        var up = document.createElement("button");
+        up.type = "button"; up.className = "favmove"; up.textContent = "▲";
+        up.disabled = idx === 0;
+        up.setAttribute("aria-label", "Move " + it.title + " up");
+        up.addEventListener("click", function(e){ e.preventDefault(); moveFav(key, -1); });
+        var dn = document.createElement("button");
+        dn.type = "button"; dn.className = "favmove"; dn.textContent = "▼";
+        dn.disabled = idx === chosen.length - 1;
+        dn.setAttribute("aria-label", "Move " + it.title + " down");
+        dn.addEventListener("click", function(e){ e.preventDefault(); moveFav(key, 1); });
+        line.appendChild(up); line.appendChild(dn);
+      }
+      host.appendChild(line);
+    }
+
+    chosen.forEach(function(k, i){ row(k, true, i); });
+    var rule = document.createElement("p");
+    rule.className = "hint";
+    rule.style.margin = "8px 0 4px";
+    rule.textContent = "Not on the bar:";
+    host.appendChild(rule);
+    FAV_ORDER.forEach(function(k){ if (chosen.indexOf(k) < 0) row(k, false, -1); });
+  }
+  function moveFav(key, dir){
+    var list = (cfg.favTools || []).slice();
+    var at = list.indexOf(key);
+    if (at < 0) return;
+    var to = at + dir;
+    if (to < 0 || to >= list.length) return;
+    list.splice(to, 0, list.splice(at, 1)[0]);
+    cfg.favTools = list;
+    saveCfg(); buildFavBar(); buildFavPick();
   }
 
   function paintFavBar(){
@@ -8647,11 +8793,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!a || !a.blob){ hint("Still loading that picture — try again in a moment."); return; }
     var url = URL.createObjectURL(a.blob);
     var img = $("cropImg");
+    var fig = pickedImage.fig;
     img.onload = function(){
-      $("cropBox").hidden = false;
+      var box = $("cropBox");
+      box.hidden = false;
       crop.sel = null;
       $("cropSel").classList.remove("on");
       $("cropHint").textContent = "Drag a box over the part you want to keep.";
+      /* sized and placed over the picture itself, and nudged back on screen
+         if the picture is near an edge */
+      var r = fig.getBoundingClientRect();
+      var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+      var w = Math.max(180, Math.min(r.width, vw - 24));
+      img.style.width = w + "px";
+      img.style.height = "auto";
+      box.style.left = "0px"; box.style.top = "0px";
+      var bw = box.offsetWidth || w + 20, bh = box.offsetHeight || 200;
+      box.style.left = Math.max(8, Math.min(r.left - 10, vw - bw - 8)) + "px";
+      box.style.top = Math.max(8, Math.min(r.top - 10, vh - bh - 8)) + "px";
     };
     img.src = url;
     crop.url = url;
@@ -12028,6 +12187,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function fingerPanDown(S, e){
     if (e.pointerType !== "touch") return false;
     if (mayDraw(e)) return false;              /* this finger is drawing */
+    /* A finger that has landed on a picture is handling the picture.
+       #paper's handler runs BEFORE #body's, so the page used to claim the
+       gesture and pan — which is why dragging a picture up or down scrolled
+       the page instead, and why resizing scrolled at the same time. */
+    if (e.target && e.target.closest && e.target.closest("figure.imgblock")) return false;
     /* Pan exactly when the browser used to be allowed to: the lock, the pen
        being near, and write mode all still mean a finger does nothing. */
     if (ink.lock || ink.penNear || ink.mode === "write") return false;
