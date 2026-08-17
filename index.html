@@ -416,6 +416,66 @@
     letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2);
   }
   .peekempty{font-style:italic}
+
+  /* ---- a previewed page lays out exactly like the page ----
+     Generated from the #body rules above rather than written again by
+     hand, because the hand-written copy is what drifted: headings were
+     styled for one band only and at 17px against the page's 24px, and
+     lists, code, quotes, callouts and tables had no rule at all. Every
+     one of those is a height difference, and scrolling BACK into a page
+     lands the whole accumulated difference on what you are looking at. */
+  .prevpeek-body pre, .nextpeek-body pre{font-family:var(--mono); font-size:13px; line-height:22px; background:var(--slab); border-left:3px solid var(--rule); padding:10px 12px; border-radius:3px; white-space:pre-wrap;}
+  .prevpeek-body .callout, .nextpeek-body .callout{border-left:3px solid var(--live); background:var(--live-faint); padding:10px 14px; margin:var(--lead) 0; border-radius:0 3px 3px 0;}
+  .prevpeek-body .callout .cotitle, .nextpeek-body .callout .cotitle{display:block; font-family:var(--mono); font-size:9.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--live); margin-bottom:4px; font-weight:400;}
+  .prevpeek-body .callout[data-kind="Mistake"], .nextpeek-body .callout[data-kind="Mistake"]{border-left-color:var(--warn); background:var(--warnbg)}
+  .prevpeek-body .callout[data-kind="Mistake"] .cotitle, .nextpeek-body .callout[data-kind="Mistake"] .cotitle{color:var(--warn)}
+  .prevpeek-body span.math, .nextpeek-body span.math{display:inline-block; padding:0 2px; cursor:pointer}
+  .prevpeek-body span.math.block, .nextpeek-body span.math.block{display:block; text-align:center; margin:var(--lead) 0}
+  .prevpeek-body span.math:hover, .nextpeek-body span.math:hover{background:var(--live-soft); border-radius:2px}
+  .prevpeek-body span.math.bad, .nextpeek-body span.math.bad{color:var(--warn); font-family:var(--mono); font-size:13px}
+  .prevpeek-body figure.imgblock, .nextpeek-body figure.imgblock{margin:var(--lead) 0; width:70%; position:relative; border:1px solid transparent; border-radius:3px; line-height:0;}
+  .prevpeek-body figure.imgblock img, .nextpeek-body figure.imgblock img{width:100%; height:auto; display:block; border-radius:3px}
+  .prevpeek-body figure.imgblock.on, .nextpeek-body figure.imgblock.on{border-color:var(--live); box-shadow:0 0 0 3px var(--live-soft)}
+  .prevpeek-body figure.imgblock.missing, .nextpeek-body figure.imgblock.missing{line-height:1.5; padding:16px; text-align:center; color:var(--warn); background:var(--warnbg); border-color:var(--warnline);}
+  .prevpeek-body figure.imgblock.on, .nextpeek-body figure.imgblock.on{touch-action:none; user-select:none; -webkit-user-select:none}
+  .prevpeek-body figure.imgblock.pdfpage img, .nextpeek-body figure.imgblock.pdfpage img{width:100%; height:auto; border-radius:0}
+  .prevpeek-body figure.imgblock.pdfpage::after, .nextpeek-body figure.imgblock.pdfpage::after{content:none}
+  .prevpeek-body figure.imgblock.locked img, .nextpeek-body figure.imgblock.locked img{pointer-events:none}
+  .prevpeek-body figure.imgblock.locked::after, .nextpeek-body figure.imgblock.locked::after{content:"\1F512"; position:absolute; top:4px; right:6px; font-size:13px; line-height:1; opacity:.75;}
+  .prevpeek-body figure.imgblock.pdfpage.locked::after, .nextpeek-body figure.imgblock.pdfpage.locked::after{content:none}
+  .prevpeek-body figure.imgblock.pdfpage.on, .nextpeek-body figure.imgblock.pdfpage.on{border-color:transparent; box-shadow:none}
+  .prevpeek-body blockquote, .nextpeek-body blockquote{margin:var(--lead) 0; padding:2px 0 2px 16px; border-left:3px solid var(--rule); color:var(--ink-2);}
+  .prevpeek-body hr, .nextpeek-body hr{border:0; border-top:1px solid var(--rule); margin:var(--lead) 0}
+  .prevpeek-body details, .nextpeek-body details{margin:var(--lead) 0; border-left:3px solid var(--rule); padding-left:14px}
+  .prevpeek-body details summary, .nextpeek-body details summary{cursor:pointer; font-family:var(--mono); font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-2); outline:none;}
+  .prevpeek-body details[open] summary, .nextpeek-body details[open] summary{color:var(--live)}
+  .prevpeek-body mark.findhit, .nextpeek-body mark.findhit{background:var(--hl-yellow); color:var(--ink)}
+  .prevpeek-body mark.findhit.here, .nextpeek-body mark.findhit.here{background:var(--live); color:var(--panel)}
+  .prevpeek-body figure.imgblock figcaption, .nextpeek-body figure.imgblock figcaption{line-height:1.4; font-size:12.5px; color:var(--ink-2); padding-top:6px; text-align:center;}
+  .prevpeek-body a.ilink.ext::after, .nextpeek-body a.ilink.ext::after{content:" \2197"; font-size:.8em; opacity:.6}
+  .prevpeek-body span.anchor, .nextpeek-body span.anchor{display:inline-block; color:var(--live); font-size:.85em; padding:0 2px; vertical-align:super; cursor:default;}
+  .prevpeek-body span.anchor.flash, .nextpeek-body span.anchor.flash{background:var(--live-soft); border-radius:2px}
+  .prevpeek-body span.pracpin::before, .nextpeek-body span.pracpin::before{content:"\25E7"}
+  .prevpeek-body span.anchor.autoanchor.flash, .nextpeek-body span.anchor.autoanchor.flash{background:var(--live-soft)}
+  .prevpeek-body span.pracpin:hover, .nextpeek-body span.pracpin:hover{background:var(--live-soft); border-radius:2px}
+  .prevpeek-body .lit, .nextpeek-body .lit{background:var(--live-soft); border-radius:3px}
+  .prevpeek-body ul.todolist, .nextpeek-body ul.todolist{list-style:none; padding-left:30px}
+  .prevpeek-body li.todo, .nextpeek-body li.todo{position:relative}
+  .prevpeek-body li.todo::before, .nextpeek-body li.todo::before{content:""; position:absolute; left:-24px; top:5px; width:15px; height:15px; border:1.5px solid var(--ink-2); border-radius:2px;}
+  .prevpeek-body li.todo.done::after, .nextpeek-body li.todo.done::after{content:""; position:absolute; left:-20px; top:8px; width:7px; height:11px; border-right:2px solid var(--live); border-bottom:2px solid var(--live); transform:rotate(42deg);}
+  .prevpeek-body li.todo.done, .nextpeek-body li.todo.done{color:var(--ink-2); text-decoration:line-through}
+  .prevpeek-body a.ilink, .nextpeek-body a.ilink{color:var(--live); text-decoration:none; border-bottom:1px solid var(--live); padding:1px 2px; cursor:pointer}
+  .prevpeek-body a.ilink:hover, .nextpeek-body a.ilink:hover{background:var(--live-soft)}
+  .prevpeek-body p, .nextpeek-body p{margin:0 0 var(--lead)}
+  .prevpeek-body h1, .nextpeek-body h1, .prevpeek-body h2, .nextpeek-body h2, .prevpeek-body h3, .nextpeek-body h3{font-family:var(--display); margin:var(--lead) 0 0; line-height:var(--lead)}
+  .prevpeek-body h1, .nextpeek-body h1{font-size:24px; font-variation-settings:"wght" 700,"wdth" 80}
+  .prevpeek-body h2, .nextpeek-body h2{font-size:19px; font-variation-settings:"wght" 700,"wdth" 85}
+  .prevpeek-body h3, .nextpeek-body h3{font-size:16px; font-variation-settings:"wght" 700,"wdth" 90}
+  .prevpeek-body ul, .nextpeek-body ul, .prevpeek-body ol, .nextpeek-body ol{margin:0 0 var(--lead); padding-left:26px}
+  .prevpeek-body li, .nextpeek-body li{line-height:var(--lead)}
+  .prevpeek-body a, .nextpeek-body a{color:var(--live)}
+  .prevpeek-body code, .nextpeek-body code{font-family:var(--mono); font-size:.9em; background:var(--slab); padding:1px 4px; border-radius:2px}
+
   .nextpeek-go{
     margin-top:10px; min-height:40px; padding:0 14px; border-radius:4px;
     background:transparent; border:1px solid var(--ink); color:var(--ink);
@@ -783,7 +843,8 @@
 
   @media print{
     .top, .rail, .list, .docbar, .fmtbar, .inktools, .findbar, .lassobar,
-    .tagrow, .outlinepane, .docfoot, .pracsheet, .notice, .imgBar{display:none !important}
+    .tagrow, .outlinepane, .docfoot, .pracsheet, .notice, .imgBar,
+    .cropwrap, .imggrip{display:none !important}
     html, body{height:auto; background:#fff; color:#000}
     .shell, .pane, .pagewrap{display:block; overflow:visible; height:auto}
     .paper{overflow:visible; height:auto; background:#fff}
@@ -1633,7 +1694,6 @@
         <button class="ghost danger" id="imgRemove">Remove</button>
         <button class="ghost" id="imgDone">Done</button>
       </div>
-      </div>
       <div class="tagrow" id="noteTags" hidden></div>
       <div class="pagewrap">
         <aside class="outlinepane" id="outlinePane" hidden>
@@ -2230,7 +2290,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b37";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b38";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4855,6 +4915,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     /* only touch innerHTML when the note actually changed — rewriting it
        mid-typing would kill the caret and the Samsung keyboard's state */
     if ($("body").dataset.noteId !== state.note.id){
+      /* the page under it is about to be replaced: anything still holding a
+         picture on it is holding a node that will not exist in a moment */
+      if (typeof deselectImage === "function") deselectImage();
       $("body").innerHTML = state.note.html || "";
       $("body").dataset.noteId = state.note.id;
       ink.focusOverride = false;
@@ -7581,12 +7644,23 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     el.style.left = p.x + "px";
     el.style.top = p.y + "px";
   }
+  /* Where the bar belongs: on a page you are writing or typing on, with the
+     lists beside it folded away. In the notebooks list there is nothing on it
+     to press, and with the page list open every one of these is already on a
+     bar you can see — so it is only in the way. It and the note footer are
+     opposites: one is for the page alone, the other for the page among its
+     neighbours, and exactly one of them is on at a time. */
+  function favBarWanted(){
+    if (!cfg.favBar) return false;
+    if (!state.note || state.view !== "note") return false;
+    return panelsHidden();
+  }
   function buildFavBar(){
     var host = $("favBar"), dot = $("favDot");
     if (!host) return;
-    /* Deliberately NOT hidden in typing mode any more. The bar is how you get
-       back to a pen, so taking it away exactly when you want it was wrong. */
-    var off = !cfg.favBar;
+    /* Deliberately NOT hidden in typing mode. The bar is how you get back to a
+       pen, so taking it away exactly when you want it was wrong. */
+    var off = !favBarWanted();
     host.hidden = off || cfg.favMin === true;
     host.style.setProperty("--fav-size", (Number(cfg.favSize) || 42) + "px");
     if (dot){
@@ -8794,7 +8868,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           fig.appendChild(fc);
         }
       });
-    }));
+    })).then(function(){
+      /* Emptying the figure above takes the corner grips with it. A picture
+         that is still selected has to get them back, or the next drag on a
+         corner is read as a move and floats the picture out of the text for
+         good — which is exactly what you do next after cropping. */
+      if (pickedImage && pickedImage.fig && pickedImage.fig.isConnected && !crop.on){
+        addGrips(pickedImage.fig);
+        paintImgBar();          /* and Uncrop can be pressed straight away */
+      }
+    });
   }
 
   var pickedImage = null;
@@ -8917,7 +9000,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      The trim is held as four fractions of the picture while you drag, and
      only turned into pixels when you accept it — so dragging costs nothing
      and cancelling leaves the original untouched. */
-  var crop = { on: false, fig: null, box: null, rect: null, drag: null };
+  var crop = { on: false, fig: null, box: null, rect: null, drag: null, seq: 0 };
   var CROP_HANDLES = [
     ["nw", 0, 0], ["n", 0.5, 0], ["ne", 1, 0],
     ["e", 1, 0.5], ["se", 1, 1], ["s", 0.5, 1],
@@ -8930,7 +9013,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!a || !a.blob){ hint("Still loading that picture \u2014 try again in a moment."); return; }
     endCrop();
     var fig = pickedImage.fig;
-    crop.on = true; crop.fig = fig;
+    crop.on = true; crop.fig = fig; crop.seq++;
     crop.rect = { l: 0, t: 0, r: 0, b: 0 };     /* trimmed off each side, 0..1 */
 
     var box = document.createElement("div");
@@ -8973,6 +9056,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   function paintCrop(){
     if (!crop.on || !crop.box) return;
+    /* The overlay covers the PICTURE, not the figure. A figure with a caption
+       under it is taller than its picture, so stretching the overlay over the
+       whole figure put the handles and the dimming below where the drag was
+       actually measuring — you lined the bright edge up with what you wanted
+       and it cut somewhere else. */
+    var pic = crop.fig && crop.fig.querySelector("img");
+    crop.box.style.height = pic ? (pic.offsetHeight || 0) + "px" : "";
     var r = crop.rect;
     var l = r.l * 100, t = r.t * 100, rr = r.r * 100, b = r.b * 100;
     var shade = crop.box.querySelector(".cropshade");
@@ -8995,6 +9085,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   function endCrop(){
+    crop.seq++;                     /* anything still in flight is abandoned */
     if (crop.box && crop.box.parentNode) crop.box.parentNode.removeChild(crop.box);
     if (crop.fig){
       crop.fig.classList.remove("cropping");
@@ -9013,19 +9104,32 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       e.stopPropagation();
       var h = t.getAttribute && t.getAttribute("data-crop");
       if (!h) return;                       /* a button: let the click through */
+      if (crop.drag) return;                /* one pointer owns the drag */
       e.preventDefault();
       var img = crop.fig.querySelector("img");
       var r = (img || crop.fig).getBoundingClientRect();
-      crop.drag = { h: h, w: r.width, ht: r.height, left: r.left, top: r.top };
+      crop.drag = { id: e.pointerId, h: h, w: r.width, ht: r.height,
+                    left: r.left, top: r.top };
       try { t.setPointerCapture(e.pointerId); } catch (err) {}
       return;
     }
-    /* a touch anywhere else leaves the picture exactly as it was */
+    /* Everywhere else means "leave it as it was" — but not every touch that
+       lands there is you asking for that. A hand resting on the glass to write
+       with, or the second finger of a pinch, must not throw the crop away
+       mid-drag; that is the one place on the page where a palm was
+       destructive. And the tap that does close it is swallowed, or it left a
+       dot of ink on the page exactly where you tapped to dismiss. */
+    if (crop.drag) return;
+    if (e.pointerType === "touch" && (ink.penNear || e.isPrimary === false)) return;
+    e.preventDefault(); e.stopPropagation();
     endCrop();
   }, true);
 
   document.addEventListener("pointermove", function(e){
     if (!crop.on || !crop.drag) return;
+    /* only the pointer that started the drag moves it: without this a palm
+       landing later stole the handle and the crop followed the hand */
+    if (e.pointerId !== crop.drag.id) return;
     e.preventDefault();
     var d = crop.drag, r = crop.rect;
     var fx = Math.max(0, Math.min(1, (e.clientX - d.left) / Math.max(1, d.w)));
@@ -9040,18 +9144,28 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     paintCrop();
   }, true);
 
-  document.addEventListener("pointerup", function(){
-    if (crop.on) crop.drag = null;
-  }, true);
+  /* pointercancel as well as pointerup: a system gesture (the notification
+     shade) or a palm rejection ends the pointer WITHOUT an up, and the drag was
+     then left live — so afterwards the pen moved the crop edge just by
+     hovering over the page. */
+  ["pointerup", "pointercancel"].forEach(function(evt){
+    document.addEventListener(evt, function(e){
+      if (crop.drag && e.pointerId === crop.drag.id) crop.drag = null;
+    }, true);
+  });
 
   function applyCrop(){
     if (!crop.on || !pickedImage) return endCrop();
     var asset = pickedImage.asset, r = crop.rect;
     if (!asset || !asset.blob) return endCrop();
     if (r.l + r.t + r.r + r.b < 0.001){ endCrop(); hint("Nothing trimmed."); return; }
+    var seq = crop.seq;              /* this attempt, and only this one */
     var src = new Image();
     var url = URL.createObjectURL(asset.blob);
     src.onload = function(){
+      /* you tapped Crop and then tapped away before the picture had decoded:
+         that is a change of mind, and it used to be written anyway */
+      if (seq !== crop.seq){ URL.revokeObjectURL(url); return; }
       var W = src.naturalWidth || src.width, H = src.naturalHeight || src.height;
       var cx = Math.round(r.l * W), cy = Math.round(r.t * H);
       var cw = Math.max(1, Math.round((1 - r.l - r.r) * W));
@@ -9063,6 +9177,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       ctx.drawImage(src, cx, cy, cw, ch, 0, 0, cw, ch);
       URL.revokeObjectURL(url);
       cv.toBlob(function(b){
+        if (seq !== crop.seq) return;
         if (!b){ say("Could not crop that picture."); return endCrop(); }
         var patch = { blob: b, w: cw, h: ch };
         /* the pristine copy is kept exactly once, so Uncrop always returns
@@ -11130,15 +11245,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var backLine = pr.top + pr.height * 0.60;
 
     var nextEl = $("nextPeek"), prevEl = $("prevPeek");
-    var target = null, anchorTop = 0;
+    var target = null, anchorTop = 0, dir = 0;
 
     if (nextEl && !nextEl.hidden){
       var nb = $("nextPeekPage").getBoundingClientRect();
-      if (nb.top < fwdLine && nb.height > 40){ target = neighbourPage(1); anchorTop = nb.top; }
+      if (nb.top < fwdLine && nb.height > 40){ target = neighbourPage(1); anchorTop = nb.top; dir = 1; }
     }
     if (!target && prevEl && !prevEl.hidden && !prevEl.classList.contains("thin")){
       var pb = $("prevPeekPage").getBoundingClientRect();
-      if (pb.bottom > backLine && pb.height > 40){ target = neighbourPage(-1); anchorTop = pb.top; }
+      if (pb.bottom > backLine && pb.height > 40){ target = neighbourPage(-1); anchorTop = pb.top; dir = -1; }
     }
     if (!target) return;
 
@@ -11146,6 +11261,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     handover.until = Date.now() + 700;    /* no second swap straight after */
     var keepAt = anchorTop - pr.top;      /* where that page's top sits now */
     var nbId = state.nbId, id = target.id;
+
+    /* Hold still the thing you are LOOKING at, not the top of the page.
+       Both directions used to re-anchor the arrived page's top edge. Going
+       forward that edge is a few hundred pixels from your eye, so nothing
+       much can go wrong between the two. Going back it is most of a page
+       above your eye — often thousands of pixels — and every small difference
+       between how the preview renders a block and how the live page renders
+       it accumulates over that distance and lands, all at once, on what you
+       are watching. That is the jump.
+       So the first block still on screen is noted by its position in the
+       preview, and after the swap the same block is put back where it was. */
+    var srcBody = (dir < 0) ? $("prevPeekBody") : $("nextPeekBody");
+    var kids = srcBody ? srcBody.children : null;
+    var aIdx = -1, aOff = 0;
+    for (var ki = 0; kids && ki < kids.length; ki++){
+      var kr = kids[ki].getBoundingClientRect();
+      if (kr.bottom > pr.top){ aIdx = ki; aOff = kr.top - pr.top; break; }
+    }
 
     /* Hold the band above the writing at the height it has right now, and
        empty it. Two things were wrong without this. The band kept the OLD
@@ -11166,7 +11299,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        swapped yet and the band still measures the old one — which is the jump.
        paintDoc calls this back once the new page and its bands are really in
        place. */
-    handover.pending = { id: id, keepAt: keepAt };
+    handover.pending = { id: id, keepAt: keepAt, aIdx: aIdx, aOff: aOff };
     /* If the swap never lands — a failed read, a route that went elsewhere —
        the frozen band and the busy flag would stay for the rest of the
        session and continuous scrolling would simply stop. */
@@ -11212,6 +11345,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         var pad = prevPad();
         var want = Math.max(0, pad - pend.keepAt);
         p.scrollTop = want;
+        /* Now put the block you were actually looking at back where it was.
+           The page's top edge got us close; this closes the remaining gap,
+           which is everything the preview and the live page disagreed about
+           between the top of the page and your eye. Measured against the live
+           element, so it is right by construction rather than by hoping the
+           two render identically.
+           Bounded, and skipped if the block cannot be found: a preview whose
+           blocks do not line up one-for-one with the page then leaves the
+           old behaviour rather than throwing the page somewhere absurd. */
+        if (pend.aIdx >= 0){
+          var kid = $("body").children[pend.aIdx];
+          if (kid){
+            var d = (kid.getBoundingClientRect().top - p.getBoundingClientRect().top) - pend.aOff;
+            if (d && Math.abs(d) < 900){ want = Math.max(0, want + d); p.scrollTop = want; }
+          }
+        }
         padWatch.last = pad;
         padWatch.skip = false;
         redrawAll();
@@ -11498,6 +11647,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        Delete belong with the page list, so they follow it exactly — driving
        that off the individual data-attributes kept missing a case. */
     document.body.classList.toggle("panelsoff", off);
+    /* the favourites bar follows the same answer, from the same place */
+    if (typeof buildFavBar === "function") buildFavBar();
   }
   $("edgeTab").addEventListener("click", function(){
     if (document.body.dataset.immerse === "1") setImmerse(false);
