@@ -325,6 +325,25 @@
      was no way to tell "the end of this page" from "more below". The rule is
      drawn dark and full width, and under it sits the beginning of the next
      page, so both are on screen at the join. */
+  /* the tail of the previous page, above this one */
+  .prevpeek{padding:0 clamp(16px,4vw,44px)}
+  .prevpeek[hidden]{display:none}
+  .prevpeek-body{
+    max-width:var(--page-w); margin:0 auto;
+    font-size:15px; line-height:var(--lead); color:var(--ink-2);
+    max-height:34vh; overflow:hidden; position:relative;
+    /* shows its END, the way the page above really ends */
+    display:flex; flex-direction:column; justify-content:flex-end;
+  }
+  .prevpeek-body::before{
+    content:""; position:absolute; left:0; right:0; top:0; height:60px;
+    background:linear-gradient(var(--field), transparent); z-index:1;
+  }
+  .prevpeek.thin .prevpeek-body{max-height:0; margin:0}
+  .prevpeek.thin{padding-top:4px}
+  .pagestart-line{margin:10px 0 0}
+  .pagestart-line span{background:var(--field)}
+
   .pageend{margin-top:8px; padding-bottom:24px}
   .pageend[hidden]{display:none}
   .pageend-line{
@@ -1002,10 +1021,13 @@
      which put it AFTER the end-of-page marker — so the marker appeared with
      half a screen of blank paper below it, which is the opposite of what it
      is for. The room belongs to the writing area itself. */
-  .sheet{max-width:820px; margin:0 auto; padding:0 clamp(16px,4vw,44px) 24px; zoom:var(--z,1)}
+  /* A4 across at 96dpi, and taller than A4 down it — a long page, the way a
+     Samsung Notes page runs on rather than stopping at a printed sheet. */
+  :root{--page-w:794px; --page-h:1500px}
+  .sheet{max-width:var(--page-w); margin:0 auto; padding:0 clamp(16px,4vw,44px) 24px; zoom:var(--z,1)}
   #body{
-    min-height:60vh; outline:none; font-size:16px; line-height:var(--lead);
-    padding-top:calc(var(--lead) - 5px); padding-bottom:40vh;
+    min-height:var(--page-h); outline:none; font-size:16px; line-height:var(--lead);
+    padding-top:calc(var(--lead) - 5px); padding-bottom:20vh;
     word-wrap:break-word; -webkit-user-select:text; user-select:text;
   }
   #body:empty::before{content:attr(data-placeholder); color:var(--ink-2)}
@@ -1036,6 +1058,11 @@
      pen instead made it flicker in and out as the pen came and went. */
   body[data-focus="1"]:not(.keepfoot) .docfoot{display:none}
   body[data-immerse="1"]:not(.keepfoot) .docfoot{display:none}
+  body.panelsoff:not(.keepfoot) .docfoot{display:none !important}
+  /* on a narrow screen the page fills the window and the lists are elsewhere */
+  @media (max-width:699px){
+    body[data-view="note"]:not(.keepfoot) .docfoot{display:none !important}
+  }
   .danger:hover{border-color:var(--warn); color:var(--warn)}
 
   .blank{
@@ -1309,6 +1336,7 @@
     <div class="nbopenlist" id="nbOpenList" hidden></div>
     <div class="panehead">
       <h2 id="listTitle">Notes</h2>
+      <button class="ghost panelfold" id="foldPanels" title="Fold the panels away" data-help="Folds the notebook and page lists away to give the page the whole screen. The tab on the left edge brings them back.">&#8676;</button>
       <button class="ghost" id="editNotebook" title="Rename, recolour or delete this notebook">Edit</button>
       <button class="ghost" id="pickBtn" title="Select several notes">Select</button>
       <button class="ghost" id="insertPageBtn" title="Insert a page after the open one and renumber the rest">Insert</button>
@@ -1530,6 +1558,13 @@
         </aside>
         <div class="paper" id="paper">
           <div class="cornell" id="sheetCornell" hidden></div>
+          <!-- The tail of the page before this one. Outside .sheet on
+               purpose: .sheet carries zoom, and this band's height has to be
+               a plain measurement because the ink layer subtracts it. -->
+          <div class="prevpeek" id="prevPeek" hidden>
+            <div class="prevpeek-body" id="prevPeekBody"></div>
+            <div class="pageend-line pagestart-line"><span id="prevPeekLabel">start of this page</span></div>
+          </div>
           <div class="sheet">
             <div id="body" contenteditable="true" spellcheck="true"
                  data-placeholder="Type here, or just start writing with the pen."></div>
@@ -2075,7 +2110,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b25";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b26";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4724,6 +4759,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        only when something scrolls: a short page is at its own end already */
     if (typeof paintEndKit === "function") setTimeout(paintEndKit, 260);
     if (typeof paintPageEnd === "function") paintPageEnd();
+    if (typeof paintPrevPeek === "function") paintPrevPeek();
     /* a PDF page has no ruled lines under it and no page padding fighting it */
     document.body.classList.toggle("pdfpaper",
       (state.note.html || "").indexOf("data-pdfpage") > -1);
@@ -5237,6 +5273,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("trashRow").addEventListener("click", function(){ flush(); go({trash:true}); });
   $("starredRow").addEventListener("click", function(){ flush(); go({starred:true}); });
   $("marksRow").addEventListener("click", function(){ flush(); go({marks:true}); });
+  /* the other half of the edge tab: a way to fold the panels away, not only
+     a way to bring them back */
+  $("foldPanels").addEventListener("click", function(){
+    setFocus(true);
+    paintEdge();
+    hint("Panels folded. The tab on the left edge brings them back.");
+  });
   $("emptyTrash").addEventListener("click", function(){
     if (!state.trash.length) return;
     if (!confirm("Erase all " + state.trash.length + " item(s) for good? This cannot be undone.")) return;
@@ -5375,12 +5418,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
     function zoom(){ return (name === "note") ? state.zoom : 1; }
 
+    /* How far down the scroller this page actually starts.
+       The tail of the previous page is shown above the writing so the two
+       run together, and that band pushes the page down. Every stroke is
+       stored relative to the top of ITS OWN page, so all four places that
+       convert between page and screen have to take the band off again:
+       here, in the canvas transform, in the cull, and in the scroll memory.
+       Measured live rather than cached — a stale value would put ink in the
+       wrong place and then save it there. */
+    function pad(){ return (S.name === "note" && typeof prevPad === "function") ? prevPad() : 0; }
+
     S.toPage = function(e){
       var r = S.scroller.getBoundingClientRect();
       var z = zoom() || 1;
       return {
         x: (e.clientX - r.left + S.scroller.scrollLeft) / z,
-        y: (e.clientY - r.top + S.scroller.scrollTop) / z
+        y: (e.clientY - r.top + S.scroller.scrollTop - pad()) / z
       };
     };
 
@@ -5393,7 +5446,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (!ctx) return null;
       var z = zoom() || 1;
       ctx.setTransform(dpr * z, 0, 0, dpr * z,
-                       -S.scroller.scrollLeft * dpr, -S.scroller.scrollTop * dpr);
+                       -S.scroller.scrollLeft * dpr,
+                       (pad() - S.scroller.scrollTop) * dpr);
       return ctx;
     };
 
@@ -5402,7 +5456,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (!ctx) return;
       var r = S.scroller.getBoundingClientRect();
       var z = zoom() || 1;
-      ctx.clearRect(S.scroller.scrollLeft / z - 2, S.scroller.scrollTop / z - 2,
+      ctx.clearRect(S.scroller.scrollLeft / z - 2,
+                    (S.scroller.scrollTop - pad()) / z - 2,
                     r.width / z + 4, r.height / z + 4);
       visibleStrokes(S).forEach(function(s){ drawStroke(ctx, s); });
       if (lasso.surface === S && lasso.poly) drawLasso(ctx, lasso.poly);
@@ -10081,7 +10136,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!state.noteId) return;
     if (placeRestoring) return;      /* do not record the scroll we just set */
     var p = $("paper");
-    var top = p ? p.scrollTop : 0, left = p ? p.scrollLeft : 0;
+    /* stored relative to the page, not the scroller: the band above the page
+       is a different height on a different device, and a raw scrollTop would
+       land you somewhere else */
+    var top = p ? Math.max(0, p.scrollTop - prevPad()) : 0;
+    var left = p ? p.scrollLeft : 0;
     /* Two records, deliberately. The notebook one answers "where was I in
        this notebook", the page one answers "where was I on this page" — and
        the second is what makes jumping to a bookmark and coming back, or
@@ -10112,9 +10171,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     placeRestoring = true;
     var tries = 0;
     (function attempt(){
-      p.scrollTop = top; p.scrollLeft = left || 0;
+      /* put the band back on: what was stored is a position within the page */
+      var want = top + prevPad();
+      p.scrollTop = want; p.scrollLeft = left || 0;
       tries++;
-      if (Math.abs(p.scrollTop - top) > 2 && tries < 12){
+      if (Math.abs(p.scrollTop - want) > 2 && tries < 12){
         setTimeout(attempt, 60);
       } else {
         setTimeout(function(){ placeRestoring = false; }, 120);
@@ -10179,6 +10240,43 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       el.removeAttribute("data-to");
     });
     return box.innerHTML || "<p class=\"peekempty\">(this page is empty)</p>";
+  }
+
+  /* How tall the previous-page band currently is. Everything that converts
+     between a stroke's stored position and the screen subtracts this. */
+  function prevPad(){
+    var el = document.getElementById("prevPeek");
+    return (el && !el.hidden) ? el.offsetHeight : 0;
+  }
+
+  /* the tail of the page before this one, so the two run together */
+  function paintPrevPeek(){
+    var box = $("prevPeek");
+    if (!box) return;
+    var was = prevPad();
+    if (!state.note || state.view !== "note" || cfg.pageFlow === false){
+      box.hidden = true;
+      if (was) redrawAll();
+      return;
+    }
+    var prev = neighbourPage(-1);
+    if (!prev){
+      /* first page of the notebook: just the marker, and a thin one, so it
+         costs almost nothing at the top of the page */
+      $("prevPeekBody").innerHTML = "";
+      $("prevPeekLabel").textContent = "start of the first page";
+      box.classList.add("thin");
+      box.hidden = false;
+    } else {
+      $("prevPeekBody").innerHTML = previewHtml(prev.html);
+      $("prevPeekLabel").textContent = "start of this page  ·  above is " +
+        ((prev.title || "").trim() || C.displayTitle(prev));
+      box.classList.remove("thin");
+      box.hidden = false;
+    }
+    /* the band changes how far down the page starts, so anything already
+       drawn has to be repainted against the new offset */
+    if (prevPad() !== was) redrawAll();
   }
 
   /* the end marker, and a look at the page that follows */
@@ -10362,7 +10460,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function visibleStrokes(S){
     var r = S.scroller.getBoundingClientRect();
     var z = (S.name === "note" ? state.zoom : 1) || 1;
-    var x0 = S.scroller.scrollLeft / z - 40, y0 = S.scroller.scrollTop / z - 40;
+    /* the same band the drawing code allows for, so culling agrees with it */
+    var off = (S.name === "note") ? prevPad() : 0;
+    var x0 = S.scroller.scrollLeft / z - 40, y0 = (S.scroller.scrollTop - off) / z - 40;
     var x1 = x0 + r.width / z + 80, y1 = y0 + r.height / z + 80;
     return S.strokes.filter(function(s){
       var b = boundsOf(s);
@@ -10440,7 +10540,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return document.body.dataset.focus === "1" || document.body.dataset.immerse === "1";
   }
   function paintEdge(){
-    $("edgeTab").hidden = !panelsHidden();
+    var off = panelsHidden();
+    $("edgeTab").hidden = !off;
+    /* One class, set from the one function that already knows whether the
+       panels are showing. The footer's dates, counts and Duplicate / Move /
+       Delete belong with the page list, so they follow it exactly — driving
+       that off the individual data-attributes kept missing a case. */
+    document.body.classList.toggle("panelsoff", off);
   }
   $("edgeTab").addEventListener("click", function(){
     if (document.body.dataset.immerse === "1") setImmerse(false);
