@@ -325,21 +325,23 @@
      was no way to tell "the end of this page" from "more below". The rule is
      drawn dark and full width, and under it sits the beginning of the next
      page, so both are on screen at the join. */
-  /* the tail of the previous page, above this one */
+  /* ---- the pages either side, at full size ----
+     Not a summary strip: a whole page, the same height as the one you are
+     writing on, so scrolling from one to the next shows any proportion of
+     each exactly as a continuous notebook does. */
   .prevpeek{padding:0 clamp(16px,4vw,44px)}
   .prevpeek[hidden]{display:none}
-  .prevpeek-body{
-    max-width:var(--page-w); margin:0 auto;
-    font-size:15px; line-height:var(--lead); color:var(--ink-2);
-    max-height:34vh; overflow:hidden; position:relative;
-    /* shows its END, the way the page above really ends */
-    display:flex; flex-direction:column; justify-content:flex-end;
+  .peekpage{
+    position:relative; max-width:var(--page-w); margin:0 auto;
+    min-height:var(--page-h);
   }
-  .prevpeek-body::before{
-    content:""; position:absolute; left:0; right:0; top:0; height:60px;
-    background:linear-gradient(var(--field), transparent); z-index:1;
+  .peekink{position:absolute; inset:0; width:100%; height:100%; pointer-events:none}
+  .prevpeek-body, .nextpeek-body{
+    font-size:16px; line-height:var(--lead); color:var(--ink);
+    padding-top:calc(var(--lead) - 5px);
   }
-  .prevpeek.thin .prevpeek-body{max-height:0; margin:0}
+  /* the first page of a notebook has nothing above it, so the marker alone */
+  .prevpeek.thin .peekpage{min-height:0}
   .prevpeek.thin{padding-top:4px}
   .pagestart-line{margin:10px 0 0}
   .pagestart-line span{background:var(--field)}
@@ -355,27 +357,13 @@
     font-family:var(--mono); font-size:9px; letter-spacing:.2em;
     text-transform:uppercase; color:var(--ink-2);
   }
-  .nextpeek{
-    border:1px solid var(--rule); border-radius:6px; padding:12px 14px;
-    background:var(--panel); opacity:.92;
-  }
+  .nextpeek{padding:0}
   .nextpeek[hidden]{display:none}
   .nextpeek-head{
     font-family:var(--mono); font-size:10px; letter-spacing:.16em;
     text-transform:uppercase; color:var(--ink-2); margin-bottom:8px;
   }
-  /* tall enough to genuinely read as the top of the next page, so the join
-     shows the foot of one and the head of the other together */
-  .nextpeek-body{
-    font-size:15px; line-height:var(--lead); color:var(--ink-2);
-    max-height:44vh; overflow:hidden; position:relative;
-  }
-  /* fades out rather than being chopped off mid-line */
-  .nextpeek-body::after{
-    content:""; position:absolute; left:0; right:0; bottom:0; height:70px;
-    background:linear-gradient(transparent, var(--panel));
-  }
-  .nextpeek-body p{margin:0 0 var(--lead)}
+  .nextpeek-body p, .prevpeek-body p{margin:0 0 var(--lead)}
   .nextpeek-body h1,.nextpeek-body h2,.nextpeek-body h3{
     font-family:var(--display); margin:0 0 6px; font-size:17px;
   }
@@ -1562,7 +1550,10 @@
                purpose: .sheet carries zoom, and this band's height has to be
                a plain measurement because the ink layer subtracts it. -->
           <div class="prevpeek" id="prevPeek" hidden>
-            <div class="prevpeek-body" id="prevPeekBody"></div>
+            <div class="peekpage" id="prevPeekPage">
+              <div class="prevpeek-body" id="prevPeekBody"></div>
+              <canvas class="peekink" id="prevPeekInk"></canvas>
+            </div>
             <div class="pageend-line pagestart-line"><span id="prevPeekLabel">start of this page</span></div>
           </div>
           <div class="sheet">
@@ -1574,8 +1565,10 @@
               <div class="pageend-line"><span id="pageEndLabel">end of page</span></div>
               <div class="nextpeek" id="nextPeek" hidden>
                 <div class="nextpeek-head" id="nextPeekHead"></div>
-                <div class="nextpeek-body" id="nextPeekBody"></div>
-                <button type="button" class="nextpeek-go" id="nextPeekGo">Open this page</button>
+                <div class="peekpage" id="nextPeekPage">
+                  <div class="nextpeek-body" id="nextPeekBody"></div>
+                  <canvas class="peekink" id="nextPeekInk"></canvas>
+                </div>
               </div>
             </div>
           </div>
@@ -2110,7 +2103,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b26";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b27";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -10249,6 +10242,35 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return (el && !el.hidden) ? el.offsetHeight : 0;
   }
 
+  /* A neighbouring page's handwriting, drawn onto its own canvas.
+     Deliberately not a makeSurface: those register themselves in
+     ink.surfaces, which would put a neighbour into every global flush, undo
+     and redraw. This is a plain canvas that only ever gets painted. */
+  function paintPeekInk(canvasId, noteId){
+    var cv = document.getElementById(canvasId);
+    if (!cv) return;
+    var host = cv.parentNode;
+    var w = host.clientWidth, h = host.clientHeight;
+    if (!w || !h) return;
+    var dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    var ctx = cv.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (!noteId) return;
+    C.getPageInk(noteId).then(function(a){
+      /* the page may have moved on while this was loading */
+      if (cv.getAttribute("data-for") !== noteId) return;
+      var strokes = (a && a.strokes) || [];
+      var c2 = cv.getContext("2d");
+      if (!c2) return;
+      c2.setTransform(dpr, 0, 0, dpr, 0, 0);
+      c2.clearRect(0, 0, w, h);
+      strokes.forEach(function(s){ drawStroke(c2, s); });
+    }).catch(function(){});
+  }
+
   /* the tail of the page before this one, so the two run together */
   function paintPrevPeek(){
     var box = $("prevPeek");
@@ -10273,6 +10295,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         ((prev.title || "").trim() || C.displayTitle(prev));
       box.classList.remove("thin");
       box.hidden = false;
+      $("prevPeekInk").setAttribute("data-for", prev.id);
+      paintPeekInk("prevPeekInk", prev.id);
     }
     /* the band changes how far down the page starts, so anything already
        drawn has to be repainted against the new offset */
@@ -10302,12 +10326,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        ever looks inside #body, so a live figure here would sit empty. */
     $("nextPeekBody").innerHTML = previewHtml(next.html);
     peek.hidden = false;
+    $("nextPeekInk").setAttribute("data-for", next.id);
+    paintPeekInk("nextPeekInk", next.id);
   }
-  $("nextPeekGo").addEventListener("click", function(){
-    var next = neighbourPage(1);
-    if (!next) return;
-    flush().then(function(){ go({ nbId: state.nbId, noteId: next.id }); });
-  });
+  /* There is no "open the next page" button any more: you simply scroll into
+     it and it takes over. The buttons at the foot of the page still offer the
+     same jump for anyone who wants it in one tap. */
 
   function paintEndKit(){
     var kit = $("endKit"), p = $("paper");
@@ -10324,9 +10348,60 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         : "next ↓";
     }
   }
+  /* ---- handing over to the next page while you scroll ----
+     The pages either side are drawn at full size, so scrolling runs straight
+     through them. When one of them has taken over the screen, it becomes the
+     page you are actually writing on — and the scroll is re-anchored so that
+     nothing appears to move at the moment of the swap. Without that anchor
+     the page would jump, because the band above the writing changes height
+     from "the previous page" to "the page before that". */
+  var handover = { busy: false };
+  function pageHandover(){
+    if (handover.busy || !cfg.pageFlow || !state.note || state.view !== "note") return;
+    if (ink.penNear || document.body.classList.contains("drawing")) return;
+    var p = $("paper");
+    if (!p) return;
+    var pr = p.getBoundingClientRect();
+    var mid = pr.top + pr.height / 2;
+
+    var nextEl = $("nextPeek"), prevEl = $("prevPeek");
+    var target = null, anchorTop = 0;
+
+    if (nextEl && !nextEl.hidden){
+      var nb = $("nextPeekPage").getBoundingClientRect();
+      /* its top has passed the middle of the screen: it is the page now */
+      if (nb.top < mid && nb.height > 40){ target = neighbourPage(1); anchorTop = nb.top; }
+    }
+    if (!target && prevEl && !prevEl.hidden && !prevEl.classList.contains("thin")){
+      var pb = $("prevPeekPage").getBoundingClientRect();
+      if (pb.bottom > mid && pb.height > 40){ target = neighbourPage(-1); anchorTop = pb.top; }
+    }
+    if (!target) return;
+
+    handover.busy = true;
+    var keepAt = anchorTop - pr.top;      /* where that page's top sits now */
+    var nbId = state.nbId, id = target.id;
+    flush().then(function(){
+      go({ nbId: nbId, noteId: id });
+      /* after the swap the same page is the middle one; put its top back
+         exactly where the eye last saw it */
+      var tries = 0;
+      (function settle(){
+        tries++;
+        var pad = prevPad();
+        var want = Math.max(0, pad - keepAt);
+        p.scrollTop = want;
+        redrawAll();
+        if (tries < 6) setTimeout(settle, 70);
+        else setTimeout(function(){ handover.busy = false; }, 120);
+      })();
+    }).catch(function(){ handover.busy = false; });
+  }
+
   $("paper").addEventListener("scroll", function(){
     showPageTag();
     paintEndKit();
+    pageHandover();
   }, { passive: true });
 
   $("endInsert").addEventListener("click", function(){
@@ -10414,6 +10489,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   function pushFlow(dir, amount){
     if (!cfg.pageFlow || flow.busy || !state.noteId) return;
+    /* With the pages either side drawn in full, scrolling already carries you
+       into them and pageHandover does the swap. Pushing past the edge as well
+       would turn two pages at once. */
+    var pk = $("prevPeek"), nk = $("nextPeek");
+    if ((pk && !pk.hidden && !pk.classList.contains("thin")) || (nk && !nk.hidden)) return;
     var p = $("paper");
     if (!p || edgeOf(p) !== dir) { flow.acc = 0; return; }
     if (dir !== flow.dir){ flow.dir = dir; flow.acc = 0; }
