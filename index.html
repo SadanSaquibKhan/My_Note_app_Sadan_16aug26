@@ -2064,7 +2064,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b23";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b24";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -10050,8 +10050,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var kit = $("endKit"), p = $("paper");
     if (!kit || !p) return;
     if (!state.note || state.view !== "note"){ kit.hidden = true; return; }
-    var atEnd = (p.scrollTop + p.clientHeight) >= (p.scrollHeight - 90);
-    kit.hidden = !atEnd;
+    /* judged against the end of the page, not the end of the scroller, so the
+       buttons meet you at the end-of-page rule */
+    kit.hidden = !atPageEnd(p, 90);
     if (!kit.hidden){
       var next = neighbourPage(1);
       $("endNext").hidden = !next;
@@ -10109,10 +10110,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       setTimeout(function(){ cue.hidden = true; }, 260);
     }, 1100);
   }
+  /* Where the page itself ends, in scroller pixels. The end-of-page rule and
+     the look at the next page live inside this same scroller but are not part
+     of the page, so the raw scrollHeight is now some way past the writing.
+     Without this, carrying on past the end meant scrolling the whole preview
+     before anything happened. */
+  function pageBottom(p){
+    var end = $("pageEnd");
+    if (!end || end.hidden) return p.scrollHeight;
+    var r = end.getBoundingClientRect(), pr = p.getBoundingClientRect();
+    return Math.max(p.clientHeight, (r.top - pr.top) + p.scrollTop);
+  }
+  function atPageEnd(p, slack){
+    return (p.scrollTop + p.clientHeight) >= (pageBottom(p) - (slack || 1));
+  }
   /* at the top edge, at the bottom edge, or neither */
   function edgeOf(p){
     if (p.scrollTop <= 0) return -1;
-    if (p.scrollTop + p.clientHeight >= p.scrollHeight - 1) return 1;
+    if (atPageEnd(p)) return 1;
     return 0;
   }
   function flowTo(dir){
