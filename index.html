@@ -754,6 +754,17 @@
     background:var(--panel); border:1px solid var(--ink); border-radius:8px;
     padding:6px; box-shadow:0 10px 30px var(--shadow); line-height:normal;
   }
+  /* the drawn icons: sized from the button, never from the system font */
+  .favico{width:58%; height:58%; display:block; margin:auto}
+  .favbar button[data-fav]{display:flex; align-items:center; justify-content:center}
+  /* how big a bite the eraser takes, beside the eraser */
+  .eraserow{display:flex; align-items:center; justify-content:center; gap:10px; margin-top:4px}
+  .eraserow .btn{min-height:38px; min-width:38px; padding:0; font-size:16px}
+  .eraserdot{
+    width:44px; height:44px; display:flex; align-items:center; justify-content:center;
+    border:1px dashed var(--rule); border-radius:8px; flex:0 0 auto;
+  }
+  .eraserdot i{display:block; border-radius:50%; background:var(--ink); opacity:.8}
   .cropbar.up{top:-52px; bottom:auto}
   .cropbar .btn{min-height:38px; padding:0 14px; font-size:12px}
   #body blockquote{
@@ -1860,7 +1871,11 @@
           <label class="check"><input type="checkbox" id="setHoldErase"> Hold the nib still on the page to turn the eraser on and off</label>
           <label for="setHoldEraseMs">&hellip;after <b id="holdEraseOut"></b></label>
           <input type="range" id="setHoldEraseMs" min="300" max="1500" step="50">
-          <label class="check"><input type="checkbox" id="setTapErase"> Double-tap with the pen to turn the eraser on and off</label>
+          <label class="check"><input type="checkbox" id="setSpringErase"> &hellip;and lift the pen to go straight back to it</label>
+          <p class="hint">On: holding erases only while the nib stays down, so
+          there is no eraser mode to get stuck in. Off: the hold turns the
+          eraser on and leaves it on until you hold again.</p>
+          <label class="check"><input type="checkbox" id="setTapErase"> Double-tap with the pen to turn the eraser on and off (stays on)</label>
           <label class="check"><input type="checkbox" id="setPenBtnErase"> The pen&rsquo;s side button turns the eraser on and off</label>
           <p class="hint"><b>Holding the nib is the one that works on this
           tablet.</b> Samsung&rsquo;s One UI takes the S&nbsp;Pen side button
@@ -1945,7 +1960,7 @@
           <label class="check"><input type="checkbox" id="setFavBar"> Show the floating favourites bar (drag it where you like)</label>
           <label class="check"><input type="checkbox" id="setPenHelp"> Rest the pen over any button for two seconds to see what it does</label>
           <label for="setFavSize">Button size <b id="favSizeOut"></b></label>
-          <input type="range" id="setFavSize" min="30" max="72" step="2">
+          <input type="range" id="setFavSize" min="10" max="72" step="2">
           <p class="hint">Use the arrows below to put the tools in the order
           you want them down the bar.</p>
           <p class="hint">Tick what it should carry. Tapping a tool you are
@@ -2215,7 +2230,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b36";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b37";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -7035,7 +7050,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     penButtonErase: true, /* the pen's side button toggles the eraser */
     dblType: true,        /* two finger-taps open the keyboard */
     cfgRev: 0,            /* which one-time setting migrations have been done */
-    holdErase: true,      /* hold the nib down to toggle the eraser */
+    holdErase: true,      /* hold the nib down to reach the eraser */
+    holdEraseMode: "spring",  /* "spring": erase while held, pen back on lift.
+                                 "latch":  the hold turns it on and off */
     holdEraseMs: 650,     /* how long that hold has to be */
     favBar: false,     /* the floating favourites bar */
     favTools: ["pen_ink", "pen_blue", "pen_red", "hl_amber", "eraser", "lasso", "undo"],
@@ -7186,6 +7203,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setTapErase").checked = cfg.tapErase !== false;
     $("setPenBtnErase").checked = cfg.penButtonErase !== false;
     $("setHoldErase").checked = cfg.holdErase !== false;
+    $("setSpringErase").checked = cfg.holdEraseMode !== "latch";
     $("setHoldEraseMs").value = cfg.holdEraseMs;
     $("holdEraseOut").textContent = (cfg.holdEraseMs / 1000).toFixed(2) + "s";
     $("setGlide").value = cfg.glideSpeed;
@@ -7244,6 +7262,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       saveCfg(); buildFavBar();
     });
     bindCheck("setHoldErase", "holdErase");
+    $("setSpringErase").addEventListener("change", function(){
+      cfg.holdEraseMode = this.checked ? "spring" : "latch";
+      saveCfg();
+    });
     $("setHoldEraseMs").addEventListener("input", function(){
       cfg.holdEraseMs = Number(this.value);
       $("holdEraseOut").textContent = (cfg.holdEraseMs / 1000).toFixed(2) + "s";
@@ -7434,6 +7456,41 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     { key:"hl_pink",     tool:"marker", colour:"pink",   title:"Pink highlighter" }
   ];
 
+  /* ---- what the buttons look like ----
+     Drawn, not typed. The bar used to mix text glyphs with emoji, so half of
+     it was a flat outline and the other half a small coloured picture, each at
+     whatever size the system font felt like — and several did not render on
+     this tablet at all. These are one weight, one size, they take the colour of
+     the button, and they are as sharp at 10px as at 72px. */
+  function ico(d){
+    return '<svg class="favico" viewBox="0 0 24 24" aria-hidden="true" ' +
+           'fill="none" stroke="currentColor" stroke-width="1.7" ' +
+           'stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
+  }
+  var FAV_ICONS = {
+    pen:     ico('<path d="M5 19.5l1.6-4.6L16.9 4.6a2.2 2.2 0 0 1 3.1 3.1L9.6 18l-4.6 1.5z"/><path d="M15.4 6.1l2.5 2.5"/>'),
+    pencil:  ico('<path d="M4 20l1.4-4L16 5.4l2.6 2.6L8 18.6 4 20z"/><path d="M13.4 8l2.6 2.6"/><path d="M4.7 17.3l2 2"/>'),
+    marker:  ico('<path d="M13 4.5l6.5 6.5-6 6H8l-2.5-2.5 7.5-10z"/><path d="M4 21h16"/>'),
+    eraser:  ico('<path d="M13.5 5.2a1.7 1.7 0 0 1 2.4 0l3.9 3.9a1.7 1.7 0 0 1 0 2.4L13 18h-4l-4-4 8.5-8.8z"/><path d="M9 18l-4-4"/><path d="M12 21h8"/>'),
+    lasso:   ico('<ellipse cx="12" cy="10" rx="8" ry="5.5" stroke-dasharray="3 3"/><path d="M9.5 15.3c-.3 2 .2 3.4 1.5 4.4"/>'),
+    lassobox:ico('<rect x="3.5" y="5" width="17" height="11.5" rx="1" stroke-dasharray="3 3"/><path d="M9 16.5c0 2 .4 3.2 1.5 4"/>'),
+    ruler:   ico('<rect x="2.5" y="8.5" width="19" height="7" rx="1"/><path d="M7 8.5v3M11 8.5v4M15 8.5v3M19 8.5v4"/>'),
+    img:     ico('<rect x="3" y="5" width="18" height="14" rx="1.5"/><circle cx="8.5" cy="10" r="1.4"/><path d="M3.5 17l4.8-4.6L12 15.6l3.2-3 5.3 5"/>'),
+    cam:     ico('<path d="M3 8.5h3.6l1.7-2h7.4l1.7 2H21v10.5H3z"/><circle cx="12" cy="13.5" r="3.3"/>'),
+    pdf:     ico('<path d="M6 3h8l4.5 4.5V21H6z"/><path d="M14 3v5h4.5"/><path d="M9 13h6M9 16.5h4"/>'),
+    rec:     ico('<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3.6" fill="currentColor" stroke="none"/>'),
+    prac:    ico('<rect x="3" y="4.5" width="18" height="15" rx="1.5"/><path d="M12 4.5v15"/><path d="M15 9.5h3M15 13h3"/>'),
+    mark:    ico('<path d="M6.5 3.5h11v17l-5.5-4.6-5.5 4.6z"/>'),
+    star:    ico('<path d="M12 3.4l2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.9l6.1-.9z"/>'),
+    addpage: ico('<path d="M6 3h8l4.5 4.5V21H6z"/><path d="M14 3v5h4.5"/><path d="M12 11.5v6M9 14.5h6"/>'),
+    insert:  ico('<path d="M6 3h8l4.5 4.5V21H6z"/><path d="M14 3v5h4.5"/><path d="M12 11v6M9.4 15.4l2.6 2.6 2.6-2.6"/>'),
+    focus:   ico('<path d="M9 4.5v4.5H4.5M15 4.5v4.5h4.5M9 19.5V15H4.5M15 19.5V15h4.5"/>'),
+    immerse: ico('<path d="M4.5 9V4.5H9M19.5 9V4.5H15M4.5 15v4.5H9M19.5 15v4.5H15"/>'),
+    lock:    ico('<rect x="4.5" y="10.5" width="15" height="9.5" rx="1.5"/><path d="M7.8 10.5V7.8a4.2 4.2 0 0 1 8.4 0v2.7"/>'),
+    undo:    ico('<path d="M4 12h11.5a4.2 4.2 0 0 1 0 8.4H11"/><path d="M7.8 8.2L4 12l3.8 3.8"/>'),
+    redo:    ico('<path d="M20 12H8.5a4.2 4.2 0 0 0 0 8.4H13"/><path d="M16.2 8.2L20 12l-3.8 3.8"/>')
+  };
+
   var FAV_ITEMS = {
     pen:     { label: "✎", title: "Pen",         ink: true },
     pencil:  { label: "✐", title: "Pencil",      ink: true },
@@ -7455,6 +7512,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     insert:  { label: "⎀", title: "Insert a page after this one",
                run: function(){ $("insertPageBtn").click(); } },
     focus:   { label: "⛶", title: "Fold the panels away", run: function(){ $("focusBtn").click(); } },
+    immerse: { label: "⤢", title: "Full screen for writing",
+               /* one button both ways: once it is on there is nothing else left
+                  on screen to turn it off with */
+               run: function(){
+                 setImmerse(document.body.getAttribute("data-immerse") !== "1");
+               } },
     lock:    { label: "🔒", title: "Lock the zoom",     run: function(){ $("lockBtn").click(); } },
     undo:    { label: "↶", title: "Undo",              run: function(){ globalUndo(); } },
     redo:    { label: "↷", title: "Redo",              run: function(){ globalRedo(); } }
@@ -7467,7 +7530,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var FAV_ORDER = FAV_PENS.map(function(p){ return p.key; }).concat(
                   ["pen","pencil","marker","eraser","lasso","lassobox","ruler",
                    "img","cam","pdf","rec","prac","mark","star",
-                   "addpage","insert","focus","lock","undo","redo"]);
+                   "addpage","insert","focus","immerse","lock","undo","redo"]);
 
   /* what each favourite is for, in a sentence, for the hover help */
   var FAV_HELP = {
@@ -7488,6 +7551,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     addpage: "Makes a new page at the end of this notebook.",
     insert:  "Puts a new page straight after this one and renumbers the pages after it.",
     focus:   "Folds the side panels away to give the page the whole screen.",
+    immerse: "Full screen: hides every bar so only the page is left. Tap it again to bring them back.",
     lock:    "Locks the zoom so one finger scrolls instead of pinching.",
     undo:    "Undoes the last thing, writing or typing alike.",
     redo:    "Puts back what you just undid."
@@ -7555,6 +7619,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         nib.style.background = inkHex(it.pen.colour);
         if (it.pen.tool === "marker"){ nib.style.opacity = ".5"; nib.style.height = "16px"; }
         b.appendChild(nib);
+      } else if (FAV_ICONS[key]){
+        b.innerHTML = FAV_ICONS[key];
       } else {
         b.textContent = it.label;
       }
@@ -7661,9 +7727,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var on = false;
       if (it && it.pen) on = (ink.tool === it.pen.tool && ink.colour === it.pen.colour);
       else if (it && it.ink) on = (ink.tool === k);
+      else if (k === "immerse") on = document.body.getAttribute("data-immerse") === "1";
       b.setAttribute("aria-pressed", on ? "true" : "false");
     });
   }
+  /* The eraser's reach, in one place, so the panel beside the button, the
+     slider in Settings and the ring drawn under the nib can never disagree. */
+  var ER_MIN = 8, ER_MAX = 60;
+  function eraserSizeNow(){
+    var v = Number(cfg.eraserSize);
+    if (!isFinite(v)) v = 22;
+    return Math.max(ER_MIN, Math.min(ER_MAX, Math.round(v)));
+  }
+
   /* the little settings panel next to a tool: colour and thickness */
   function openFavPop(btn, tool){
     var m = $("favPop");
@@ -7731,10 +7807,46 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         mrow.appendChild(b2);
       });
       m.appendChild(mrow);
-      var pe = document.createElement("p");
-      pe.className = "hint"; pe.style.margin = "8px 0 0";
-      pe.textContent = "Size is in Settings → Pen and eraser.";
-      m.appendChild(pe);
+      /* How big a bite it takes, in the same place you picked the eraser.
+         Sending you off to Settings for the one number you actually want to
+         change while erasing was the wrong side of the room. */
+      var slab = document.createElement("p");
+      slab.className = "hint"; slab.style.margin = "8px 0 2px";
+      slab.textContent = "Eraser size";
+      var srow = document.createElement("div");
+      srow.className = "eraserow";
+      var minus = document.createElement("button");
+      minus.type = "button"; minus.className = "btn"; minus.textContent = "−";
+      minus.setAttribute("aria-label", "Smaller eraser");
+      var dotwrap = document.createElement("span");
+      dotwrap.className = "eraserdot";
+      var dot = document.createElement("i");
+      dotwrap.appendChild(dot);
+      var plus = document.createElement("button");
+      plus.type = "button"; plus.className = "btn"; plus.textContent = "+";
+      plus.setAttribute("aria-label", "Bigger eraser");
+      var num = document.createElement("p");
+      num.className = "hint"; num.style.margin = "2px 0 0"; num.style.textAlign = "center";
+      function paintErSize(){
+        var v = eraserSizeNow();
+        /* shown at the size it really is, capped so the panel keeps its shape */
+        var px = Math.max(6, Math.min(38, v));
+        dot.style.width = dot.style.height = px + "px";
+        num.textContent = v + " px";
+        minus.disabled = v <= ER_MIN;
+        plus.disabled = v >= ER_MAX;
+        if ($("setEraser")) $("setEraser").value = v;
+        if ($("eraserOut")) $("eraserOut").textContent = v + " px";
+      }
+      function bumpEr(d){
+        cfg.eraserSize = Math.max(ER_MIN, Math.min(ER_MAX, eraserSizeNow() + d));
+        saveCfg(); paintErSize();
+      }
+      minus.addEventListener("click", function(e){ e.preventDefault(); bumpEr(-4); });
+      plus.addEventListener("click", function(e){ e.preventDefault(); bumpEr(4); });
+      srow.appendChild(minus); srow.appendChild(dotwrap); srow.appendChild(plus);
+      m.appendChild(slab); m.appendChild(srow); m.appendChild(num);
+      paintErSize();
     } else if (tool !== "lasso"){
       m.appendChild(row); m.appendChild(wrow);
     } else {
@@ -8252,7 +8364,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     penHold.S = S; penHold.x = e.clientX; penHold.y = e.clientY; penHold.fired = false;
     penHold.timer = setTimeout(function(){
       penHold.fired = true;
-      togglePenEraser("holding the nib down");
+      holdEraseFired();
     }, Math.max(300, Number(cfg.holdEraseMs) || 650));
   }
   function movePenHold(e){
@@ -8627,20 +8739,40 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   var imgUrls = {};
+  /* The shape of a picture, remembered on the figure itself as data-ar, so a
+     page knows how tall it is before any of its pictures have loaded — on a
+     reload, in a preview of a neighbouring page, anywhere. Written the first
+     time the real picture is seen and saved with the note from then on. */
+  function reserveBox(fig, w, h, im){
+    if (w && h) fig.setAttribute("data-ar", (w / h).toFixed(4));
+    if (!im){
+      im = document.createElement("img");
+      im.alt = "";
+      fig.appendChild(im);
+    }
+    var ar = Number(fig.getAttribute("data-ar"));
+    im.style.aspectRatio = (isFinite(ar) && ar > 0) ? String(ar) : "";
+    return im;
+  }
+
   function hydrateImages(){
     Object.keys(imgUrls).forEach(function(k){ URL.revokeObjectURL(imgUrls[k]); });
     imgUrls = {};
     var figs = Array.prototype.slice.call($("body").querySelectorAll("figure.imgblock"));
     return Promise.all(figs.map(function(fig){
       var id = fig.getAttribute("data-img");
+      /* The box is claimed NOW, from the shape remembered on the figure, and
+         the picture is poured into it when it arrives. Before this the figure
+         was empty until the blob had decoded, so the page was short for a
+         moment and then snapped taller. That is what made scrolling between
+         pages lurch: the position the swap asks for is measured against a page
+         that has not finished being its own height yet. */
+      fig.textContent = "";
+      fig.style.width = (fig.getAttribute("data-pct") || 70) + "%";
+      applyImageAlign(fig);
+      fig.classList.toggle("locked", fig.getAttribute("data-lock") === "1");
+      var im = reserveBox(fig);
       return C.reviveAsset(id).then(function(){ return C.getAsset(id); }).then(function(a){
-        fig.textContent = "";
-        fig.style.width = (fig.getAttribute("data-pct") || 70) + "%";
-        /* alignment, or the exact spot it was dragged to, put back */
-        applyImageAlign(fig);
-        /* the lock lives on the figure, so it has to be re-applied every time
-           the picture is rebuilt, not just when the button is pressed */
-        fig.classList.toggle("locked", fig.getAttribute("data-lock") === "1");
         if (!a || !a.blob){
           fig.classList.add("missing");
           fig.textContent = "This picture is missing.";
@@ -8648,10 +8780,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         }
         var url = URL.createObjectURL(a.blob);
         imgUrls[id] = url;
-        var im = document.createElement("img");
+        reserveBox(fig, a.w, a.h, im);
         im.src = url;
-        im.alt = "";
-        fig.appendChild(im);
         /* No per-figure listener here. hydrateImages() runs again on every
            re-render, and addEventListener stacked a fresh copy each time: the
            first tap selected the picture, the second stacked handler saw it
@@ -9601,7 +9731,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          therefore the route that works, and it is a deliberate gesture with
          its own setting rather than an accident. */
       if (looksLikeLongPress()){
-        if (cfg.holdErase !== false) togglePenEraser("holding the nib down");
+        if (cfg.holdErase !== false) holdEraseFired();
         return;
       }
       if (cfg.penButtonErase !== false) togglePenEraser("the pen's side button");
@@ -9610,6 +9740,63 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (lastPointerKind === "touch"){ e.preventDefault(); return; }
     /* a mouse right-click while our own menu is up: ours wins */
     if (!$("holdMenu").hidden || ($("imgMenu") && !$("imgMenu").hidden)) e.preventDefault();
+  });
+
+  /* ---- the eraser, the way it is actually reached ----
+     Two gestures, because erasing is two different jobs.
+
+     Hold the nib still and it erases for as long as the pen stays down; lift
+     the pen and the pen you were using comes straight back. Nothing to switch
+     off, nothing to get stuck in — which is what you want for the ordinary
+     case of rubbing out a word mid-sentence.
+
+     Double-tap the nib and the eraser LATCHES until you double-tap again, for
+     when you are clearing a whole working out and lifting the pen between
+     strokes would keep cancelling it.
+
+     They cannot be confused with each other: one is a single long contact, the
+     other is two short ones. The side button would be better than both, but
+     One UI takes it before Chrome is told, so it cannot be had. */
+  var springErase = { on: false, was: null };
+  function holdEraseFired(){
+    if (cfg.holdEraseMode === "latch"){ togglePenEraser("holding the nib down"); return; }
+    springEraseOn();
+  }
+  function springEraseOn(){
+    if (springErase.on || ink.tool === "eraser") return;
+    springErase.on = true;
+    springErase.was = ink.tool;
+    penSeen.route = "holding the nib down";
+    penSeen.everErased = true;
+    if (typeof paintPenReport === "function") paintPenReport();
+    ink.tool = "eraser";
+    /* the mark made while you held still was not writing: it is taken back out
+       and erasing starts from that same spot, so you never have to lift */
+    var S = ink.surfaces[ink.active];
+    if (S && S.drawing && S.drawing.stroke){
+      var st = S.drawing.stroke;
+      S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
+      S.drawing = { erasing: true, removed: [] };
+      if (st.pts.length >= 3 && S.eraseAt) S.eraseAt(st.pts[0], st.pts[1]);
+      S.redraw();
+    }
+    paintInkTools();
+    hint("Erasing while you hold. Lift the pen and the " +
+         (springErase.was === "pencil" ? "pencil" : "pen") + " comes back.");
+  }
+  function springEraseOff(){
+    if (!springErase.on) return;
+    springErase.on = false;
+    ink.tool = springErase.was || "pen";
+    springErase.was = null;
+    paintInkTools();
+  }
+  /* the pen leaving the glass is what ends it, however it leaves */
+  ["pointerup", "pointercancel", "pointerleave"].forEach(function(evt){
+    document.addEventListener(evt, function(e){
+      if (e.pointerType === "touch") return;
+      springEraseOff();
+    }, true);
   });
 
   /* one way in for every route to the eraser that is a toggle rather than a
@@ -10180,6 +10367,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof paintBarRail === "function") paintBarRail();
     $("immerseOut").hidden = !on;
     if (on) setFocus(true);
+    /* the favourites bar carries this too, and it is the only way back out
+       once every other bar has gone, so it has to show which way it is */
+    if (typeof paintFavBar === "function") paintFavBar();
     setTimeout(redrawAll, 60);
   }
   $("immerseBtn").addEventListener("click", function(){ setImmerse(true); });
@@ -10772,14 +10962,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (fig.getAttribute("data-free") === "1") applyImagePlace(fig);
       var id = fig.getAttribute("data-img");
       if (!id) return;
+      /* claimed before the read, for the same reason as on the live page: a
+         band that grows under you is a band that shoves the page about */
+      fig.textContent = "";
+      var im = reserveBox(fig);
       C.getAsset(id).then(function(a){
         if (!a || !a.blob || !host.contains(fig)) return;
         var url = URL.createObjectURL(a.blob);
         peekUrls[which].push(url);
-        var im = document.createElement("img");
-        im.src = url; im.alt = "";
-        fig.textContent = "";
-        fig.appendChild(im);
+        reserveBox(fig, a.w, a.h, im);
+        im.src = url;
         /* The page has its real height only now the picture is in it, so the
            handwriting canvas over it has to be re-sized and re-drawn — it was
            measured against a page that had a gap where this picture is. */
@@ -11004,12 +11196,31 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var p = $("paper"), band = $("prevPeek");
     requestAnimationFrame(function(){
       if (band){ band.style.height = ""; band.style.overflow = ""; }
-      var pad = prevPad();
-      if (p) p.scrollTop = Math.max(0, pad - pend.keepAt);
-      padWatch.last = pad;
-      padWatch.skip = false;
-      redrawAll();
-      handover.busy = false;
+      if (!p){ handover.busy = false; return; }
+      var tries = 0;
+      /* Going forward you arrive near the TOP of the next page, so the position
+         asked for is a small one and it always takes. Going back you arrive
+         near the FOOT of the page you are returning to, so the position is a
+         big one — and if that page has not reached its full height yet the
+         browser quietly clamps it to whatever currently fits and the page lands
+         too high, then lurches when the rest of it appears. That is why going
+         back jumped and going forward did not.
+         So it is re-applied, but ONLY while the scroller is pinned at its own
+         bottom, which is the signature of the clamp. A scroll you made yourself
+         is never touched. */
+      (function settle(){
+        var pad = prevPad();
+        var want = Math.max(0, pad - pend.keepAt);
+        p.scrollTop = want;
+        padWatch.last = pad;
+        padWatch.skip = false;
+        redrawAll();
+        tries++;
+        var short = p.scrollTop < want - 2 &&
+                    p.scrollTop >= p.scrollHeight - p.clientHeight - 2;
+        if (short && tries < 12){ setTimeout(settle, 50); return; }
+        handover.busy = false;
+      })();
     });
   }
 
@@ -11040,10 +11251,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     padWatch.on = true;
   }
 
+  /* Every one of these measures the page, and a measurement inside a scroll
+     handler forces the browser to lay the page out again before it can answer.
+     Android fires scroll far faster than it paints, so doing that on each event
+     is what the shivering was. Once per frame is all that can ever show. */
+  var scrollTick = 0;
   $("paper").addEventListener("scroll", function(){
-    showPageTag();
-    paintEndKit();
-    pageHandover();
+    if (scrollTick) return;
+    scrollTick = requestAnimationFrame(function(){
+      scrollTick = 0;
+      showPageTag();
+      paintEndKit();
+      pageHandover();
+    });
   }, { passive: true });
 
   $("endInsert").addEventListener("click", function(){
