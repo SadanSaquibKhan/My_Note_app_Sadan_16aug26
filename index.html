@@ -2130,7 +2130,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b29";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b30";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4810,7 +4810,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        only when something scrolls: a short page is at its own end already */
     if (typeof paintEndKit === "function") setTimeout(paintEndKit, 260);
     if (typeof paintPageEnd === "function") paintPageEnd();
+    /* the band is about to be rebuilt for a different page: record the new
+       height without treating it as a shift to compensate for */
+    if (typeof padWatch === "object" && padWatch) padWatch.skip = true;
     if (typeof paintPrevPeek === "function") paintPrevPeek();
+    if (typeof watchPad === "function") watchPad();
     /* a PDF page has no ruled lines under it and no page padding fighting it */
     document.body.classList.toggle("pdfpaper",
       (state.note.html || "").indexOf("data-pdfpage") > -1);
@@ -10517,47 +10521,86 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      nothing appears to move at the moment of the swap. Without that anchor
      the page would jump, because the band above the writing changes height
      from "the previous page" to "the page before that". */
-  var handover = { busy: false };
+  var handover = { busy: false, until: 0 };
   function pageHandover(){
     if (handover.busy || !cfg.pageFlow || !state.note || state.view !== "note") return;
     if (ink.penNear || document.body.classList.contains("drawing")) return;
+    if (Date.now() < (handover.until || 0)) return;
     var p = $("paper");
     if (!p) return;
     var pr = p.getBoundingClientRect();
-    var mid = pr.top + pr.height / 2;
+
+    /* Two different lines, not one.
+       With a single midpoint, swapping forward left the page you just came
+       from sitting as the "previous" page with its foot below that same line
+       — so the backward rule fired at once and swapped straight back, over
+       and over. Taking over forwards needs the new page past 40% of the
+       screen; taking over backwards needs the old one past 60%. Nothing can
+       satisfy both, so it cannot flip. */
+    var fwdLine = pr.top + pr.height * 0.40;
+    var backLine = pr.top + pr.height * 0.60;
 
     var nextEl = $("nextPeek"), prevEl = $("prevPeek");
     var target = null, anchorTop = 0;
 
     if (nextEl && !nextEl.hidden){
       var nb = $("nextPeekPage").getBoundingClientRect();
-      /* its top has passed the middle of the screen: it is the page now */
-      if (nb.top < mid && nb.height > 40){ target = neighbourPage(1); anchorTop = nb.top; }
+      if (nb.top < fwdLine && nb.height > 40){ target = neighbourPage(1); anchorTop = nb.top; }
     }
     if (!target && prevEl && !prevEl.hidden && !prevEl.classList.contains("thin")){
       var pb = $("prevPeekPage").getBoundingClientRect();
-      if (pb.bottom > mid && pb.height > 40){ target = neighbourPage(-1); anchorTop = pb.top; }
+      if (pb.bottom > backLine && pb.height > 40){ target = neighbourPage(-1); anchorTop = pb.top; }
     }
     if (!target) return;
 
     handover.busy = true;
+    handover.until = Date.now() + 700;    /* no second swap straight after */
     var keepAt = anchorTop - pr.top;      /* where that page's top sits now */
     var nbId = state.nbId, id = target.id;
     flush().then(function(){
       go({ nbId: nbId, noteId: id });
-      /* after the swap the same page is the middle one; put its top back
-         exactly where the eye last saw it */
-      var tries = 0;
-      (function settle(){
-        tries++;
+      /* ONE correction, on the next frame, and then nothing.
+         This used to re-assert the scroll six times over four hundred
+         milliseconds, which is why the page shook: each assignment fought the
+         finger that was still scrolling, and the last one landed as a jump.
+         Anything that changes height afterwards — a picture arriving, the ink
+         canvas sizing — is handled by watchPad below, which nudges by the
+         DIFFERENCE and so never argues with you. */
+      requestAnimationFrame(function(){
         var pad = prevPad();
-        var want = Math.max(0, pad - keepAt);
-        p.scrollTop = want;
+        p.scrollTop = Math.max(0, pad - keepAt);
+        padWatch.last = pad;
         redrawAll();
-        if (tries < 6) setTimeout(settle, 70);
-        else setTimeout(function(){ handover.busy = false; }, 120);
-      })();
+        handover.busy = false;
+      });
     }).catch(function(){ handover.busy = false; });
+  }
+
+  /* Keeps what you are looking at still when something above it changes size.
+     Relative, never absolute: it only ever adds the amount the band grew or
+     shrank, so a scroll in progress carries on untouched. */
+  var padWatch = { last: 0, on: false, skip: false };
+  function watchPad(){
+    if (padWatch.on || typeof ResizeObserver !== "function") return;
+    var el = document.getElementById("prevPeek");
+    var p = $("paper");
+    if (!el || !p) return;
+    padWatch.last = prevPad();
+    var ro = new ResizeObserver(function(){
+      var now = prevPad();
+      var d = now - padWatch.last;
+      padWatch.last = now;
+      /* On a deliberate page change the band is replaced wholesale and the
+         scroll is being set on purpose — by restoreScroll, or by the
+         handover's own single correction. Compensating as well would fight
+         them, so the first measurement after either is recorded and skipped. */
+      if (padWatch.skip){ padWatch.skip = false; return; }
+      if (!d || handover.busy || placeRestoring) return;
+      p.scrollTop += d;
+      redrawAll();
+    });
+    ro.observe(el);
+    padWatch.on = true;
   }
 
   $("paper").addEventListener("scroll", function(){
