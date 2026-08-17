@@ -329,34 +329,55 @@
      Not a summary strip: a whole page, the same height as the one you are
      writing on, so scrolling from one to the next shows any proportion of
      each exactly as a continuous notebook does. */
-  .prevpeek{padding:0 clamp(16px,4vw,44px)}
+  /* A previewed page is laid out with exactly the same box as the real one —
+     same width, same padding, same body metrics — so its content sits in the
+     same place and nothing shifts when it becomes the page you are on. */
+  /* zoomed by the same rule as the page, so a previewed page is the same
+     size on screen as the page it previews at any zoom */
+  .prevpeek, .pageend{zoom:var(--z,1)}
+  .prevpeek{padding:0}
   .prevpeek[hidden]{display:none}
   .peekpage{
     position:relative; max-width:var(--page-w); margin:0 auto;
+    padding:0 clamp(16px,4vw,44px) 24px;
     min-height:var(--page-h);
   }
   .peekink{position:absolute; inset:0; width:100%; height:100%; pointer-events:none}
   .prevpeek-body, .nextpeek-body{
-    font-size:16px; line-height:var(--lead); color:var(--ink);
-    padding-top:calc(var(--lead) - 5px);
+    font-size:var(--body-size); line-height:var(--lead); color:var(--ink);
+    padding-top:calc(var(--lead) - 5px); padding-bottom:20vh;
+    min-height:var(--page-h);
   }
-  /* the first page of a notebook has nothing above it, so the marker alone */
-  .prevpeek.thin .peekpage{min-height:0}
-  .prevpeek.thin{padding-top:4px}
-  .pagestart-line{margin:10px 0 0}
-  .pagestart-line span{background:var(--field)}
+  .prevpeek-body figure.imgblock, .nextpeek-body figure.imgblock{
+    margin:var(--lead) auto; position:relative; line-height:0;
+    border:1px solid transparent;
+  }
+  .prevpeek-body figure.imgblock img, .nextpeek-body figure.imgblock img{
+    width:100%; height:auto; display:block; border-radius:3px;
+  }
+  /* the first page of a notebook has nothing above it: band only */
+  .prevpeek.thin .peekpage{min-height:0; padding:0}
+  .prevpeek.thin .prevpeek-body{min-height:0; padding:0}
+  .pagestart-line{margin:0}
 
-  .pageend{margin-top:8px; padding-bottom:24px}
+  /* ---- the join between two pages ----
+     A quiet grey band carrying only the number of the page you are entering,
+     the way Samsung Notes marks it. The old version drew a heavy black rule
+     and spelled out "end of page" and "start of page", which is a lot of
+     furniture to read past every time you scroll. */
+  .pageend{margin:0; padding:0}
   .pageend[hidden]{display:none}
   .pageend-line{
-    position:relative; border-top:2px solid var(--ink);
-    margin:0 0 14px; text-align:center;
+    position:relative; background:var(--slab); border-top:1px solid var(--rule);
+    border-bottom:1px solid var(--rule);
+    margin:0; height:26px; display:flex; align-items:center; justify-content:center;
   }
   .pageend-line span{
-    position:relative; top:-9px; background:var(--field); padding:0 10px;
-    font-family:var(--mono); font-size:9px; letter-spacing:.2em;
-    text-transform:uppercase; color:var(--ink-2);
+    background:transparent; padding:0;
+    font-family:var(--mono); font-size:10px; letter-spacing:.16em;
+    color:var(--ink-2);
   }
+  .pageend.last .pageend-line{background:transparent}
   .nextpeek{padding:0}
   .nextpeek[hidden]{display:none}
   .nextpeek-head{
@@ -1563,16 +1584,18 @@
           <div class="sheet">
             <div id="body" contenteditable="true" spellcheck="true"
                  data-placeholder="Type here, or just start writing with the pen."></div>
-            <!-- Outside #body on purpose: everything inside it is the note's
-                 own HTML and would be saved into the note. -->
-            <div class="pageend" id="pageEnd" hidden>
-              <div class="pageend-line"><span id="pageEndLabel">end of page</span></div>
-              <div class="nextpeek" id="nextPeek" hidden>
-                <div class="nextpeek-head" id="nextPeekHead"></div>
-                <div class="peekpage" id="nextPeekPage">
-                  <div class="nextpeek-body" id="nextPeekBody"></div>
-                  <canvas class="peekink" id="nextPeekInk"></canvas>
-                </div>
+          </div>
+          <!-- Outside .sheet, like the band above, so both previewed pages
+               are zoomed by the same rule and measured the same way. Also
+               outside #body, because everything inside #body is the note's
+               own HTML and would be saved into the note. -->
+          <div class="pageend" id="pageEnd" hidden>
+            <div class="pageend-line"><span id="pageEndLabel">end of page</span></div>
+            <div class="nextpeek" id="nextPeek" hidden>
+              <span class="nextpeek-head" id="nextPeekHead"></span>
+              <div class="peekpage" id="nextPeekPage">
+                <div class="nextpeek-body" id="nextPeekBody"></div>
+                <canvas class="peekink" id="nextPeekInk"></canvas>
               </div>
             </div>
           </div>
@@ -2107,7 +2130,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b28";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b29";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -10308,14 +10331,23 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     Array.prototype.forEach.call(box.querySelectorAll("[contenteditable]"), function(el){
       el.setAttribute("contenteditable", "false");
     });
+    /* Pictures are KEPT and loaded for real. Replacing them with a small
+       label made the preview a different height and a different shape from
+       the page it was previewing, so everything lurched sideways the moment
+       that page took over — which is exactly the weirdness at the join.
+       The figure keeps its data-img and its width; only its id is gone. */
+    Array.prototype.forEach.call(box.querySelectorAll("figure.imgblock"), function(el){
+      el.textContent = "";
+      el.classList.remove("on", "missing");
+      el.style.width = (el.getAttribute("data-pct") || 70) + "%";
+    });
+    /* the rest keep their box so the height still matches, but hold nothing */
     Array.prototype.forEach.call(
-      box.querySelectorAll("figure.imgblock, .inkblock, .filechip, .audioblock, span.math"),
+      box.querySelectorAll(".filechip, .audioblock, span.math"),
       function(el){
         var tag = document.createElement("span");
         tag.className = "peekstub";
-        tag.textContent = el.classList.contains("imgblock") ? "picture"
-                        : el.classList.contains("filechip") ? "attachment"
-                        : el.classList.contains("inkblock") ? "drawing"
+        tag.textContent = el.classList.contains("filechip") ? "attachment"
                         : el.classList.contains("audioblock") ? "recording" : "maths";
         el.parentNode.replaceChild(tag, el);
       });
@@ -10331,7 +10363,39 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      between a stroke's stored position and the screen subtracts this. */
   function prevPad(){
     var el = document.getElementById("prevPeek");
-    return (el && !el.hidden) ? el.offsetHeight : 0;
+    if (!el || el.hidden) return 0;
+    /* getBoundingClientRect, not offsetHeight: the band is zoomed with the
+       page, and only the rect reports the height it actually occupies on
+       screen. offsetHeight would be the unzoomed figure, and the ink would
+       sit wrong by the difference at any zoom but 100%. */
+    var r = el.getBoundingClientRect();
+    return r.height || 0;
+  }
+
+  /* The pictures on a previewed page, loaded for real so the preview is the
+     same shape and height as the page itself. Its own object URLs, revoked
+     when the preview is rebuilt, so nothing leaks. */
+  var peekUrls = { prev: [], next: [] };
+  function hydratePeekImages(which, host){
+    (peekUrls[which] || []).forEach(function(u){ URL.revokeObjectURL(u); });
+    peekUrls[which] = [];
+    var figs = Array.prototype.slice.call(host.querySelectorAll("figure.imgblock"));
+    figs.forEach(function(fig){
+      var id = fig.getAttribute("data-img");
+      if (!id) return;
+      C.getAsset(id).then(function(a){
+        if (!a || !a.blob || !host.contains(fig)) return;
+        var url = URL.createObjectURL(a.blob);
+        peekUrls[which].push(url);
+        var im = document.createElement("img");
+        im.src = url; im.alt = "";
+        fig.textContent = "";
+        fig.appendChild(im);
+        /* the page it belongs to may need re-measuring now the picture has
+           given it its real height */
+        if (typeof redrawAll === "function") setTimeout(redrawAll, 30);
+      }).catch(function(){});
+    });
   }
 
   /* A neighbouring page's handwriting, drawn onto its own canvas.
@@ -10383,8 +10447,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       box.hidden = false;
     } else {
       $("prevPeekBody").innerHTML = previewHtml(prev.html);
-      $("prevPeekLabel").textContent = "start of this page  ·  above is " +
-        ((prev.title || "").trim() || C.displayTitle(prev));
+      hydratePeekImages("prev", $("prevPeekBody"));
+      /* the band carries the number of the page BELOW it — the one you are
+         arriving at — the way a paper notebook numbers what comes next */
+      $("prevPeekLabel").textContent =
+        (state.note.title || "").trim() || C.displayTitle(state.note);
       box.classList.remove("thin");
       box.hidden = false;
       $("prevPeekInk").setAttribute("data-for", prev.id);
@@ -10404,19 +10471,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var next = neighbourPage(1);
     var peek = $("nextPeek");
     if (!next){
-      $("pageEndLabel").textContent = "end of the last page";
+      $("pageEndLabel").textContent = "last page";
+      box.classList.add("last");
       peek.hidden = true;
       return;
     }
-    $("pageEndLabel").textContent = "end of page";
-    $("nextPeekHead").textContent = "next: " +
-      ((next.title || "").trim() || C.displayTitle(next));
+    box.classList.remove("last");
+    /* just the number of the page you are entering, nothing else */
+    $("pageEndLabel").textContent = (next.title || "").trim() || C.displayTitle(next);
+    $("nextPeekHead").textContent = "";
     /* The next page as it really looks, so the join between two pages shows
        both. It is a rendering, not a second editor: ids are stripped so
        nothing in the app can find two of anything, it is not editable, and
        pictures become a marker rather than being loaded — hydrateImages only
        ever looks inside #body, so a live figure here would sit empty. */
     $("nextPeekBody").innerHTML = previewHtml(next.html);
+    hydratePeekImages("next", $("nextPeekBody"));
     peek.hidden = false;
     $("nextPeekInk").setAttribute("data-for", next.id);
     paintPeekInk("nextPeekInk", next.id);
