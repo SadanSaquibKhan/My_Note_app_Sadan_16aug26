@@ -2317,7 +2317,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b40";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b41";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -11248,7 +11248,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
             var y = Number(fig.getAttribute("data-y"));
             if (isFinite(y)) depth = Math.max(depth, y + (fig.offsetHeight || 0));
           });
-        body.style.minHeight = Math.max(depth + 400, 400) + "px";
+        pageInkDepth[noteId] = depth;
+        body.style.minHeight = Math.round(pageHeightFor(depth)) + "px";
         host.style.minHeight = "0px";          /* size to the body, as the live sheet does */
       }
       var c2 = fit();                          /* re-measure against the grown band */
@@ -11281,6 +11282,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       box.hidden = false;
     } else {
       $("prevPeekBody").innerHTML = previewHtml(prev.html);
+      /* its true height at once, if we have seen this page before; paintPeekInk
+         refines it a moment later against the real strokes */
+      var pd = pageInkDepth[prev.id];
+      $("prevPeekBody").style.minHeight =
+        (pd != null ? Math.round(pageHeightFor(pd)) : Math.round(pageFloorPx())) + "px";
+      $("prevPeekPage").style.minHeight = "0px";
       hydratePeekImages("prev", $("prevPeekBody"));
       /* the band carries the number of the page BELOW it — the one you are
          arriving at — the way a paper notebook numbers what comes next */
@@ -11320,6 +11327,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        pictures become a marker rather than being loaded — hydrateImages only
        ever looks inside #body, so a live figure here would sit empty. */
     $("nextPeekBody").innerHTML = previewHtml(next.html);
+    var nd = pageInkDepth[next.id];
+    $("nextPeekBody").style.minHeight =
+      (nd != null ? Math.round(pageHeightFor(nd)) : Math.round(pageFloorPx())) + "px";
+    $("nextPeekPage").style.minHeight = "0px";
     hydratePeekImages("next", $("nextPeekBody"));
     peek.hidden = false;
     $("nextPeekInk").setAttribute("data-for", next.id);
@@ -11928,6 +11939,28 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      Previously the scroll height came from the typed text alone, so once you
      wrote past the last paragraph there was nowhere left to scroll and no room
      to carry on. */
+  /* How tall a page is, in one place so the live page and both preview bands
+     can never disagree. A page is at least a full sheet — taller than A4, the
+     width of A4 — and grows past that to hold whatever handwriting reaches. An
+     empty new page is therefore a proper page, not the little 400px stub it
+     used to collapse to. */
+  var _pageFloor = 0;
+  function pageFloorPx(){
+    if (!_pageFloor){
+      var v = parseFloat(getComputedStyle(document.documentElement)
+                .getPropertyValue("--page-h")) || 1500;
+      _pageFloor = v;
+    }
+    return _pageFloor;
+  }
+  function pageHeightFor(depth){ return Math.max(depth + 400, pageFloorPx()); }
+
+  /* The depth of each page's ink, remembered as it is seen, so a page arriving
+     into a band can be given its true height at once instead of springing to
+     it a frame later when its strokes finish loading — which is the small
+     glitch that was left at the join. */
+  var pageInkDepth = {};
+
   function growForInk(){
     var depth = C.inkDepth(noteSurface.strokes);
     /* A dragged picture is out of the text flow, so it adds nothing to the
@@ -11939,8 +11972,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var y = Number(fig.getAttribute("data-y"));
       if (isFinite(y)) depth = Math.max(depth, y + (fig.offsetHeight || 0));
     });
-    var need = Math.max(depth + 400, 400);
-    b.style.minHeight = Math.round(need) + "px";
+    if (state.noteId) pageInkDepth[state.noteId] = depth;
+    b.style.minHeight = Math.round(pageHeightFor(depth)) + "px";
   }
 
   /* ---- 5. runaway blank lines ----
