@@ -593,7 +593,11 @@
   #body figure.imgblock .imggrip-ne{right:-11px; top:-11px; cursor:nesw-resize}
   #body figure.imgblock .imggrip-sw{left:-11px; bottom:-11px; cursor:nesw-resize}
   #body figure.imgblock .imggrip-se{right:-11px; bottom:-11px; cursor:nwse-resize}
-  #body figure.imgblock.on{touch-action:none}
+  /* The whole picture, not just its grips, must swallow the gesture: dragging
+     a corner was resizing the picture AND scrolling the page at the same time
+     because the scroller still saw the drag. */
+  #body figure.imgblock{touch-action:none}
+  #body figure.imgblock.on{touch-action:none; user-select:none; -webkit-user-select:none}
   /* the line showing where a dragged picture will land */
   .dropmark{
     position:fixed; height:0; border-top:3px solid var(--live);
@@ -2103,7 +2107,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b27";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b28";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -2566,23 +2570,93 @@ var MarginCore = (function(){
      Hold still at the end of a stroke and a rough shape snaps to a clean one.
      Deliberately conservative: a wrong guess mid-derivation is worse than
      no guess at all. */
+  /* ---------- reading a drawn shape ----------
+     Judged by how many corners the outline has, and then by how much of its
+     bounding box it encloses. Corners say how many sides; the area ratio says
+     which shape with that many sides it is — a square fills its box, a
+     diamond fills half of it, and both have four corners.
+     Two earlier attempts failed on real drawing. Measuring roundness alone
+     called a square a circle, because a square's radius from its centre only
+     varies by about a sixth. Counting samples near the edge of the box called
+     a circle a square, because three quarters of a circle's samples are.
+     Everything here works on a resampled outline, so it does not care how
+     fast you drew, how many points the pen reported, or whether you quite
+     closed the shape. */
+
+  /* even spacing along the stroke, so turning angles mean the same thing
+     everywhere regardless of how the pen sampled it */
+  function resampleClosed(pts, n){
+    var P = [], i;
+    for (i = 0; i < pts.length; i += 3) P.push([pts[i], pts[i+1]]);
+    if (P.length < 3) return P;
+    var seg = [], total = 0;
+    for (i = 1; i < P.length; i++){
+      var d = Math.hypot(P[i][0]-P[i-1][0], P[i][1]-P[i-1][1]);
+      seg.push(d); total += d;
+    }
+    if (total <= 0) return P;
+    var step = total / n, out = [P[0]], acc = 0, cur = 0;
+    i = 1;
+    while (out.length < n && i < P.length){
+      var d2 = seg[i-1];
+      if (cur + d2 >= acc + step){
+        var t = (acc + step - cur) / d2;
+        out.push([P[i-1][0] + (P[i][0]-P[i-1][0])*t,
+                  P[i-1][1] + (P[i][1]-P[i-1][1])*t]);
+        acc += step;
+      } else { cur += d2; i++; }
+    }
+    return out;
+  }
+
+  /* the sharp turns, with the wobble of a drawn line ignored */
+  function shapeCorners(P, thresh){
+    var n = P.length, k = Math.max(2, Math.round(n / 16)), i, j;
+    var ang = new Array(n);
+    for (i = 0; i < n; i++){
+      var a = P[(i - k + n) % n], b = P[i], c = P[(i + k) % n];
+      var d = Math.atan2(c[1]-b[1], c[0]-b[0]) - Math.atan2(b[1]-a[1], b[0]-a[0]);
+      while (d > Math.PI) d -= 2*Math.PI;
+      while (d < -Math.PI) d += 2*Math.PI;
+      ang[i] = Math.abs(d);
+    }
+    var picked = [];
+    for (i = 0; i < n; i++){
+      if (ang[i] < thresh) continue;
+      var best = true;
+      for (j = -k; j <= k; j++){ if (ang[(i + j + n) % n] > ang[i]){ best = false; break; } }
+      if (!best) continue;
+      if (picked.length){
+        var gap = Math.abs(i - picked[picked.length-1]);
+        if (Math.min(gap, n - gap) < k) continue;
+      }
+      picked.push(i);
+    }
+    if (picked.length > 1){
+      var f = picked[0], l = picked[picked.length-1];
+      var g2 = Math.abs(l - f);
+      if (Math.min(g2, n - g2) < k) picked.pop();   /* the same corner, wrapped */
+    }
+    return picked.map(function(ix){ return P[ix]; });
+  }
+
   function detectShape(pts){
-    var n = pts.length / 3;
-    if (n < 6) return null;
-    var x0 = pts[0], y0 = pts[1], x1 = pts[(n-1)*3], y1 = pts[(n-1)*3+1];
+    var n0 = pts.length / 3;
+    if (n0 < 6) return null;
+    var x0 = pts[0], y0 = pts[1], x1 = pts[(n0-1)*3], y1 = pts[(n0-1)*3+1];
     var span = Math.hypot(x1 - x0, y1 - y0);
-    var path = 0;
-    for (var i = 0; i + 5 < pts.length; i += 3){
+    var path = 0, i;
+    for (i = 0; i + 5 < pts.length; i += 3){
       path += Math.hypot(pts[i+3] - pts[i], pts[i+4] - pts[i+1]);
     }
     if (path < 25) return null;
     var b = inkBounds([{pts:pts}]);
     var w = b.maxX - b.minX, h = b.maxY - b.minY;
-    var closed = span < path * 0.18;
 
-    if (!closed){
+    /* an open stroke can only be a straight line */
+    if (span > path * 0.28){
       var maxDev = 0;
-      for (var k = 0; k < n; k++){
+      for (var k = 0; k < n0; k++){
         maxDev = Math.max(maxDev, distToSeg(pts[k*3], pts[k*3+1], x0, y0, x1, y1));
       }
       if (maxDev < Math.max(6, span * 0.055)){
@@ -2591,80 +2665,41 @@ var MarginCore = (function(){
       return null;
     }
 
-    var cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
-    var rs = [];
-    for (var m = 0; m < n; m++) rs.push(Math.hypot(pts[m*3] - cx, pts[m*3+1] - cy));
-    var mean = rs.reduce(function(a,c){ return a + c; }, 0) / rs.length;
-    var dev = Math.sqrt(rs.reduce(function(a,c){ return a + (c-mean)*(c-mean); }, 0) / rs.length);
-
-    /* How much of its bounding box does the outline actually enclose?
-       This is what tells the three closed shapes apart, and it does not care
-       where the stroke started or which way round it went:
-         a rectangle fills its box   ~ 1.00
-         an ellipse fills pi/4 of it ~ 0.79
-         a triangle fills half of it ~ 0.50
-       Two earlier attempts failed here. Roundness alone called a square a
-       circle, because a square's radius from its centre varies by only about
-       a sixth. Counting samples that sit near an edge of the box called a
-       circle a square, because three quarters of a circle's samples do. */
+    var P = resampleClosed(pts, 64);
+    if (P.length < 8) return null;
     var area2 = 0;
-    for (var s1 = 0; s1 < n; s1++){
-      var s2 = (s1 + 1) % n;
-      area2 += pts[s1*3] * pts[s2*3+1] - pts[s2*3] * pts[s1*3+1];
+    for (i = 0; i < P.length; i++){
+      var j = (i + 1) % P.length;
+      area2 += P[i][0]*P[j][1] - P[j][0]*P[i][1];
     }
     var fill = Math.abs(area2 / 2) / Math.max(1, w * h);
+    var cs = shapeCorners(P, 0.72);
+    var c = cs.length;
 
-    if (fill > 0.86 && w > 15 && h > 15){
-      return { kind:"rect", pts:[b.minX,b.minY,0.6, b.maxX,b.minY,0.6, b.maxX,b.maxY,0.6,
-                                 b.minX,b.maxY,0.6, b.minX,b.minY,0.6] };
+    if (c === 3 && fill > 0.34 && fill < 0.64){
+      return { kind:"triangle",
+               pts:[cs[0][0],cs[0][1],0.6, cs[1][0],cs[1][1],0.6,
+                    cs[2][0],cs[2][1],0.6, cs[0][0],cs[0][1],0.6] };
     }
-
-    if (fill > 0.66 && fill <= 0.86 && mean > 8 &&
-        dev / mean < 0.22 && Math.min(w,h) / Math.max(w,h) > 0.45){
-      var out = [];
+    if (c === 4 && fill >= 0.78 && w > 15 && h > 15){
+      return { kind:"rect", pts:[b.minX,b.minY,0.6, b.maxX,b.minY,0.6,
+                                 b.maxX,b.maxY,0.6, b.minX,b.maxY,0.6,
+                                 b.minX,b.minY,0.6] };
+    }
+    if (c === 4 && fill > 0.34 && fill < 0.64){
+      /* a diamond is drawn where you drew it, not squared to its box */
+      return { kind:"rhombus",
+               pts:[cs[0][0],cs[0][1],0.6, cs[1][0],cs[1][1],0.6,
+                    cs[2][0],cs[2][1],0.6, cs[3][0],cs[3][1],0.6,
+                    cs[0][0],cs[0][1],0.6] };
+    }
+    if (c <= 2 && fill > 0.62 && fill < 0.92){
+      var cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2, out = [];
       for (var a2 = 0; a2 <= 48; a2++){
         var th = a2 / 48 * Math.PI * 2;
         out.push(cx + (w/2) * Math.cos(th), cy + (h/2) * Math.sin(th), 0.6);
       }
       return { kind:"circle", pts: out };
-    }
-
-    /* Three corners. Take the point furthest from the centre, then the point
-       furthest from that one, then the point furthest from the line between
-       them: for a triangle those are its vertices, whichever side you started
-       drawing from and whichever way round you went. It is only a triangle if
-       every sample then sits close to the path joining them. */
-    var far = 0, iA = 0;
-    for (var t1 = 0; t1 < n; t1++){
-      var d1 = Math.hypot(pts[t1*3] - cx, pts[t1*3+1] - cy);
-      if (d1 > far){ far = d1; iA = t1; }
-    }
-    var ax = pts[iA*3], ay = pts[iA*3+1];
-    var far2 = 0, iB = 0;
-    for (var t2 = 0; t2 < n; t2++){
-      var d2 = Math.hypot(pts[t2*3] - ax, pts[t2*3+1] - ay);
-      if (d2 > far2){ far2 = d2; iB = t2; }
-    }
-    var bx = pts[iB*3], by = pts[iB*3+1];
-    var far3 = 0, iC = 0;
-    for (var t3 = 0; t3 < n; t3++){
-      var d3 = distToSeg(pts[t3*3], pts[t3*3+1], ax, ay, bx, by);
-      if (d3 > far3){ far3 = d3; iC = t3; }
-    }
-    var ccx = pts[iC*3], ccy = pts[iC*3+1];
-    if (far2 > 20 && far3 > 12 && fill > 0.3 && fill < 0.68){
-      var tol = Math.max(7, Math.max(w, h) * 0.11);
-      var off = 0;
-      for (var t4 = 0; t4 < n; t4++){
-        var qx = pts[t4*3], qy = pts[t4*3+1];
-        var near = Math.min(distToSeg(qx, qy, ax, ay, bx, by),
-                            distToSeg(qx, qy, bx, by, ccx, ccy),
-                            distToSeg(qx, qy, ccx, ccy, ax, ay));
-        if (near > tol) off++;
-      }
-      if (off / n < 0.12){
-        return { kind:"triangle", pts:[ax,ay,0.6, bx,by,0.6, ccx,ccy,0.6, ax,ay,0.6] };
-      }
     }
     return null;
   }
@@ -6179,7 +6214,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       paintInkTools();
     });
   });
-  $("eraseMode").addEventListener("change", function(){ ink.eraseMode = this.value; });
+  $("eraseMode").addEventListener("change", function(){
+    ink.eraseMode = this.value;
+    C.setMeta("eraseMode", this.value);   /* remembered between sessions */
+  });
 
   /* ---- lasso shape: draw around it, or drag a box round it ----
      Drawing around a thing is right for a diagram tucked among other
@@ -7372,14 +7410,46 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       });
       wrow.appendChild(b);
     });
-    if (tool !== "eraser" && tool !== "lasso"){ m.appendChild(row); m.appendChild(wrow); }
-    else {
+    if (tool === "eraser"){
+      /* what the eraser lifts, right where you reach for the eraser */
+      var modes = [["all", "Whole strokes"],
+                   ["marker", "Only highlighter"],
+                   ["area", "Wipe an area"]];
+      var mrow = document.createElement("div");
+      mrow.className = "swatchrow";
+      mrow.style.flexDirection = "column";
+      mrow.style.alignItems = "stretch";
+      modes.forEach(function(md){
+        var b2 = document.createElement("button");
+        b2.type = "button"; b2.className = "btn";
+        b2.style.minHeight = "38px";
+        b2.style.fontSize = "11px";
+        b2.textContent = md[1];
+        b2.setAttribute("aria-pressed", ink.eraseMode === md[0] ? "true" : "false");
+        if (ink.eraseMode === md[0]){
+          b2.style.background = "var(--ink)"; b2.style.color = "var(--panel)";
+        }
+        b2.addEventListener("click", function(){
+          ink.eraseMode = md[0];
+          if ($("eraseMode")) $("eraseMode").value = md[0];
+          C.setMeta("eraseMode", md[0]);
+          paintInkTools();
+          openFavPop(btn, "eraser");
+        });
+        mrow.appendChild(b2);
+      });
+      m.appendChild(mrow);
+      var pe = document.createElement("p");
+      pe.className = "hint"; pe.style.margin = "8px 0 0";
+      pe.textContent = "Size is in Settings → Pen and eraser.";
+      m.appendChild(pe);
+    } else if (tool !== "lasso"){
+      m.appendChild(row); m.appendChild(wrow);
+    } else {
       var p = document.createElement("p");
       p.className = "hint";
       p.style.margin = "0";
-      p.textContent = tool === "eraser"
-        ? "The eraser uses the size set in the ink bar."
-        : "Lasso: use the Box / Free button in the ink bar.";
+      p.textContent = "Lasso: use the Box / Free button in the ink bar.";
       m.appendChild(p);
     }
     var r = btn.getBoundingClientRect();
@@ -7921,8 +7991,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return e.button === 5 || e.button === 2 || e.button === 1;
   }
   function applyPenButton(e){
-    if (e.pointerType !== "pen" && e.pointerType !== "eraser") return;
+    /* Not restricted to pointerType "pen" any more. The button demonstrably
+       reaches other web apps on this tablet, which means Chrome does deliver
+       it — so the likeliest reason it was missed here is that Samsung reports
+       the pressed state on a pointer whose type is something else. Any event
+       carrying a barrel or eraser bit counts, as long as a pen was the last
+       thing to touch the screen, which keeps a real mouse out of it. */
+    var isPen = (e.pointerType === "pen" || e.pointerType === "eraser");
+    var penJustHere = isPen || (Date.now() - (ink.lastPenAt || 0) < 2500);
+    if (!penJustHere) return;
     var down = eraserButtonDown(e);
+    if (!isPen && !down) return;      /* an ordinary mouse move, not the pen */
     penReport(e, down);
     if (down && !btn.held){
       btn.held = true;
@@ -7953,10 +8032,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      press while the pen hovers over a toolbar, or over the gap beside the
      page, never reaches the scroller's handlers — and that is exactly when
      people press it, before bringing the nib down. */
-  ["pointerdown", "pointermove", "pointerup"].forEach(function(evt){
+  ["pointerdown", "pointermove", "pointerup", "pointerenter", "pointerover"].forEach(function(evt){
     document.addEventListener(evt, function(e){
-      if (e.pointerType !== "pen" && e.pointerType !== "eraser") return;
       applyPenButton(e);
+      penSaw(e);
     }, true);
   });
   /* And the last route it can take. Some builds deliver the barrel press as a
@@ -8239,7 +8318,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         var rr = sel.getRangeAt(0); rr.collapse(false);
         rr.insertNode(tail); rr.insertNode(fig);
       } else { $("body").appendChild(fig); $("body").appendChild(tail); }
-      return hydrateImages().then(function(){ markDirty(); return flush(); });
+      return hydrateImages().then(function(){
+        markDirty();
+        /* Putting a picture in is not a request to type. The file picker
+           hands focus back to the page, and a focused editable page is what
+           raises the keyboard — so unless typing was already what you were
+           doing, it is put back down again. */
+        if (ink.mode !== "type" && cfg.tapToType === false){
+          setTypingEnabled(false);
+          if (document.activeElement === $("body")) $("body").blur();
+        }
+        return flush();
+      });
     }).catch(function(e){ say(e.message || String(e)); });
   }
 
@@ -8627,6 +8717,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var dx = e.clientX - imgAct.x0, dy = e.clientY - imgAct.y0;
     if (!imgAct.moved && Math.abs(dx) + Math.abs(dy) < 8) return;
     imgAct.moved = true;
+    /* stop the page scrolling underneath while the picture is being handled */
+    if (e.cancelable) e.preventDefault();
     clearTimeout(imgHoldTimer);          /* a drag is not a long press */
     if (imgAct.grip){
       /* the left-hand grips grow the picture when dragged outward, so the
@@ -11632,7 +11724,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("pressBox").hidden = !$("pressBox").hidden;
     lastPressures = [];
     paintPressure();
-    penSeen = {};
+    penSeen = {}; penCombos = {};
     paintPenReport();
   });
 
@@ -11645,6 +11737,21 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      screen off memo" has claimed the button, the browser is never told at
      all, and no amount of code here can help. */
   var penSeen = {};
+  /* Every distinct combination the pen has produced, kept as a set. If the
+     button still does nothing, this is the list that says why — and it is the
+     one thing I cannot see from here. */
+  var penCombos = {};
+  function penSaw(e){
+    if (!$("pressBox") || $("pressBox").hidden) return;
+    if (e.pointerType !== "pen" && e.pointerType !== "eraser" &&
+        !(Date.now() - (ink.lastPenAt || 0) < 2500)) return;
+    var key = (e.pointerType || "?") + " b=" + (e.button === undefined ? "?" : e.button) +
+              " bs=" + (e.buttons === undefined ? "?" : e.buttons);
+    if (!penCombos[key]){
+      penCombos[key] = true;
+      paintPenReport();
+    }
+  }
   function penReport(e, erasing){
     if (!$("pressBox") || $("pressBox").hidden) return;
     penSeen.type = e.pointerType;
@@ -11657,8 +11764,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function paintPenReport(){
     var el = $("penBtnOut");
     if (!el) return;
+    el.style.whiteSpace = "pre-line";
     if (!penSeen.type){
-      el.textContent = "hover or touch the pen here, then press its side button…";
+      el.textContent = "hover or touch the pen here, then press its side button…" +
+        "\nEverything the pen has sent:  " +
+        (Object.keys(penCombos).join("   |   ") || "nothing yet");
       el.classList.remove("bad");
       return;
     }
@@ -11675,8 +11785,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       (penSeen.everErased
         ? " — the side button IS reaching Margin" +
           (penSeen.route ? " (as " + penSeen.route + ")" : "") + " and switches to erase."
-        : " — no side-button press seen yet. If pressing it changes nothing here, " +
-          "Android has taken the button: turn off Air Actions / screen-off memo for the S Pen.");
+        : " — no side-button press seen yet.") +
+      "\nEverything the pen has sent:  " +
+      (Object.keys(penCombos).join("   |   ") || "nothing yet");
     el.classList.toggle("bad", !penSeen.everErased);
   }
 
@@ -11959,6 +12070,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     C.getMeta("recentSearch", []).then(function(r){ state.recentSearch = r || []; });
     C.getMeta("toolMem", null).then(function(m){ if (m) { toolMem = m; restoreTool(ink.tool); paintInkTools(); } });
     C.getMeta("inkClip", []).then(function(v){ inkClip = Array.isArray(v) ? v : []; });
+    C.getMeta("eraseMode", "all").then(function(v){
+      ink.eraseMode = v || "all";
+      if ($("eraseMode")) $("eraseMode").value = ink.eraseMode;
+    });
     C.getMeta("lassoShape", "free").then(function(v){
       ink.lassoShape = (v === "rect") ? "rect" : "free";
       if (typeof paintLassoShape === "function") paintLassoShape();
