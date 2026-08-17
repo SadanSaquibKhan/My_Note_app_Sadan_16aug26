@@ -302,24 +302,34 @@
      every template below: the `background` shorthand silently resets it to
      `scroll`, which pinned the lines to the window so they sat still while
      the text and handwriting scrolled over them. */
-  .paper{--rule-gap:calc(var(--lead) * var(--z, 1))}
-  .paper.tpl-blank{background:var(--field)}
-  .paper.tpl-lined{background:linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% var(--rule-gap), var(--field)}
-  .paper.tpl-grid{background:
-      linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% calc(26px * var(--z,1)),
-      linear-gradient(90deg, var(--paper-rule) 1px, transparent 1px) 0 0/calc(26px * var(--z,1)) 100%, var(--field)}
-  .paper.tpl-dot{background:radial-gradient(var(--paper-rule) 1.2px, transparent 1.2px) 0 0/calc(24px * var(--z,1)) calc(24px * var(--z,1)), var(--field)}
-  .paper.tpl-graph{background:
-      linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% calc(12px * var(--z,1)),
-      linear-gradient(90deg, var(--paper-rule) 1px, transparent 1px) 0 0/calc(12px * var(--z,1)) 100%,
-      linear-gradient(var(--slab) 1px, transparent 1px) 0 0/100% calc(60px * var(--z,1)),
-      linear-gradient(90deg, var(--slab) 1px, transparent 1px) 0 0/calc(60px * var(--z,1)) 100%, var(--field)}
-  .paper.tpl-iso{background:
-      repeating-linear-gradient(30deg, var(--paper-rule) 0 1px, transparent 1px calc(26px * var(--z,1))),
-      repeating-linear-gradient(-30deg, var(--paper-rule) 0 1px, transparent 1px calc(26px * var(--z,1))), var(--field)}
-  .paper.tpl-cornell{background:linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% var(--rule-gap), var(--field)}
-  /* stated last so it survives every shorthand above */
-  .paper[class*="tpl-"]{background-attachment:local}
+  /* ---- the page is a page ----
+     The ruling used to be painted on the scroller, so it ran the full width
+     of the window and the "page" had no edges. It is painted on the sheet
+     itself now — A4 wide and longer than A4 down — with the area around it a
+     plainer shade, so a page reads as a sheet of paper the way a long page in
+     Samsung Notes does. The previewed pages above and below get exactly the
+     same treatment, so a run of pages looks like one continuous notebook.
+     Painting it on the sheet also means it simply moves with the writing:
+     no background-attachment to get wrong. */
+  .paper{--rule-gap:var(--lead); background:var(--ground)}
+  .sheet, .peekpage{background:var(--field); box-shadow:0 0 0 1px var(--rule)}
+  .tpl-blank .sheet, .tpl-blank .peekpage{background:var(--field)}
+  .tpl-lined .sheet, .tpl-lined .peekpage,
+  .tpl-cornell .sheet, .tpl-cornell .peekpage{
+    background:linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% var(--rule-gap), var(--field)}
+  .tpl-grid .sheet, .tpl-grid .peekpage{background:
+      linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% 26px,
+      linear-gradient(90deg, var(--paper-rule) 1px, transparent 1px) 0 0/26px 100%, var(--field)}
+  .tpl-dot .sheet, .tpl-dot .peekpage{
+    background:radial-gradient(var(--paper-rule) 1.2px, transparent 1.2px) 0 0/24px 24px, var(--field)}
+  .tpl-graph .sheet, .tpl-graph .peekpage{background:
+      linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% 12px,
+      linear-gradient(90deg, var(--paper-rule) 1px, transparent 1px) 0 0/12px 100%,
+      linear-gradient(var(--slab) 1px, transparent 1px) 0 0/100% 60px,
+      linear-gradient(90deg, var(--slab) 1px, transparent 1px) 0 0/60px 100%, var(--field)}
+  .tpl-iso .sheet, .tpl-iso .peekpage{background:
+      repeating-linear-gradient(30deg, var(--paper-rule) 0 1px, transparent 1px 26px),
+      repeating-linear-gradient(-30deg, var(--paper-rule) 0 1px, transparent 1px 26px), var(--field)}
   /* ---- where one page stops and the next begins ----
      A page used to just run out of scroll with nothing to mark it, so there
      was no way to tell "the end of this page" from "more below". The rule is
@@ -536,6 +546,28 @@
   .favbar .favnib{display:block; width:22px; height:5px; border-radius:3px; margin:0 auto}
   .favbar button[aria-pressed="true"] .favnib{box-shadow:0 0 0 2px var(--panel)}
 
+  /* Shown beside the fingers while pinching, and for a moment after, so
+     getting back to 100% or out to the whole page does not mean reaching for
+     the toolbar with the other hand. */
+  .zoompop{
+    position:fixed; z-index:79; display:flex; align-items:center; gap:6px;
+    background:var(--panel); border:1px solid var(--ink); border-radius:999px;
+    padding:5px 6px 5px 12px; box-shadow:0 10px 30px var(--shadow);
+    opacity:0; transition:opacity .14s ease;
+  }
+  .zoompop.on{opacity:1}
+  .zoompop[hidden]{display:none}
+  .zoompop .zoomnow{
+    font-family:var(--mono); font-size:11px; letter-spacing:.08em; color:var(--ink-2);
+    min-width:42px; text-align:center;
+  }
+  .zoompop button{
+    min-height:36px; padding:0 12px; border-radius:999px;
+    background:transparent; border:1px solid var(--rule); color:var(--ink);
+    font-family:var(--mono); font-size:11px; letter-spacing:.08em;
+  }
+  .zoompop button:hover{border-color:var(--live); color:var(--live)}
+
   /* what the pen is hovering over, explained */
   .pentip{
     position:fixed; z-index:82; max-width:min(300px, 80vw);
@@ -554,7 +586,12 @@
   }
   .favbar button[aria-pressed="true"]{background:var(--ink); color:var(--panel); border-color:var(--ink)}
   .favgrip{cursor:grab; color:var(--ink-2); letter-spacing:-2px; min-height:26px !important}
-  .favmini, .favedit{min-height:28px !important; font-size:13px; color:var(--ink-2)}
+  /* the bar's own controls, set apart from the tools by a rule under them */
+  .favmini, .favedit{
+    min-height:30px !important; min-width:42px; font-size:14px;
+    color:var(--ink-2); border-style:dashed;
+  }
+  .favedit{margin-bottom:4px; border-bottom:1px solid var(--rule)}
   /* what is left when the bar is minimised: one dot you can still drag */
   .favdot{
     position:fixed; z-index:76; width:44px; height:44px; padding:0; border-radius:50%;
@@ -2097,6 +2134,11 @@
 <div class="dropmark" id="dropMark" hidden></div>
 <div class="pagetag" id="pageTag" hidden></div>
 <div class="pentip" id="penTip" hidden></div>
+<div class="zoompop" id="zoomPop" hidden>
+  <span class="zoomnow" id="zoomPopNow">100%</span>
+  <button type="button" id="zoomPop100" data-help="Puts the zoom back to 100%.">100%</button>
+  <button type="button" id="zoomPopFit" data-help="Zooms out as far as the settings allow, to see the whole page.">Fit</button>
+</div>
 <div class="endkit" id="endKit" hidden>
   <button type="button" id="endInsert" title="Put a new page after this one">&#10010; page</button>
   <button type="button" id="endNext" title="Go to the next page">next &#8595;</button>
@@ -2134,7 +2176,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b31";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b32";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -6092,6 +6134,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
             /* a pinch that actually changed the zoom should not also throw
                the page across the screen when the fingers come off */
             if (state.zoom !== before) gest.base.zoomed = true;
+            /* the way back to 100%, right where the fingers are */
+            if (typeof showZoomPop === "function") showZoomPop(cx, cy);
           }
           trackVel(gest.base.v, cx, cy);
           gest.base.cx = cx; gest.base.cy = cy;
@@ -6355,6 +6399,46 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("zoomIn").disabled = z >= zoomCeil() - 0.001;
     setTimeout(redrawAll, 0);
   }
+  /* ---- the zoom control that comes to your fingers ----
+     Placed at the pinch, kept clear of the screen edges, and left up for a
+     moment afterwards so it can be tapped. */
+  var zoomPopTimer = null;
+  function showZoomPop(x, y){
+    var el = $("zoomPop");
+    if (!el) return;
+    $("zoomPopNow").textContent = Math.round((state.zoom || 1) * 100) + "%";
+    el.hidden = false;
+    var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+    var w = el.offsetWidth || 190, h = el.offsetHeight || 46;
+    el.style.left = Math.max(8, Math.min(x - w / 2, vw - w - 8)) + "px";
+    /* above the fingers, so a hand does not cover it */
+    el.style.top = Math.max(8, Math.min(y - h - 28, vh - h - 8)) + "px";
+    el.classList.add("on");
+    clearTimeout(zoomPopTimer);
+    zoomPopTimer = setTimeout(hideZoomPop, 2200);
+  }
+  function hideZoomPop(){
+    var el = $("zoomPop");
+    if (!el) return;
+    el.classList.remove("on");
+    setTimeout(function(){ if (!el.classList.contains("on")) el.hidden = true; }, 200);
+  }
+  function keepZoomPop(){
+    clearTimeout(zoomPopTimer);
+    zoomPopTimer = setTimeout(hideZoomPop, 2200);
+  }
+  $("zoomPop").addEventListener("pointerdown", function(e){ e.stopPropagation(); keepZoomPop(); }, true);
+  $("zoomPop100").addEventListener("click", function(){
+    applyZoom(1); C.setMeta("zoom", 1); saveNoteZoom();
+    $("zoomPopNow").textContent = "100%";
+    keepZoomPop();
+  });
+  $("zoomPopFit").addEventListener("click", function(){
+    applyZoom(zoomFloor()); C.setMeta("zoom", state.zoom); saveNoteZoom();
+    $("zoomPopNow").textContent = Math.round(state.zoom * 100) + "%";
+    keepZoomPop();
+  });
+
   function stepZoom(dir){
     var cur = state.zoom, next = null;
     var lo = zoomFloor(), hi = zoomCeil();
@@ -6370,8 +6454,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (next == null) return;
     applyZoom(next); C.setMeta("zoom", state.zoom);
   }
-  $("zoomIn").addEventListener("click", function(){ stepZoom(1); setTimeout(saveNoteZoom, 10); });
-  $("zoomOut").addEventListener("click", function(){ stepZoom(-1); setTimeout(saveNoteZoom, 10); });
+  function zoomBtnPop(btn){
+    var r = btn.getBoundingClientRect();
+    if (typeof showZoomPop === "function") showZoomPop(r.left + r.width / 2, r.bottom + 60);
+  }
+  $("zoomIn").addEventListener("click", function(){
+    stepZoom(1); setTimeout(saveNoteZoom, 10); zoomBtnPop(this);
+  });
+  $("zoomOut").addEventListener("click", function(){
+    stepZoom(-1); setTimeout(saveNoteZoom, 10); zoomBtnPop(this);
+  });
   $("zoomLabel").addEventListener("click", function(){ applyZoom(1); C.setMeta("zoom", 1); });
   $("drawBtn").addEventListener("click", function(){ setMode(ink.mode === "write" ? "auto" : "write"); });
 
@@ -7314,8 +7406,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       dot.style.left = Math.max(4, Math.min(p.x, (window.innerWidth || 1024) - 52)) + "px";
       dot.style.top = Math.max(4, Math.min(p.y, (window.innerHeight || 768) - 52)) + "px";
     }
+    /* The bar's OWN buttons are not tools and must survive the rebuild.
+       Removing everything but the grip took the minimise and edit buttons out
+       the moment the bar was built, which is why there was nothing to tap. */
+    var KEEP = { favGrip: 1, favMini: 1, favEdit: 1 };
     Array.prototype.slice.call(host.querySelectorAll("button")).forEach(function(b){
-      if (b.id !== "favGrip") b.remove();
+      if (!KEEP[b.id]) b.remove();
     });
     if (host.hidden) return;
     (cfg.favTools || []).forEach(function(key){
