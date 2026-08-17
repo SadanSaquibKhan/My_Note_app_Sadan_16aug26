@@ -2234,7 +2234,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b34";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b35";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4894,10 +4894,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (prac.open) closePractice();
       /* If this is the page the notebook was left on, put the scroll back
          where it was. Any other page opens at the top, as you would expect. */
-      if (state.nbId){
+      /* Not while scrolling into this page. Arriving by scroll already has a
+         position — the one your eye is on — and restoring a remembered one on
+         top of it is two things setting the scroll at once, which is the jump
+         that was left. Opening a page any other way still lands where you
+         were. */
+      if (state.nbId && !swapping()){
         var openingId = state.note.id;
         loadPlace(state.nbId).then(function(place){
           if (state.noteId !== openingId) return;      /* moved on already */
+          if (swapping()) return;
           if (place && place.noteId === openingId){
             restoreScroll(place.top || 0, place.left || 0);
           } else {
@@ -5061,6 +5067,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         /* visiting a notebook is what puts it in the open set */
         if (state.nbId) openNotebookTab(state.nbId); else paintTabs();
         paintNotebooks(); paintTrashRow(); paintNotes(); paintDoc(); paintCrumbs(); paintRecent();
+        /* the layout may have changed which panes are on screen */
+        if (typeof paintEdge === "function") paintEdge();
         if (state.nbId) C.setMeta("lastRoute", location.hash);
       }
     });
@@ -6578,7 +6586,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("zoomLabel").addEventListener("click", function(){ applyZoom(1); C.setMeta("zoom", 1); });
   $("drawBtn").addEventListener("click", function(){ setMode(ink.mode === "write" ? "auto" : "write"); });
 
-  window.addEventListener("resize", function(){ setTimeout(redrawAll, 60); });
+  window.addEventListener("resize", function(){
+    setTimeout(redrawAll, 60);
+    /* a narrower window can take the lists away without any flag changing */
+    setTimeout(function(){ if (typeof paintEdge === "function") paintEdge(); }, 80);
+  });
 
   /* ================= the practice space =================
      A sheet that rises over the bottom of the note. Chosen over a separate
@@ -10562,12 +10574,21 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      open, how far down it was scrolled and at what zoom. Kept per notebook
      rather than one global "last place" so moving between notebooks does not
      make them all forget, which is the whole point of the feature. */
+  /* Is a page swap in flight? Declared here because both the scroll memory
+     and paintDoc need to ask, and both run before the handover code is
+     reached on the way down the file. */
+  function swapping(){
+    return (typeof handover === "object" && handover &&
+            (handover.busy || !!handover.pending));
+  }
   function placeKey(nbId){ return "place:" + nbId; }
   var placeTimer = null, placeRestoring = false;
 
   function savePlace(){
     if (!state.noteId) return;
     if (placeRestoring) return;      /* do not record the scroll we just set */
+    /* mid-swap the scroll belongs to neither page yet */
+    if (swapping()) return;
     var p = $("paper");
     /* stored relative to the page, not the scroller: the band above the page
        is a different height on a different device, and a raw scrollTop would
@@ -11199,7 +11220,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      handle pinned to the left edge whenever anything is folded away, plus a
      swipe in from that edge. */
   function panelsHidden(){
-    return document.body.dataset.focus === "1" || document.body.dataset.immerse === "1";
+    if (document.body.dataset.focus === "1" || document.body.dataset.immerse === "1") return true;
+    /* Ask the page, do not infer from the flags. The lists can also be gone
+       because the window is narrow and the layout put the page on its own —
+       no flag is set then, so the footer stayed on screen with nothing to
+       belong to. offsetWidth of 0 (or no offsetParent) means it is not there,
+       whatever the reason. */
+    var list = $("listPane"), rail = $("railPane");
+    var showing = (list && list.offsetParent !== null && list.offsetWidth > 0) ||
+                  (rail && rail.offsetParent !== null && rail.offsetWidth > 0);
+    return !showing;
   }
   function paintEdge(){
     var off = panelsHidden();
