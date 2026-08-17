@@ -454,9 +454,13 @@
   .lassopath{stroke-dasharray:6 5}
 
   #body figure.imgblock{
-    margin:var(--lead) auto; width:70%; position:relative;
+    margin:var(--lead) 0; width:70%; position:relative;
     border:1px solid transparent; border-radius:3px; line-height:0;
   }
+  /* a picture that has been dragged is placed, not flowed */
+  #body figure.imgblock[data-free="1"]{margin:0}
+  /* the page is the frame a placed picture is measured against */
+  #body{position:relative}
   #body figure.imgblock img{width:100%; height:auto; display:block; border-radius:3px}
   #body figure.imgblock.on{border-color:var(--live); box-shadow:0 0 0 3px var(--live-soft)}
   #body figure.imgblock.missing{
@@ -2130,7 +2134,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b30";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b31";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4815,6 +4819,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof padWatch === "object" && padWatch) padWatch.skip = true;
     if (typeof paintPrevPeek === "function") paintPrevPeek();
     if (typeof watchPad === "function") watchPad();
+    /* the swapped-to page is now really here, with its bands rebuilt */
+    if (typeof finishHandover === "function") finishHandover();
     /* a PDF page has no ruled lines under it and no page padding fighting it */
     document.body.classList.toggle("pdfpaper",
       (state.note.html || "").indexOf("data-pdfpage") > -1);
@@ -8338,6 +8344,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       fig.setAttribute("contenteditable", "false");
       fig.setAttribute("data-img", asset.id);
       fig.setAttribute("data-pct", asset.pct);
+      fig.setAttribute("data-align", "left");   /* at the margin you write from */
       var tail = document.createElement("p");
       tail.appendChild(document.createElement("br"));
       var sel = window.getSelection();
@@ -8370,6 +8377,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return C.reviveAsset(id).then(function(){ return C.getAsset(id); }).then(function(a){
         fig.textContent = "";
         fig.style.width = (fig.getAttribute("data-pct") || 70) + "%";
+        /* alignment, or the exact spot it was dragged to, put back */
+        applyImageAlign(fig);
         /* the lock lives on the figure, so it has to be re-applied every time
            the picture is rebuilt, not just when the button is pressed */
         fig.classList.toggle("locked", fig.getAttribute("data-lock") === "1");
@@ -8757,8 +8766,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       imgAct.fig.setAttribute("data-pct", pct);
       imgAct.fig.style.width = pct + "%";
     } else {
+      /* moved, not reordered: it follows the finger in both directions */
+      var host = $("body").getBoundingClientRect();
+      if (!imgAct.lifted){
+        /* first movement lifts it out of the text flow, at exactly the place
+           it is already sitting, so it does not jump as it comes loose */
+        var fr = imgAct.fig.getBoundingClientRect();
+        imgAct.offX = imgAct.x0 - fr.left;
+        imgAct.offY = imgAct.y0 - fr.top;
+        imgAct.fig.setAttribute("data-free", "1");
+        imgAct.lifted = true;
+      }
+      var z = state.zoom || 1;
+      var nx = ((e.clientX - imgAct.offX - host.left) / Math.max(1, host.width)) * 100;
+      var ny = (e.clientY - imgAct.offY - host.top) / z;
+      nx = Math.max(-2, Math.min(98, nx));
+      ny = Math.max(0, ny);
+      imgAct.fig.setAttribute("data-x", nx.toFixed(2));
+      imgAct.fig.setAttribute("data-y", Math.round(ny));
+      applyImagePlace(imgAct.fig);
       imgAct.fig.classList.add("moving");
-      dropMark(e.clientY);
     }
   });
 
@@ -8775,10 +8802,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       markDirty(); flush();
       return;
     }
-    var before = blockAt(e.clientY);
-    if (before !== act.fig){
-      if (before) $("body").insertBefore(act.fig, before);
-      else $("body").appendChild(act.fig);
+    /* it is already where it was dragged to; only the saving is left */
+    if (act.lifted){
+      growForInk();
       markDirty(); flush();
     }
   });
@@ -10521,7 +10547,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      nothing appears to move at the moment of the swap. Without that anchor
      the page would jump, because the band above the writing changes height
      from "the previous page" to "the page before that". */
-  var handover = { busy: false, until: 0 };
+  var handover = { busy: false, until: 0, pending: null };
   function pageHandover(){
     if (handover.busy || !cfg.pageFlow || !state.note || state.view !== "note") return;
     if (ink.penNear || document.body.classList.contains("drawing")) return;
@@ -10557,23 +10583,63 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     handover.until = Date.now() + 700;    /* no second swap straight after */
     var keepAt = anchorTop - pr.top;      /* where that page's top sits now */
     var nbId = state.nbId, id = target.id;
+
+    /* Hold the band above the writing at the height it has right now, and
+       empty it. Two things were wrong without this. The band kept the OLD
+       page's words and pictures until its new ones had loaded, which is the
+       flash of the page before last appearing over the new one. And its
+       height changed as that happened, moving everything below it.
+       Frozen and blank for a moment is honest; wrong content is not. */
+    var band = $("prevPeek");
+    if (band && !band.hidden){
+      band.style.height = prevPad() + "px";
+      band.style.overflow = "hidden";
+      $("prevPeekBody").innerHTML = "";
+    }
+    if ($("nextPeekBody")) $("nextPeekBody").innerHTML = "";
+
+    /* The correction cannot go on the next frame: go() finishes through the
+       hash and the database, so a frame later the page has usually not been
+       swapped yet and the band still measures the old one — which is the jump.
+       paintDoc calls this back once the new page and its bands are really in
+       place. */
+    handover.pending = { id: id, keepAt: keepAt };
+    /* If the swap never lands — a failed read, a route that went elsewhere —
+       the frozen band and the busy flag would stay for the rest of the
+       session and continuous scrolling would simply stop. */
+    clearTimeout(handover.guard);
+    handover.guard = setTimeout(function(){
+      if (!handover.pending) return;
+      handover.pending = null; handover.busy = false;
+      if (band){ band.style.height = ""; band.style.overflow = ""; }
+      if (typeof paintPrevPeek === "function") paintPrevPeek();
+      if (typeof paintPageEnd === "function") paintPageEnd();
+    }, 2500);
     flush().then(function(){
       go({ nbId: nbId, noteId: id });
-      /* ONE correction, on the next frame, and then nothing.
-         This used to re-assert the scroll six times over four hundred
-         milliseconds, which is why the page shook: each assignment fought the
-         finger that was still scrolling, and the last one landed as a jump.
-         Anything that changes height afterwards — a picture arriving, the ink
-         canvas sizing — is handled by watchPad below, which nudges by the
-         DIFFERENCE and so never argues with you. */
-      requestAnimationFrame(function(){
-        var pad = prevPad();
-        p.scrollTop = Math.max(0, pad - keepAt);
-        padWatch.last = pad;
-        redrawAll();
-        handover.busy = false;
-      });
-    }).catch(function(){ handover.busy = false; });
+    }).catch(function(){
+      handover.pending = null; handover.busy = false;
+      if (band){ band.style.height = ""; band.style.overflow = ""; }
+    });
+  }
+
+  /* called from paintDoc once the swapped-to page is mounted and its bands
+     have been rebuilt */
+  function finishHandover(){
+    var pend = handover.pending;
+    if (!pend || !state.note || state.note.id !== pend.id) return;
+    handover.pending = null;
+    clearTimeout(handover.guard);
+    var p = $("paper"), band = $("prevPeek");
+    requestAnimationFrame(function(){
+      if (band){ band.style.height = ""; band.style.overflow = ""; }
+      var pad = prevPad();
+      if (p) p.scrollTop = Math.max(0, pad - pend.keepAt);
+      padWatch.last = pad;
+      padWatch.skip = false;
+      redrawAll();
+      handover.busy = false;
+    });
   }
 
   /* Keeps what you are looking at still when something above it changes size.
@@ -10921,8 +10987,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      to carry on. */
   function growForInk(){
     var depth = C.inkDepth(noteSurface.strokes);
+    /* A dragged picture is out of the text flow, so it adds nothing to the
+       page's height on its own — drag one to the foot of the page and it
+       would hang off the end with nothing to scroll to. Its bottom counts
+       toward how far the page has to reach, exactly as handwriting does. */
+    var b = $("body");
+    Array.prototype.forEach.call(b.querySelectorAll('figure.imgblock[data-free="1"]'), function(fig){
+      var y = Number(fig.getAttribute("data-y"));
+      if (isFinite(y)) depth = Math.max(depth, y + (fig.offsetHeight || 0));
+    });
     var need = Math.max(depth + 400, 400);
-    $("body").style.minHeight = Math.round(need) + "px";
+    b.style.minHeight = Math.round(need) + "px";
   }
 
   /* ---- 5. runaway blank lines ----
@@ -11520,15 +11595,44 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function alignImage(how){
     if (!pickedImage) return;
     if (lockedStop()) return;      /* a lock covers where it sits, too */
+    /* Choosing an alignment is how you put a dragged picture back into the
+       text, so the free placement is dropped and its inline position with it. */
+    var fig = pickedImage.fig;
+    fig.removeAttribute("data-free");
+    fig.removeAttribute("data-x");
+    fig.removeAttribute("data-y");
+    fig.style.position = "";
+    fig.style.left = ""; fig.style.top = ""; fig.style.zIndex = "";
     pickedImage.fig.setAttribute("data-align", how);
     applyImageAlign(pickedImage.fig);
     markDirty(); flush();
   }
   function applyImageAlign(fig){
-    var how = fig.getAttribute("data-align") || "center";
+    if (fig.getAttribute("data-free") === "1"){ applyImagePlace(fig); return; }
+    /* left unless told otherwise: a picture dropped into notes belongs at the
+       margin you write from, not floated into the middle of the page */
+    var how = fig.getAttribute("data-align") || "left";
     fig.style.marginLeft = how === "left" ? "0" : how === "right" ? "auto" : "auto";
     fig.style.marginRight = how === "right" ? "0" : how === "left" ? "auto" : "auto";
     fig.style.display = "block";
+  }
+  /* ---- a picture put exactly where you dragged it ----
+     Reordering it between paragraphs was the old behaviour, and it is not
+     what dragging means: you moved it down and the line showing where it
+     would land moved, but the picture stayed in the text flow. A dragged
+     picture is lifted out of the flow and placed, which is what every notes
+     app does. Its position is a percentage across and pixels down, so it
+     survives a different screen width. */
+  function applyImagePlace(fig){
+    var x = Number(fig.getAttribute("data-x"));
+    var y = Number(fig.getAttribute("data-y"));
+    if (!isFinite(x) || !isFinite(y)) return;
+    fig.style.position = "absolute";
+    fig.style.left = x + "%";
+    fig.style.top = y + "px";
+    fig.style.marginLeft = "0";
+    fig.style.marginRight = "0";
+    fig.style.zIndex = "2";
   }
   $("imgLeft").addEventListener("click", function(){ alignImage("left"); });
   $("imgCentre").addEventListener("click", function(){ alignImage("center"); });
