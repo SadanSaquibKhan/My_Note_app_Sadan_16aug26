@@ -345,10 +345,27 @@
     font-family:var(--mono); font-size:10px; letter-spacing:.16em;
     text-transform:uppercase; color:var(--ink-2); margin-bottom:8px;
   }
+  /* tall enough to genuinely read as the top of the next page, so the join
+     shows the foot of one and the head of the other together */
   .nextpeek-body{
     font-size:15px; line-height:var(--lead); color:var(--ink-2);
-    max-height:calc(var(--lead) * 4); overflow:hidden;
+    max-height:44vh; overflow:hidden; position:relative;
   }
+  /* fades out rather than being chopped off mid-line */
+  .nextpeek-body::after{
+    content:""; position:absolute; left:0; right:0; bottom:0; height:70px;
+    background:linear-gradient(transparent, var(--panel));
+  }
+  .nextpeek-body p{margin:0 0 var(--lead)}
+  .nextpeek-body h1,.nextpeek-body h2,.nextpeek-body h3{
+    font-family:var(--display); margin:0 0 6px; font-size:17px;
+  }
+  .peekstub{
+    display:inline-block; padding:1px 7px; border:1px dashed var(--rule);
+    border-radius:3px; font-family:var(--mono); font-size:10px;
+    letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2);
+  }
+  .peekempty{font-style:italic}
   .nextpeek-go{
     margin-top:10px; min-height:40px; padding:0 14px; border-radius:4px;
     background:transparent; border:1px solid var(--ink); color:var(--ink);
@@ -2047,7 +2064,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b22";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b23";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -8914,12 +8931,21 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       tapErase.was = ink.tool;
       ink.tool = "eraser";
     }
-    /* a half-drawn stroke is abandoned, exactly as the held button does */
+    /* The half-drawn stroke is abandoned — you were holding still, not
+       writing. If the nib is still down, erasing begins from that same point
+       rather than making you lift and come back, which is what you were
+       about to do anyway. */
     var S = ink.surfaces[ink.active];
     if (S && S.drawing && S.drawing.stroke){
       var st = S.drawing.stroke;
       S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
-      S.drawing = null;
+      if (ink.tool === "eraser"){
+        S.drawing = { erasing: true, removed: [] };
+        var last = st.pts.length >= 3 ? { x: st.pts[0], y: st.pts[1] } : null;
+        if (last) S.eraseAt(last.x, last.y);
+      } else {
+        S.drawing = null;
+      }
       S.redraw();
     }
     paintInkTools();
@@ -9955,6 +9981,41 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       setTimeout(function(){ el.hidden = true; }, 220);
     }, 1100);
   }
+  /* A page's stored HTML, made safe to show a second time on screen.
+     Every id is removed: ids are how the rest of the app finds things, and a
+     duplicate would have anchors, links and the outline all pointing at the
+     wrong copy. Editing is off, and the blocks that need loading from storage
+     (pictures, attachments, ink, maths) become a quiet marker rather than an
+     empty hole, because the code that fills those only ever looks inside
+     #body and would leave these blank. */
+  function previewHtml(html){
+    var box = document.createElement("div");
+    box.innerHTML = String(html || "");
+    Array.prototype.forEach.call(box.querySelectorAll("[id]"), function(el){
+      el.removeAttribute("id");
+    });
+    Array.prototype.forEach.call(box.querySelectorAll("[contenteditable]"), function(el){
+      el.setAttribute("contenteditable", "false");
+    });
+    Array.prototype.forEach.call(
+      box.querySelectorAll("figure.imgblock, .inkblock, .filechip, .audioblock, span.math"),
+      function(el){
+        var tag = document.createElement("span");
+        tag.className = "peekstub";
+        tag.textContent = el.classList.contains("imgblock") ? "picture"
+                        : el.classList.contains("filechip") ? "attachment"
+                        : el.classList.contains("inkblock") ? "drawing"
+                        : el.classList.contains("audioblock") ? "recording" : "maths";
+        el.parentNode.replaceChild(tag, el);
+      });
+    /* anchors and links are inert here; they belong to the real page */
+    Array.prototype.forEach.call(box.querySelectorAll("a"), function(el){
+      el.removeAttribute("href");
+      el.removeAttribute("data-to");
+    });
+    return box.innerHTML || "<p class=\"peekempty\">(this page is empty)</p>";
+  }
+
   /* the end marker, and a look at the page that follows */
   function paintPageEnd(){
     var box = $("pageEnd");
@@ -9971,11 +10032,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("pageEndLabel").textContent = "end of page";
     $("nextPeekHead").textContent = "next: " +
       ((next.title || "").trim() || C.displayTitle(next));
-    /* Plain text only. This is a look at the next page, not a second live
-       editor: rendering its real HTML here would put a second copy of every
-       id, link and picture into the document. */
-    var t = C.preview(next, 240);
-    $("nextPeekBody").textContent = t || "(this page is empty)";
+    /* The next page as it really looks, so the join between two pages shows
+       both. It is a rendering, not a second editor: ids are stripped so
+       nothing in the app can find two of anything, it is not editable, and
+       pictures become a marker rather than being loaded — hydrateImages only
+       ever looks inside #body, so a live figure here would sit empty. */
+    $("nextPeekBody").innerHTML = previewHtml(next.html);
     peek.hidden = false;
   }
   $("nextPeekGo").addEventListener("click", function(){
