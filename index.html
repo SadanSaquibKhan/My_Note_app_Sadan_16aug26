@@ -2496,7 +2496,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b85";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b86";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -7203,7 +7203,25 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     b.setAttribute("aria-pressed", rect ? "true" : "false");
     b.classList.toggle("on", rect);
   }
+  var lassoShapeHold = { t: 0, fired: false };
+  $("lassoShapeBtn").addEventListener("pointerdown", function(){
+    clearTimeout(lassoShapeHold.t);
+    lassoShapeHold.fired = false;
+    lassoShapeHold.t = setTimeout(function(){
+      lassoShapeHold.fired = true;
+      cfg.lassoContain = cfg.lassoContain === "full" ? "partial" : "full";
+      saveCfg();
+      if ($("setLassoContain")) $("setLassoContain").value = cfg.lassoContain;
+      hint(cfg.lassoContain === "full"
+        ? "Lasso: only what is completely inside."
+        : "Lasso: a piece inside is enough.");
+    }, 550);
+  });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(function(evt){
+    $("lassoShapeBtn").addEventListener(evt, function(){ clearTimeout(lassoShapeHold.t); });
+  });
   $("lassoShapeBtn").addEventListener("click", function(){
+    if (lassoShapeHold.fired){ lassoShapeHold.fired = false; return; }
     ink.lassoShape = (ink.lassoShape === "rect") ? "free" : "rect";
     C.setMeta("lassoShape", ink.lassoShape);
     paintLassoShape();
