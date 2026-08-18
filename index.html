@@ -757,6 +757,9 @@
 
   /* which page you are on, shown while you scroll and then fading out. The
      scroll percentage alone never answered the question you actually have. */
+  body.swapping .sheet, body.swapping .peekpage, body.swapping .prevpeek, body.swapping .nextpeek{
+    transition:none !important;
+  }
   .pagetag{
     position:fixed; right:14px; top:50%; transform:translateY(-50%);
     z-index:74; pointer-events:none;
@@ -2423,7 +2426,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b49";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b50";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -12377,6 +12380,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!target) return;
 
     handover.busy = true;
+    document.body.classList.add("swapping");
     handover.until = Date.now() + 700;    /* no second swap straight after */
     var keepAt = anchorTop - pr.top;      /* where that page's top sits now */
     var nbId = state.nbId, id = target.id;
@@ -12426,6 +12430,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     handover.guard = setTimeout(function(){
       if (!handover.pending) return;
       handover.pending = null; handover.busy = false;
+      document.body.classList.remove("swapping");
       if (band){ band.style.height = ""; band.style.overflow = ""; }
       if (typeof paintPrevPeek === "function") paintPrevPeek();
       if (typeof paintPageEnd === "function") paintPageEnd();
@@ -12489,7 +12494,6 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         }
         padWatch.last = pad;
         padWatch.skip = false;
-        redrawAll();
         tries++;
         /* still short of the mark because the page is not tall enough yet */
         var short = p.scrollTop < want - 2 &&
@@ -12497,6 +12501,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         calm = (Math.abs(moved) <= 1 && !short) ? calm + 1 : 0;
         if (calm < 2 && tries < 16){ requestAnimationFrame(settle); return; }
         void pTop0;
+        redrawAll();
+        document.body.classList.remove("swapping");
         handover.busy = false;
       })();
     });
