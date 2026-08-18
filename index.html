@@ -2493,7 +2493,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b78";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b79";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9404,6 +9404,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
     if (lasso.pickedEls && lasso.pickedEls.length) markDirty();
     lassoClear(); S.queueSave(); paintInkTools();
+    if (typeof paintFoot === "function") paintFoot();
   });
   /* ---- copy and paste handwriting ----
      The clipboard holds the strokes moved so their top-left corner sits at
