@@ -2409,7 +2409,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b45";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b46";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -2701,10 +2701,10 @@ var MarginCore = (function(){
   var INK_TOOLS = ["pen","pencil","marker","eraser","lasso"];
   var TEMPLATES = ["blank","lined","grid","dot","graph","cornell","iso"];
   var INK_COLOURS = ["ink","blue","red","green","amber","violet"];
-  /* The old ladder was [1.6, 3.2, 6.5]: the first step wrote too thin and the
-     jump to the second was too coarse for ordinary notes, so the useful range
-     was skipped entirely. The extra steps sit between those two. */
-  var INK_WIDTHS = [1.6, 2.1, 2.6, 3.2, 4.5, 6.5];
+  /* The thin end used to stop at 1.6. That is now the fourth step: the
+     first is a third of that, and the gaps grow toward the thick end so
+     you can pick a hairline without wasting buttons on the fat side. */
+  var INK_WIDTHS = [0.55, 0.85, 1.35, 2.2, 3.6, 6.5];
   var INK_WIDTH_LABELS = ["Extra fine", "Fine", "Medium fine", "Medium", "Broad", "Extra broad"];
   /* Presets name the step they want instead of counting positions, so putting
      another width in the middle never silently changes what a preset writes. */
@@ -3042,12 +3042,12 @@ var MarginCore = (function(){
   /* v12: the old range (0.40 + 0.85p) moved a medium nib between 1.1px and
      2.5px across the whole pressure range \u2014 real, but too small to see.
      These spans are roughly three times wider. */
-  var pressureA = 0.25, pressureB = 1.60;
+  var pressureA = 0.10, pressureB = 1.75;
   function setPressure(name){
-    if (name === "light"){ pressureA = 0.45; pressureB = 1.10; }
-    else if (name === "firm"){ pressureA = 0.10; pressureB = 2.20; }
+    if (name === "light"){ pressureA = 0.18; pressureB = 1.20; }
+    else if (name === "firm"){ pressureA = 0.06; pressureB = 2.30; }
     else if (name === "off"){ pressureA = 1.00; pressureB = 0.00; }
-    else { pressureA = 0.25; pressureB = 1.60; }
+    else { pressureA = 0.10; pressureB = 1.75; }
   }
   function pressureRange(){ return { a: pressureA, b: pressureB }; }
 
@@ -3071,7 +3071,13 @@ var MarginCore = (function(){
   }
   function penWidth(base, pressure){
     var p = (typeof pressure === "number" && pressure > 0) ? pressure : 0.5;
-    return base * (pressureA + pressureB * p);
+    if (pressureB === 0) return base;
+    /* Ease-in: light press stays near the thin end, most of the extra
+       width arrives as you press harder. Linear felt like the line jumped
+       in the first millimetre and then had nowhere to go. */
+    var t = p > 1 ? 1 : p;
+    t = t * t;
+    return base * (pressureA + pressureB * t);
   }
 
   /* undo/redo as operations, not snapshots: a page of handwriting can be
