@@ -2423,7 +2423,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b48";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b49";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9322,13 +9322,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (ink.tool === "lasso") return;          /* a lasso needs a long drag */
     penHold.S = S; penHold.x = e.clientX; penHold.y = e.clientY; penHold.fired = false;
     penHold.timer = setTimeout(function(){
+      /* A slow start of a letter used to look like a hold and switch to
+         the eraser mid-word. If the stroke has already travelled, this is
+         writing, not a request to erase. */
+      var S0 = penHold.S;
+      var st = S0 && S0.drawing && S0.drawing.stroke;
+      if (st && st.pts && st.pts.length >= 6){
+        var d = 0;
+        for (var i = 3; i < st.pts.length; i += 3){
+          var dx = st.pts[i] - st.pts[i-3], dy = st.pts[i+1] - st.pts[i-2];
+          d += Math.sqrt(dx * dx + dy * dy);
+        }
+        if (d > 12){ clearPenHold(); return; }
+      }
       penHold.fired = true;
       holdEraseFired();
-    }, Math.max(300, Number(cfg.holdEraseMs) || 650));
+    }, Math.max(400, Number(cfg.holdEraseMs) || 800));
   }
   function movePenHold(e){
     if (!penHold.timer) return;
-    if (Math.abs(e.clientX - penHold.x) > 9 || Math.abs(e.clientY - penHold.y) > 9){
+    if (Math.abs(e.clientX - penHold.x) > 14 || Math.abs(e.clientY - penHold.y) > 14){
       clearPenHold();                          /* you are writing, not holding */
     }
   }
