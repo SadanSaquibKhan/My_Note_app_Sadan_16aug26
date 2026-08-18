@@ -2489,7 +2489,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b63";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b64";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9564,6 +9564,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   if ($("lassoItalic")) $("lassoItalic").addEventListener("click", function(){ lassoFmtText("italic"); });
   if ($("lassoUnder")) $("lassoUnder").addEventListener("click", function(){ lassoFmtText("under"); });
   if ($("lassoHl")) $("lassoHl").addEventListener("click", function(){ lassoFmtText("hl"); });
+  document.addEventListener("pointerdown", function(e){
+    var pop = $("lassoStylePop");
+    if (!pop || pop.hidden) return;
+    if (e.target && e.target.closest && e.target.closest("#lassoStylePop, #lassoStyle")) return;
+    pop.hidden = true;
+  }, true);
 
   /* ---- maths ---- */
   var mathTarget = null;
