@@ -1655,8 +1655,8 @@
       <div class="docbar">
         <input type="text" id="noteTitle" placeholder="Untitled note" autocomplete="off">
         <span class="segmented">
-          <button class="ghost" id="gUndo" title="Undo (Ctrl+Z)" disabled>&#8630;</button>
-          <button class="ghost" id="gRedo" title="Redo (Ctrl+Y)" disabled>&#8631;</button>
+          <button class="ghost" id="gUndo" title="Undo — jumps to the page of that change (Ctrl+Z)" disabled>&#8630;</button>
+          <button class="ghost" id="gRedo" title="Redo — jumps to the page of that change (Ctrl+Y)" disabled>&#8631;</button>
         </span>
         <button class="ghost" id="starBtn" aria-pressed="false">&#9734; Star</button>
         <button class="ghost" id="markBtn" aria-pressed="false" title="Bookmark this page and name the topic that starts here">&#9873; Bookmark</button>
@@ -2372,7 +2372,7 @@
         <tr><td>Ctrl+= / Ctrl+- / Ctrl+0</td><td>zoom in / out / reset</td></tr>
         <tr><td>Ctrl+;</td><td>insert today's date</td></tr>
         <tr><td>Tab / Shift+Tab</td><td>indent or outdent a list</td></tr>
-        <tr><td>Esc</td><td>close whatever is on top</td></tr>
+        <tr><td>Esc</td><td>close whatever is on top, or drop a lasso</td></tr>
         <tr><td>Two / three fingers</td><td>tap to undo / redo</td></tr>
         <tr><td>Pen side button</td><td>hold, then touch: eraser on; same again: last pen</td></tr>
         <tr><td>Long press</td><td>the spot menu: mark, link, paste, attach</td></tr>
@@ -2492,7 +2492,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b71";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b72";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
