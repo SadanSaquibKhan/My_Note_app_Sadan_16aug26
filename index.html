@@ -2492,7 +2492,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b68";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b69";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -12830,12 +12830,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
     /* the rest keep their box so the height still matches, but hold nothing */
     Array.prototype.forEach.call(
-      box.querySelectorAll(".filechip, .audioblock, span.math"),
+      box.querySelectorAll(".filechip, .audioblock"),
       function(el){
         var tag = document.createElement("span");
         tag.className = "peekstub";
-        tag.textContent = el.classList.contains("filechip") ? "attachment"
-                        : el.classList.contains("audioblock") ? "recording" : "maths";
+        tag.textContent = el.classList.contains("filechip") ? "attachment" : "recording";
         el.parentNode.replaceChild(tag, el);
       });
     /* anchors and links are inert here; they belong to the real page */
@@ -12986,6 +12985,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         (pd != null ? Math.round(pageHeightFor(pd)) : Math.round(pageFloorPx())) + "px";
       $("prevPeekPage").style.minHeight = "0px";
       hydratePeekImages("prev", $("prevPeekBody"));
+      if (typeof renderMath === "function") renderMath($("prevPeekBody"));
       /* the band carries the number of the page BELOW it — the one you are
          arriving at — the way a paper notebook numbers what comes next */
       $("prevPeekLabel").textContent =
@@ -13030,6 +13030,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       (nd != null ? Math.round(pageHeightFor(nd)) : Math.round(pageFloorPx())) + "px";
     $("nextPeekPage").style.minHeight = "0px";
     hydratePeekImages("next", $("nextPeekBody"));
+    if (typeof renderMath === "function") renderMath($("nextPeekBody"));
     peek.hidden = false;
     $("nextPeekInk").setAttribute("data-for", next.id);
     paintPeekInk("nextPeekInk", next.id);
