@@ -2499,7 +2499,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b93";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b94";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -14371,7 +14371,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (best.v < 0){ hint("Nothing to undo."); return; }
     if (best.noteId && best.noteId !== state.noteId && best.kind !== "big"){
       undoJump = { noteId: best.noteId, which: "undo" };
-      hint("Going to the page of that change…");
+      var nm = "";
+      if (state.notes){
+        var nn = state.notes.filter(function(x){ return x.id === best.noteId; })[0];
+        if (nn) nm = (nn.title || C.displayTitle(nn) || "");
+      }
+      hint(nm ? ("Going to " + nm + " to undo…") : "Going to the page of that change…");
       go({ nbId: best.nbId || state.nbId, noteId: best.noteId });
       return;
     }
