@@ -1769,7 +1769,7 @@
         <button class="ghost" id="findClose">Close</button>
       </div>
       <div class="lassobar" id="lassoBar" hidden>
-        <span id="lassoCount" hidden></span>
+        <span id="lassoCount"></span>
         <button class="ghost" id="lassoCut" title="Cut">Cut</button>
         <button class="ghost" id="lassoCopy" title="Copy">Copy</button>
         <button class="ghost" id="lassoPaste" title="Paste">Paste</button>
@@ -2489,7 +2489,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b61";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b62";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9208,7 +9208,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("lassoBar").hidden = !any;
     if ($("lassoMore")) $("lassoMore").hidden = true;
     hideLassoStyle();
-    $("lassoCount").textContent = lasso.picked.length + (lasso.picked.length === 1 ? " stroke" : " strokes");
+    var bits = [];
+    if (lasso.picked.length) bits.push(lasso.picked.length + (lasso.picked.length === 1 ? " stroke" : " strokes"));
+    var imgs = (lasso.pickedEls || []).filter(function(el){ return el.classList && el.classList.contains("imgblock"); }).length;
+    var words = (lasso.pickedEls || []).length - imgs;
+    if (imgs) bits.push(imgs + (imgs === 1 ? " picture" : " pictures"));
+    if (words) bits.push(words + (words === 1 ? " block" : " blocks"));
+    $("lassoCount").textContent = bits.join(" · ") || "";
     if (any) lassoSnapBox();
     S.redraw();
     if (any) placeLassoPop();
