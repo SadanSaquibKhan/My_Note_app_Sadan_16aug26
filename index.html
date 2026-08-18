@@ -2493,7 +2493,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b82";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b83";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -12677,6 +12677,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* ---- 18. escape should close whatever is on top ---- */
   document.addEventListener("keydown", function(e){
+    if ((e.key === "Delete" || e.key === "Backspace") && typeof lassoHas === "function" && lassoHas()){
+      var t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      e.preventDefault();
+      $("lassoDelete").click();
+      return;
+    }
     if (e.key !== "Escape") return;
     if (!$("holdMenu").hidden){ closeHoldMenu(); e.preventDefault(); return; }
     var open = document.querySelector("dialog[open]");
