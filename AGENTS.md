@@ -171,6 +171,12 @@ the real current state — don't trust this number once time has passed.
   line. Verified against wobbly, gapped synthetic input in `shapes3.mjs` —
   this went through several complete rewrites before it matched Samsung
   Notes' behavior; don't simplify it without re-running that suite.
+- Even thickness (`cfg.pressure === "off"`): the chosen nib size stays put.
+  Reached from the **Even** button next to the thickness dots, from the
+  checkbox on the pen popover, and from Settings. New strokes store a flat
+  `0.5` so they stay even later if pressure is turned back on; speed-for-
+  pressure is also skipped. Turning Even off restores `cfg.pressureLast`
+  (the last light/normal/firm feel).
 - The S Pen's side button has **no reliable `PointerEvent.buttons` bit on
   this tablet** — One UI intercepts it before Chrome sees a clean
   press/release pair; the only trace that reaches the page is a

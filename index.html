@@ -1647,6 +1647,7 @@
         </select>
         <span class="swatchrow" id="inkColours"></span>
         <span class="swatchrow" id="inkWidths"></span>
+        <button type="button" class="ghost" id="evenWidthBtn" aria-pressed="false" title="Keep the same thickness no matter how hard you press" data-help="Keeps the line at the size you picked. Pressing harder or writing slower will not change it. Tap again to let pressure change the thickness.">Even</button>
         <button type="button" class="ghost" id="inkUndo">Undo</button>
         <button type="button" class="ghost" id="inkRedo">Redo</button>
         <select id="inkInput" aria-label="What can draw">
@@ -1930,15 +1931,17 @@
       <details class="setgroup">
         <summary>Pen and eraser</summary>
         <div class="field">
-          <label for="setPressure">Pen pressure</label>
+          <label class="check"><input type="checkbox" id="setEvenWidth"> Keep the same thickness no matter how hard I press</label>
+          <p class="hint">On: the line stays the size you picked. Off: pressing
+          harder makes a thicker line. If the pen reports no pressure, speed
+          is used instead &mdash; unless this box is ticked.</p>
+          <label for="setPressure">How much pressure changes the line</label>
           <select id="setPressure">
-            <option value="light">Light touch</option>
+            <option value="off">Always the same (no pressure)</option>
+            <option value="light">A little</option>
             <option value="normal">Normal</option>
-            <option value="firm">Firm hand</option>
-            <option value="off">Even width (no pressure)</option>
+            <option value="firm">A lot</option>
           </select>
-          <p class="hint">If your device reports no pressure, Margin varies the
-          width by how fast you write instead.</p>
         </div>
         <div class="field">
           <label for="setEraser">Eraser size <b id="eraserOut"></b></label>
@@ -2317,7 +2320,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b41";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b42";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5762,7 +5765,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         return;
       }
       var st = C.newStroke(ink.tool, ink.colour, ink.width);
-      st.pts.push(p.x, p.y, e.pressure || 0.5);
+      st.pts.push(p.x, p.y, strokePressure(e));
       if (typeof notePressure === "function" && e.pointerType === "pen") notePressure(e.pressure || 0);
       S.drawing = { stroke: st };
       S.strokes.push(st);
@@ -5815,8 +5818,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           x = px + (q.x - px) * k;
           y = py + (q.y - py) * k;
         }
-        st.pts.push(x, y, ev.pressure || 0.5);
-        S.drawing.raw = { x: q.x, y: q.y, p: ev.pressure || 0.5 };
+        st.pts.push(x, y, strokePressure(ev));
+        S.drawing.raw = { x: q.x, y: q.y, p: strokePressure(ev) };
         if (ctx && st.pts.length >= 6) strokeSegment(ctx, st, st.pts.length - 6);
       });
       if (ctx) ctx.restore();
@@ -6421,6 +6424,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("inkRedo").disabled = !S.redo.length;
     $("inkInput").value = ink.input;
     if (typeof paintNib === "function"){ paintNib(); paintPenChip(); }
+    if (typeof paintEvenWidth === "function") paintEvenWidth();
     $("lockBtn").setAttribute("aria-pressed", ink.lock ? "true" : "false");
     $("lockBtn").classList.toggle("on", ink.lock);
     ["auto","write","type"].forEach(function(m){
@@ -7131,6 +7135,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     smartQuotes: true,
     theme: "system",
     pressure: "normal",
+    pressureLast: "normal", /* the feel to put back when Even is turned off */
     leftHand: false,
     uiScale: 100,
     backupGap: 1,
@@ -7207,6 +7212,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof applyHand === "function") applyHand();
     if (typeof applyUIScale === "function") applyUIScale();
     if (C.setPressure) C.setPressure(cfg.pressure || "normal");
+    if (typeof paintEvenWidth === "function") paintEvenWidth();
     /* Rebuilt here, not only when the tick box changes. loadCfg() is async and
        resolves AFTER the boot chain has already called buildFavBar() once, so
        that first build saw the default (off) and nothing ever rebuilt it —
@@ -7214,6 +7220,40 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        the one place that runs both at boot and on every change. */
     if (typeof buildFavBar === "function") buildFavBar();
     if (cfg.wakeLock) requestWake();
+  }
+
+  /* ---- even thickness: the line stays the size you picked ----
+     Pressure (and, if the device reports none, speed) used to always change
+     the width. One switch writes cfg.pressure; the bar, the pen popover and
+     Settings all read it. Turning it off puts back the last feel. */
+  function evenWidthOn(){ return cfg.pressure === "off"; }
+  function setEvenWidth(on, quiet){
+    if (on){
+      if (cfg.pressure && cfg.pressure !== "off") cfg.pressureLast = cfg.pressure;
+      cfg.pressure = "off";
+    } else {
+      var last = cfg.pressureLast;
+      cfg.pressure = (last && last !== "off") ? last : "normal";
+    }
+    if (C.setPressure) C.setPressure(cfg.pressure);
+    saveCfg();
+    paintEvenWidth();
+    if (!quiet && typeof hint === "function"){
+      hint(on ? "Thickness stays the same."
+              : "Thickness follows how hard you press.");
+    }
+  }
+  function paintEvenWidth(){
+    var on = evenWidthOn();
+    var b = $("evenWidthBtn");
+    if (b){
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    var box = $("setEvenWidth");
+    if (box) box.checked = on;
+    var sel = $("setPressure");
+    if (sel) sel.value = cfg.pressure || "normal";
   }
 
   /* ---- page templates ---- */
@@ -7284,6 +7324,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setTheme").value = cfg.theme || "system";
     $("setPressure").value = cfg.pressure || "normal";
     if (C.setPressure) C.setPressure(cfg.pressure || "normal");
+    if (typeof paintEvenWidth === "function") paintEvenWidth();
     $("setUIScale").value = cfg.uiScale || 100;
     $("uiScaleOut").textContent = (cfg.uiScale || 100) + "%";
     /* the slider used to run to 100; a config saved then would sit off the
@@ -7378,8 +7419,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setSmart").addEventListener("change", function(){ cfg.smartQuotes = this.checked; saveCfg(); });
     $("setLeft").addEventListener("change", function(){ cfg.leftHand = this.checked; saveCfg(); applyHand(); });
     $("setTheme").addEventListener("change", function(){ cfg.theme = this.value; saveCfg(); applyThemePref(); });
+    $("setEvenWidth").addEventListener("change", function(){
+      setEvenWidth(this.checked, true);
+    });
     $("setPressure").addEventListener("change", function(){
-      cfg.pressure = this.value; saveCfg(); if (C.setPressure) C.setPressure(cfg.pressure);
+      cfg.pressure = this.value;
+      if (this.value !== "off") cfg.pressureLast = this.value;
+      saveCfg();
+      if (C.setPressure) C.setPressure(cfg.pressure);
+      if (typeof paintEvenWidth === "function") paintEvenWidth();
     });
     $("setUIScale").addEventListener("input", function(){
       cfg.uiScale = Number(this.value); $("uiScaleOut").textContent = cfg.uiScale + "%";
@@ -7963,6 +8011,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       paintErSize();
     } else if (tool !== "lasso"){
       m.appendChild(row); m.appendChild(wrow);
+      /* Thickness lives here, so the off-switch for pressure belongs here
+         too — Settings is the wrong side of the room for a choice you make
+         while picking a nib. */
+      var even = document.createElement("label");
+      even.className = "check";
+      even.style.margin = "8px 0 0";
+      var evenBox = document.createElement("input");
+      evenBox.type = "checkbox";
+      evenBox.checked = evenWidthOn();
+      evenBox.addEventListener("change", function(){ setEvenWidth(evenBox.checked); });
+      even.appendChild(evenBox);
+      even.appendChild(document.createTextNode(" Keep the same thickness (ignore pressure)"));
+      m.appendChild(even);
     } else {
       var p = document.createElement("p");
       p.className = "hint";
@@ -12036,6 +12097,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("rulerBtn").classList.toggle("on", ink.ruler);
     $("rulerBtn").setAttribute("aria-pressed", ink.ruler ? "true" : "false");
   });
+  $("evenWidthBtn").addEventListener("click", function(){
+    setEvenWidth(!evenWidthOn());
+  });
 
   /* ---- 9. a colour that is not one of the six ---- */
   $("customColour").addEventListener("input", function(){
@@ -12886,7 +12950,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* ---- 3. pressure ----
      The width curve was right but its range was too narrow to notice, and some
      devices report a flat 0.5 for every sample anyway. Strokes that come back
-     flat are re-weighted by speed at the end, so they still taper. */
+     flat are re-weighted by speed at the end, so they still taper — unless
+     Even is on, in which case the stored pressure is already a flat 0.5 and
+     speed must not sneak a taper back in. */
+  function strokePressure(e){
+    if (cfg.pressure === "off") return 0.5;
+    return (e && typeof e.pressure === "number" && e.pressure > 0) ? e.pressure : 0.5;
+  }
   function applySpeedWeight(st){
     if (cfg.pressure === "off") return;
     var p = st.pts;
