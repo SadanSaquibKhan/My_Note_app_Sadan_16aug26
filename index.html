@@ -711,6 +711,16 @@
   }
   .favdot[hidden]{display:none}
   .favpop{min-width:0; padding:8px; z-index:81}
+  /* a second floating bar, same bones as favourites, parked on the other
+     side so the two do not sit on top of each other */
+  .jumpbar{z-index:76}
+  .jumpdot{font-size:16px}
+  .jumppop{min-width:220px; max-width:min(340px, 86vw); max-height:min(70vh, 520px); overflow:auto}
+  .jumppop .jumph{font-family:var(--mono); font-size:10px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-2); padding:8px 10px 4px}
+  .secrow .rowtitle{font-weight:600}
+  .secplus{flex:none; width:28px; height:28px; margin-left:auto; padding:0;
+    border:1px solid var(--rule); border-radius:3px; background:transparent; color:var(--ink-2)}
   .favpop .swatchrow{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px}
   .favpop .widthrow{display:flex; gap:6px; align-items:center; flex-wrap:wrap}
 
@@ -1517,6 +1527,7 @@
       <button class="ghost" id="editNotebook" title="Rename, recolour or delete this notebook">Edit</button>
       <button class="ghost" id="pickBtn" title="Select several notes">Select</button>
       <button class="ghost" id="insertPageBtn" title="Insert a page after the open one and renumber the rest">Insert</button>
+      <button class="ghost" id="addSectionBtn" title="New section in this notebook">Section</button>
       <button class="add" id="addNote" aria-label="New note" title="New note">+</button>
     </div>
     <div class="filterwrap">
@@ -1856,6 +1867,31 @@
   </form>
 </dialog>
 
+<dialog id="secDlg">
+  <form method="dialog">
+    <div class="dlg-head" id="secDlgHead">New section</div>
+    <div class="dlg-body">
+      <div class="field">
+        <label for="secName">Section name</label>
+        <input type="text" id="secName" maxlength="80" autocomplete="off" placeholder="e.g. Lectures">
+      </div>
+      <div class="field">
+        <label>Colour</label>
+        <div class="swatches" id="secSwatches"></div>
+      </div>
+      <p class="hint">A notebook is made of sections, and a section is made of
+      pages. Deleting a section keeps its pages &mdash; they move to the
+      unfiled group at the top.</p>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="btn danger" id="secDelete">Delete</button>
+      <span class="grow"></span>
+      <button type="button" class="btn" id="secCancel">Cancel</button>
+      <button type="button" class="btn primary" id="secSave">Save</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- move note -->
 <dialog id="moveDlg">
   <form method="dialog">
@@ -2033,6 +2069,17 @@
           <label for="setZoomMax">Largest zoom <b id="zoomMaxOut"></b></label>
           <input type="range" id="setZoomMax" min="110" max="500" step="10">
           <p class="hint">The zoom buttons and the two-finger pinch both stop at these.</p>
+        </div>
+      </details>
+
+      <details class="setgroup">
+        <summary>The shortcuts bar</summary>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="setJumpBar"> Show the floating shortcuts bar</label>
+          <p class="hint">A small bar you can drag and shrink. It has Home
+          (open another notebook without closing this one), Open (the
+          notebooks you already have open), and Places (this notebook&rsquo;s
+          sections and bookmarked pages).</p>
         </div>
       </details>
 
@@ -2273,6 +2320,15 @@
   <button type="button" class="favedit" id="favEdit" aria-label="Choose what is on the bar" title="Choose what is on the bar" data-help="Opens the settings for this bar, where you choose which pens and tools it carries.">&#9998;</button>
 </div>
 <button type="button" class="favdot" id="favDot" hidden aria-label="Show the favourites bar" title="Favourites">&#9670;</button>
+<div class="favbar jumpbar" id="jumpBar" hidden>
+  <button type="button" class="favgrip" id="jumpGrip" aria-label="Move the shortcuts bar" title="Drag to move" data-help="Drag this to move the shortcuts bar anywhere on the screen.">&#8942;&#8942;</button>
+  <button type="button" class="favmini" id="jumpMini" aria-label="Minimise the shortcuts bar" title="Minimise" data-help="Shrinks the bar to a single button. Drag that button to move it; tap it to bring the bar back.">&#8722;</button>
+  <button type="button" id="jumpHome" aria-label="Home" title="Home — open another notebook, keep this one open" data-help="Goes to the notebook list. This notebook stays open, so you can open another beside it.">⌂</button>
+  <button type="button" id="jumpOpen" aria-label="Open notebooks" title="Notebooks open now" data-help="Shows every notebook you have open, so you can jump between them.">▤</button>
+  <button type="button" id="jumpPlaces" aria-label="Sections and bookmarks" title="Sections and bookmarks" data-help="Shows this notebook's sections and every bookmarked page, so you can jump without opening the side list.">⚑</button>
+</div>
+<button type="button" class="favdot jumpdot" id="jumpDot" hidden aria-label="Show the shortcuts bar" title="Shortcuts">↪</button>
+<div class="holdmenu favpop jumppop" id="jumpPop" hidden></div>
 <div class="holdmenu favpop" id="favPop" hidden></div>
 <div class="flowcue" id="flowCue" hidden></div>
 <div class="dropmark" id="dropMark" hidden></div>
@@ -2314,13 +2370,15 @@ var MarginCore = (function(){
   var DB_NAME    = "margin";
   /* 3 adds the notebook groups store. The step is purely additive: nothing
      already stored is rewritten, and a notebook with no group simply sits at
-     the top level, so an older backup still imports unchanged. */
-  var DB_VERSION = 3;      /* storage schema */
-  var FORMAT     = 7;      /* export file format (7 adds files and audio) */
+     the top level, so an older backup still imports unchanged.
+     4 adds sections inside a notebook (notebooks → sections → pages).
+     Existing pages have no sectionId and keep working as an unfiled group. */
+  var DB_VERSION = 4;      /* storage schema */
+  var FORMAT     = 8;      /* export file format (8 adds sections) */
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b42";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b43";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -2367,6 +2425,11 @@ var MarginCore = (function(){
     /* notebook groups: folders, nestable via parentId, with their own colour */
     if (!db.objectStoreNames.contains("groups")){
       db.createObjectStore("groups", {keyPath:"id"}).createIndex("by_parent", "parentId");
+    }
+    /* sections live inside a notebook. by_notebook is how the page list
+       loads only the ones that belong here. */
+    if (!db.objectStoreNames.contains("sections")){
+      db.createObjectStore("sections", {keyPath:"id"}).createIndex("by_notebook", "notebookId");
     }
     if (oldVersion >= 1 && oldVersion < 2 && tx) migrate1to2(tx);
   }
@@ -3274,13 +3337,85 @@ var MarginCore = (function(){
     });
   }
 
+  /* ---------- sections (inside a notebook) ----------
+     Notebooks → sections → pages. A page with no sectionId is unfiled and
+     still belongs to the notebook; creating a section never hides old pages. */
+  function createSection(notebookId, name, colour){
+    var now = Date.now();
+    return open().then(function(){
+      return putOne("sections", {
+        id: newId("sc"),
+        notebookId: notebookId,
+        name: (name||"").trim() || "New section",
+        colour: COLOURS.indexOf(colour) >= 0 ? colour : "slate",
+        order: now,
+        createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
+      });
+    });
+  }
+  function sectionsIn(notebookId, opts){
+    opts = opts || {};
+    return byIndex("sections", "by_notebook", notebookId).then(function(l){
+      var list = opts.includeDeleted ? l : l.filter(live);
+      return list.sort(function(a, b){
+        var ao = (a.order==null ? 1e15 : a.order), bo = (b.order==null ? 1e15 : b.order);
+        if (ao !== bo) return ao - bo;
+        return (a.createdAt||0) - (b.createdAt||0);
+      });
+    });
+  }
+  function getSection(id){ return getOne("sections", id); }
+  function updateSection(id, patch){
+    return getSection(id).then(function(s){
+      if (!s) throw new Error("No section " + id);
+      var touched = false;
+      Object.keys(patch).forEach(function(k){
+        if (s[k] !== patch[k]){ s[k] = patch[k]; touched = true; }
+      });
+      if (touched) touch(s);
+      return putOne("sections", s);
+    });
+  }
+  /* Deleting a section never deletes its pages: they become unfiled. */
+  function deleteSection(id){
+    return Promise.all([getSection(id), getAll("notes")]).then(function(r){
+      var sec = r[0];
+      if (!sec) return null;
+      sec.deletedAt = Date.now();
+      touch(sec);
+      var notes = [];
+      r[1].forEach(function(n){
+        if (n.sectionId === id && !n.deletedAt){
+          n.sectionId = null; touch(n); notes.push(n);
+        }
+      });
+      return putMany(["sections","notes"], {sections:[sec], notes:notes});
+    });
+  }
+  /* Pages grouped the way the list and the shortcuts pop both want them. */
+  function notesBySection(notes, sections){
+    var by = { "": [] };
+    (sections || []).forEach(function(s){ by[s.id] = []; });
+    (notes || []).forEach(function(n){
+      var k = (n.sectionId && by.hasOwnProperty(n.sectionId)) ? n.sectionId : "";
+      by[k].push(n);
+    });
+    var out = [];
+    if (by[""].length) out.push({ section: null, notes: sortPages(by[""]) });
+    (sections || []).forEach(function(s){
+      out.push({ section: s, notes: sortPages(by[s.id] || []) });
+    });
+    return out;
+  }
+
   /* ---------- notes ---------- */
 
-  function createNote(notebookId, title){
+  function createNote(notebookId, title, sectionId){
     var now = Date.now();
     return open().then(function(){
       return putOne("notes", {
         id: newId("nt"), notebookId: notebookId,
+        sectionId: sectionId || null,
         title: (title||"").trim(), html: "",
         tags: [], pinned: false, starred: false,
         createdAt: now, lastEdited: now,
@@ -3345,14 +3480,15 @@ var MarginCore = (function(){
       var after = null;
       list.forEach(function(n){ if (n.id === afterNoteId) after = n; });
       var p = after ? splitSeries(after.title) : null;
-      if (!p) return createNote(nbId, "");      /* unnumbered: nothing to shift */
+      var sec = after ? (after.sectionId || null) : null;
+      if (!p) return createNote(nbId, "", sec);      /* unnumbered: nothing to shift */
       var plan = renumberPlan(list.map(function(n){ return n.title; }), p.stem, p.num + 1);
       return plan.reduce(function(chain, step){
         return chain.then(function(){
           return saveNote(list[step.index].id, { title: step.to });
         });
       }, Promise.resolve()).then(function(){
-        return createNote(nbId, seriesName(p.stem, p.num + 1, p.pad));
+        return createNote(nbId, seriesName(p.stem, p.num + 1, p.pad), sec);
       });
     });
   }
@@ -3867,6 +4003,7 @@ var MarginCore = (function(){
       var copy = {
         id: newId("nt"),
         notebookId: intoNotebookId || src.notebookId,
+        sectionId: intoNotebookId && intoNotebookId !== src.notebookId ? null : (src.sectionId || null),
         title: (src.title ? src.title : displayTitle(src)) + " (copy)",
         html: html,
         tags: (src.tags||[]).slice(),
@@ -3888,20 +4025,31 @@ var MarginCore = (function(){
   }
 
   function duplicateNotebook(id){
-    return Promise.all([getNotebook(id), notesIn(id)]).then(function(r){
+    return Promise.all([getNotebook(id), notesIn(id), sectionsIn(id)]).then(function(r){
       var src = r[0];
       if (!src) throw new Error("No notebook " + id);
       var now = Date.now();
       var nb = {
         id: newId("nb"), name: src.name + " (copy)", colour: src.colour,
+        groupId: src.groupId || null,
         order: now, createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
       };
+      var secMap = {};
+      var sections = (r[2] || []).map(function(s){
+        var ns = {
+          id: newId("sc"), notebookId: nb.id, name: s.name, colour: s.colour,
+          order: s.order, createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
+        };
+        secMap[s.id] = ns.id;
+        return ns;
+      });
       return Promise.all(r[1].map(function(n){ return practicesFor(n.id); }))
         .then(function(pracLists){
           var notes = [], pracs = [];
           r[1].forEach(function(n, i){
             var copy = {
               id: newId("nt"), notebookId: nb.id, title: n.title, html: n.html,
+              sectionId: (n.sectionId && secMap[n.sectionId]) ? secMap[n.sectionId] : null,
               tags: (n.tags||[]).slice(), pinned: n.pinned, starred: n.starred,
               createdAt: now, lastEdited: now,
               deletedAt: null, deletedVia: null, editedOn: _device
@@ -3914,8 +4062,8 @@ var MarginCore = (function(){
               });
             });
           });
-          return putMany(["notebooks","notes","practices"],
-                         {notebooks:[nb], notes:notes, practices:pracs});
+          return putMany(["notebooks","notes","practices","sections"],
+                         {notebooks:[nb], notes:notes, practices:pracs, sections:sections});
         }).then(function(){ return nb; });
     });
   }
@@ -3936,13 +4084,17 @@ var MarginCore = (function(){
   }
 
   function deleteNotebook(id){
-    return Promise.all([getNotebook(id), notesIn(id)]).then(function(r){
+    return Promise.all([getNotebook(id), notesIn(id), sectionsIn(id)]).then(function(r){
       if (!r[0]) return 0;
       var now = Date.now();
       r[0].deletedAt = now; r[0].editedOn = _device; r[0].lastEdited = now;
       var notes = r[1].map(function(n){
         n.deletedAt = now; n.deletedVia = id; n.editedOn = _device; n.lastEdited = now;
         return n;
+      });
+      var sections = (r[2] || []).map(function(s){
+        s.deletedAt = now; s.editedOn = _device; s.lastEdited = now;
+        return s;
       });
       return Promise.all(notes.map(function(n){ return practicesFor(n.id); }))
         .then(function(lists){
@@ -3952,8 +4104,8 @@ var MarginCore = (function(){
               p.deletedAt = now; p.editedOn = _device; p.lastEdited = now; pracs.push(p);
             });
           });
-          return putMany(["notebooks","notes","practices"],
-                         {notebooks:[r[0]], notes:notes, practices:pracs});
+          return putMany(["notebooks","notes","practices","sections"],
+                         {notebooks:[r[0]], notes:notes, practices:pracs, sections:sections});
         }).then(function(){ return notes.length; });
     });
   }
@@ -3981,19 +4133,21 @@ var MarginCore = (function(){
   }
 
   function restoreNotebook(id){
-    return Promise.all([getNotebook(id), getAll("notes")]).then(function(r){
+    return Promise.all([getNotebook(id), getAll("notes"), getAll("sections")]).then(function(r){
       if (!r[0]) throw new Error("No notebook " + id);
       r[0].deletedAt = null; touch(r[0]);
       var notes = r[1].filter(function(n){ return n.deletedVia === id && n.deletedAt; });
       notes.forEach(function(n){ n.deletedAt = null; n.deletedVia = null; touch(n); });
+      var sections = (r[2] || []).filter(function(s){ return s.notebookId === id && s.deletedAt; });
+      sections.forEach(function(s){ s.deletedAt = null; touch(s); });
       return Promise.all(notes.map(function(n){ return practicesFor(n.id); }))
         .then(function(lists){
           var pracs = [];
           lists.forEach(function(l){
             l.forEach(function(p){ if (p.deletedAt){ p.deletedAt = null; touch(p); pracs.push(p); } });
           });
-          return putMany(["notebooks","notes","practices"],
-                         {notebooks:[r[0]], notes:notes, practices:pracs});
+          return putMany(["notebooks","notes","practices","sections"],
+                         {notebooks:[r[0]], notes:notes, practices:pracs, sections:sections});
         }).then(function(){ return notes.length; });
     });
   }
@@ -4014,15 +4168,18 @@ var MarginCore = (function(){
   /* hard erase — the only thing that actually removes bytes */
   function purge(ids){
     return open().then(function(db){
-      var t = db.transaction(["notebooks","notes","practices","assets"], "readwrite");
+      var t = db.transaction(["notebooks","notes","practices","assets","sections"], "readwrite");
       var nb = t.objectStore("notebooks"), nt = t.objectStore("notes");
       var pr = t.objectStore("practices"), as = t.objectStore("assets");
+      var sc = t.objectStore("sections");
       ids.forEach(function(id){
         nb.delete(id); nt.delete(id);
         [[pr,"by_note"],[as,"by_note"]].forEach(function(pair){
           var c = pair[0].index(pair[1]).openCursor(IDBKeyRange.only(id));
           c.onsuccess = function(e){ var cur = e.target.result; if (cur){ cur.delete(); cur.continue(); } };
         });
+        var cs = sc.index("by_notebook").openCursor(IDBKeyRange.only(id));
+        cs.onsuccess = function(e){ var cur = e.target.result; if (cur){ cur.delete(); cur.continue(); } };
       });
       return new Promise(function(res, rej){
         t.oncomplete = function(){ res(ids.length); };
@@ -4079,7 +4236,7 @@ var MarginCore = (function(){
   function exportBundle(){
     return Promise.all([
       getAll("notebooks"), getAll("notes"), getAll("practices"), getAll("assets"), allMeta(),
-      getAll("groups")
+      getAll("groups"), getAll("sections")
     ]).then(function(r){
       return Promise.all(r[3].map(function(a){
         if (!a.blob && !a.orig) return Promise.resolve(a);
@@ -4103,6 +4260,7 @@ var MarginCore = (function(){
         notebooks: r[0], notes: r[1], practices: r[2],
         assets: r[3],     /* ink lives here; images join it at stage 4 */
         groups: r[5] || [],
+        sections: r[6] || [],
         meta: meta
       };
     });
@@ -4132,7 +4290,7 @@ var MarginCore = (function(){
 
   /* a backup of a single subject, for handing over or archiving */
   function exportNotebook(nbId){
-    return Promise.all([getNotebook(nbId), getAll("notes")]).then(function(r){
+    return Promise.all([getNotebook(nbId), getAll("notes"), sectionsIn(nbId, {includeDeleted:true})]).then(function(r){
       if (!r[0]) throw new Error("No notebook " + nbId);
       var notes = r[1].filter(function(n){ return n.notebookId === nbId; });
       var ids = {};
@@ -4150,7 +4308,8 @@ var MarginCore = (function(){
           return {
             app: "margin", format: FORMAT, schema: DB_VERSION, partial: true,
             exportedAt: Date.now(), exportedBy: _device,
-            notebooks: [r[0]], notes: notes, practices: pracs, assets: withData, meta: {}
+            notebooks: [r[0]], notes: notes, practices: pracs, assets: withData,
+            sections: r[2] || [], groups: [], meta: {}
           };
         });
       });
@@ -4197,6 +4356,12 @@ var MarginCore = (function(){
       if (r.deletedVia === undefined) r.deletedVia = null;
       if (r.bookmark === undefined) r.bookmark = null;
       if (r.conflictOf === undefined) r.conflictOf = null;
+      if (r.sectionId === undefined) r.sectionId = null;
+    }
+    if (kind === "section"){
+      if (!r.name) r.name = "Section";
+      if (COLOURS.indexOf(r.colour) < 0) r.colour = "slate";
+      if (!r.notebookId) return null;
     }
     if (kind === "group"){
       if (r.parentId === undefined) r.parentId = null;
@@ -4221,6 +4386,7 @@ var MarginCore = (function(){
     var inPr = (b.practices||[]).map(function(x){ return normalise(x, "practice"); }).filter(Boolean);
     var inAs = (b.assets||[]).map(function(x){ return normalise(x, "asset"); }).filter(Boolean);
     var inGp = (b.groups||[]).map(function(x){ return normalise(x, "group"); }).filter(Boolean);
+    var inSc = (b.sections||[]).map(function(x){ return normalise(x, "section"); }).filter(Boolean);
 
     /* a format-1 file keeps its scratch text inline */
     inNt.forEach(function(n){
@@ -4235,13 +4401,13 @@ var MarginCore = (function(){
     });
 
     return Promise.all([getAll("notebooks"), getAll("notes"), getAll("practices"),
-                        getAll("assets"), getAll("groups")])
+                        getAll("assets"), getAll("groups"), getAll("sections")])
       .then(function(cur){
-        var have = [{}, {}, {}, {}, {}];
+        var have = [{}, {}, {}, {}, {}, {}];
         cur.forEach(function(list, i){ list.forEach(function(x){ have[i][x.id] = x; }); });
 
         var res = {added:0, updated:0, skipped:0, deleted:0, conflicts:0};
-        var write = [[], [], [], [], []];
+        var write = [[], [], [], [], [], []];
 
         /* ---- a page edited on both devices ----
            Last-writer-wins is fine until the two copies genuinely differ, and
@@ -4270,7 +4436,7 @@ var MarginCore = (function(){
           return !!twinIndex[x.id + "@" + (x.lastEdited || 0)];
         }
 
-        [inNb, inNt, inPr, inAs, inGp].forEach(function(incoming, i){
+        [inNb, inNt, inPr, inAs, inGp, inSc].forEach(function(incoming, i){
           incoming.forEach(function(x){
             var mine = have[i][x.id];
             if (!mine){
@@ -4328,9 +4494,15 @@ var MarginCore = (function(){
         write[0].forEach(function(x){ if (x.groupId && !gpIds[x.groupId]) x.groupId = null; });
         write[4].forEach(function(x){ if (x.parentId && !gpIds[x.parentId]) x.parentId = null; });
 
-        return putMany(["notebooks","notes","practices","assets","groups"],
+        /* a page pointing at a section that did not arrive becomes unfiled */
+        var scIds = {};
+        Object.keys(have[5]).forEach(function(k){ scIds[k] = 1; });
+        write[5].forEach(function(x){ scIds[x.id] = 1; });
+        write[1].forEach(function(x){ if (x.sectionId && !scIds[x.sectionId]) x.sectionId = null; });
+
+        return putMany(["notebooks","notes","practices","assets","groups","sections"],
                        {notebooks:write[0], notes:write[1], practices:write[2],
-                        assets:write[3], groups:write[4]})
+                        assets:write[3], groups:write[4], sections:write[5]})
                .then(function(){ return res; });
       });
   }
@@ -4344,6 +4516,8 @@ var MarginCore = (function(){
     createGroup:createGroup, allGroups:allGroups, getGroup:getGroup,
     updateGroup:updateGroup, moveGroup:moveGroup, deleteGroup:deleteGroup,
     wouldCycle:wouldCycle,
+    createSection:createSection, sectionsIn:sectionsIn, getSection:getSection,
+    updateSection:updateSection, deleteSection:deleteSection, notesBySection:notesBySection,
     splitSeries:splitSeries, seriesName:seriesName, nextSeriesName:nextSeriesName,
     renumberPlan:renumberPlan, sortPages:sortPages, suggestNotebookName:suggestNotebookName,
     suggestPageTitle:suggestPageTitle, insertPageAfter:insertPageAfter,
@@ -4409,6 +4583,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     starred: [], recent: [], weak: [], pracAll: [], audio: [], lastLink: null,
     allNotes: [], inkNotes: {}, attNotes: {}, audNotes: {}, nbLast: null,
     groups: [], gFold: {}, marks: [],
+    sections: [], sFold: {},
     dirty: false, saving: false
   };
 
@@ -4666,6 +4841,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     host.textContent = "";
     $("listTitle").textContent = "Recently deleted";
     $("addNote").style.visibility = "hidden";
+    if ($("addSectionBtn")) $("addSectionBtn").style.visibility = "hidden";
     $("editNotebook").style.visibility = "hidden";
     $("filter").parentNode.hidden = true;
     $("trashBar").hidden = false;
@@ -4712,6 +4888,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var host = $("noteList"); host.textContent = "";
     $("listTitle").textContent = "Search";
     $("addNote").style.visibility = "hidden";
+    if ($("addSectionBtn")) $("addSectionBtn").style.visibility = "hidden";
     $("editNotebook").style.visibility = "hidden";
     $("filter").parentNode.hidden = true;
     $("searchBar").hidden = false;
@@ -4746,6 +4923,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var host = $("noteList"); host.textContent = "";
     $("listTitle").textContent = "Starred";
     $("addNote").style.visibility = "hidden";
+    if ($("addSectionBtn")) $("addSectionBtn").style.visibility = "hidden";
     $("editNotebook").style.visibility = "hidden";
     $("filter").parentNode.hidden = true;
     $("searchBar").hidden = true;
@@ -4781,6 +4959,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var host = $("noteList"); host.textContent = "";
     $("listTitle").textContent = "Bookmarks";
     $("addNote").style.visibility = "hidden";
+    if ($("addSectionBtn")) $("addSectionBtn").style.visibility = "hidden";
     $("editNotebook").style.visibility = "hidden";
     if ($("insertPageBtn")) $("insertPageBtn").style.visibility = "hidden";
     $("filter").parentNode.hidden = true;
@@ -4838,11 +5017,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("trashBar").hidden = true;
     $("filter").parentNode.hidden = false;
     $("addNote").style.visibility = "";
+    if ($("addSectionBtn")) $("addSectionBtn").style.visibility = "";
     var host = $("noteList");
     host.textContent = "";
     var nb = state.notebooks.filter(function(x){ return x.id === state.nbId; })[0];
     $("listTitle").textContent = nb ? nb.name : "Notes";
     $("addNote").disabled = !nb;
+    if ($("addSectionBtn")) $("addSectionBtn").disabled = !nb;
     $("editNotebook").disabled = !nb;
     $("editNotebook").style.visibility = nb ? "" : "hidden";
 
@@ -4863,7 +5044,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       host.appendChild(e);
       return;
     }
-    shown.forEach(function(n){
+    function paintNoteRow(n){
       var b = document.createElement("button");
       b.type = "button"; b.className = "row";
       if (n.id === state.noteId) b.setAttribute("aria-current", "true");
@@ -4925,6 +5106,56 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       });
       b.addEventListener("contextmenu", function(ev){ ev.preventDefault(); renameNote(n); });
       host.appendChild(b);
+    }
+
+    var secs = state.sections || [];
+    if (!secs.length){
+      shown.forEach(paintNoteRow);
+      return;
+    }
+    /* with sections, the list is notebooks → sections → pages */
+    var grouped = C.notesBySection(shown, secs);
+    grouped.forEach(function(g){
+      var sid = g.section ? g.section.id : "";
+      var open = state.sFold[sid || "_none"] !== false;
+      var head = document.createElement("button");
+      head.type = "button";
+      head.className = "row grouprow secrow";
+      var tw = document.createElement("span");
+      tw.className = "twisty";
+      tw.textContent = open ? "▾" : "▸";
+      var sw = document.createElement("i");
+      sw.className = "swatch folder";
+      sw.style.background = g.section
+        ? (SWATCH[g.section.colour] || SWATCH.slate)
+        : "var(--rule)";
+      var m2 = document.createElement("span"); m2.className = "rowmain";
+      var t2 = document.createElement("span"); t2.className = "rowtitle";
+      t2.textContent = g.section ? g.section.name : "Pages";
+      m2.appendChild(t2);
+      var c2 = document.createElement("span"); c2.className = "count";
+      c2.textContent = g.notes.length;
+      head.appendChild(tw); head.appendChild(sw); head.appendChild(m2); head.appendChild(c2);
+      if (g.section){
+        var plus = document.createElement("button");
+        plus.type = "button"; plus.className = "secplus"; plus.textContent = "+";
+        plus.title = "New page in this section";
+        plus.addEventListener("click", function(ev){
+          ev.stopPropagation();
+          addPageInSection(g.section.id);
+        });
+        head.appendChild(plus);
+        head.addEventListener("contextmenu", function(ev){
+          ev.preventDefault(); openSectionDialog(g.section);
+        });
+      }
+      head.addEventListener("click", function(){
+        state.sFold[sid || "_none"] = !open;
+        C.setMeta("sFold", state.sFold);
+        paintNotes();
+      });
+      host.appendChild(head);
+      if (open) g.notes.forEach(paintNoteRow);
     });
   }
 
@@ -5013,6 +5244,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        height without treating it as a shift to compensate for */
     if (typeof padWatch === "object" && padWatch) padWatch.skip = true;
     if (typeof paintPrevPeek === "function") paintPrevPeek();
+    if (typeof warmNeighbourInk === "function") warmNeighbourInk();
     if (typeof watchPad === "function") watchPad();
     /* the swapped-to page is now really here, with its bands rebuilt */
     if (typeof finishHandover === "function") finishHandover();
@@ -5044,6 +5276,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (state.view === "weak") bits.push("<b>Weak topics</b>");
     if (state.view === "pracAll") bits.push("<b>All rough working</b>");
     if (nb) bits.push('<b data-crumb="' + esc(nb.id) + '">' + esc(nb.name) + "</b>");
+    if (state.note && state.note.sectionId){
+      var sec = null;
+      (state.sections || []).forEach(function(s){ if (s.id === state.note.sectionId) sec = s; });
+      if (sec) bits.push(esc(sec.name));
+    }
     if (state.note) bits.push(esc(C.displayTitle(state.note)));
     $("crumbs").innerHTML = bits.join(" &nbsp;/&nbsp; ");
   }
@@ -5076,10 +5313,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return Promise.all([
       C.allNotebooks(),
       state.nbId ? C.notesIn(state.nbId) : Promise.resolve([]),
-      C.notesSnapshot(), C.trash(), C.practiceCounts(), C.allGroups()
+      C.notesSnapshot(), C.trash(), C.practiceCounts(), C.allGroups(),
+      state.nbId ? C.sectionsIn(state.nbId) : Promise.resolve([])
     ]).then(function(r){
       state.notebooks = r[0]; state.notes = r[1];
       state.groups = r[5] || [];
+      state.sections = r[6] || [];
       var snap = r[2];
       void snap;
       state.allNotes = snap.all; state.counts = snap.counts;
@@ -5111,10 +5350,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       r.nbId ? C.notesIn(r.nbId) : Promise.resolve([]),
       Promise.resolve(null),
       r.noteId ? C.getNote(r.noteId) : Promise.resolve(null),
-      C.trash(), C.notesSnapshot(), C.practiceCounts(), C.allGroups()
+      C.trash(), C.notesSnapshot(), C.practiceCounts(), C.allGroups(),
+      r.nbId ? C.sectionsIn(r.nbId) : Promise.resolve([])
     ]).then(function(res){
       state.notebooks = res[0];
       state.groups = res[7] || [];
+      state.sections = res[8] || [];
       state.notes = res[1];
       state.counts = res[2];
       state.note = (res[3] && !res[3].deletedAt) ? res[3] : null;
@@ -5158,6 +5399,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         paintNotebooks(); paintTrashRow(); paintNotes(); paintDoc(); paintCrumbs(); paintRecent();
         /* the layout may have changed which panes are on screen */
         if (typeof paintEdge === "function") paintEdge();
+        if (typeof buildJumpBar === "function") buildJumpBar();
         if (state.nbId) C.setMeta("lastRoute", location.hash);
       }
     });
@@ -5366,6 +5608,63 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }).catch(function(e){ say("Could not delete the folder: " + e.message); });
   });
 
+  /* ---------------- section dialog ---------------- */
+  var secEditing = null, secColour = "slate";
+  function buildSecSwatches(){
+    var host = $("secSwatches");
+    if (!host) return;
+    host.textContent = "";
+    C.COLOURS.forEach(function(c){
+      var b = document.createElement("button");
+      b.type = "button"; b.style.background = SWATCH[c];
+      b.setAttribute("aria-label", c);
+      b.setAttribute("aria-pressed", c === secColour ? "true" : "false");
+      b.addEventListener("click", function(){
+        secColour = c;
+        Array.prototype.forEach.call(host.children, function(el){
+          el.setAttribute("aria-pressed", el === b ? "true" : "false");
+        });
+      });
+      host.appendChild(b);
+    });
+  }
+  function openSectionDialog(sec){
+    if (!state.nbId){ say("Open a notebook first."); return; }
+    secEditing = sec || null;
+    secColour = sec ? (sec.colour || "slate") : "slate";
+    $("secDlgHead").textContent = sec ? "Section" : "New section";
+    $("secName").value = sec ? sec.name : "";
+    $("secDelete").style.display = sec ? "" : "none";
+    buildSecSwatches();
+    $("secDlg").showModal();
+    setTimeout(function(){ $("secName").focus(); }, 30);
+  }
+  if ($("addSectionBtn")) $("addSectionBtn").addEventListener("click", function(){
+    openSectionDialog(null);
+  });
+  $("secCancel").addEventListener("click", function(){ $("secDlg").close(); });
+  $("secSave").addEventListener("click", function(){
+    var name = $("secName").value.trim();
+    if (!name){ $("secName").focus(); return; }
+    if (!state.nbId) return;
+    var p = secEditing
+      ? C.updateSection(secEditing.id, { name:name, colour:secColour })
+      : C.createSection(state.nbId, name, secColour);
+    p.then(function(){
+      $("secDlg").close();
+      return refreshLists();
+    }).catch(dbFail("Could not save the section"));
+  });
+  $("secDelete").addEventListener("click", function(){
+    if (!secEditing) return;
+    if (!confirm("Delete the section “" + secEditing.name +
+                 "”? Its pages stay in the notebook, unfiled.")) return;
+    C.deleteSection(secEditing.id).then(function(){
+      $("secDlg").close();
+      return refreshLists();
+    }).catch(function(e){ say("Could not delete the section: " + e.message); });
+  });
+
   /* ---------------- notebook dialog ---------------- */
   var nbEditing = null, nbColour = "slate";
 
@@ -5444,17 +5743,23 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
 
   /* ---------------- notes ---------------- */
-  $("addNote").addEventListener("click", function(){
+  function currentSectionId(){
+    return (state.note && state.note.sectionId) || null;
+  }
+  function addPageInSection(sectionId){
     if (!state.nbId) return;
     var nbId = state.nbId;
     flush().then(function(){
       return C.suggestPageTitle(nbId);
     }).then(function(title){
-      return C.createNote(nbId, title);
+      return C.createNote(nbId, title, sectionId || null);
     }).then(function(n){
       go({nbId:nbId, noteId:n.id});
       setTimeout(function(){ $("noteTitle").focus(); $("noteTitle").select(); }, 60);
     });
+  }
+  $("addNote").addEventListener("click", function(){
+    addPageInSection(currentSectionId());
   });
 
   /* Insert a page straight after the open one, pushing the rest up. */
@@ -5486,9 +5791,42 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!state.note) return;
     var host = $("moveList");
     host.textContent = "";
+    var secs = state.sections || [];
+    if (secs.length){
+      var h = document.createElement("p");
+      h.className = "hint";
+      h.textContent = "Another section in this notebook";
+      host.appendChild(h);
+      var un = document.createElement("button");
+      un.type = "button"; un.className = "btn";
+      un.textContent = "Unfiled pages";
+      un.addEventListener("click", function(){
+        var id = state.note.id;
+        flush().then(function(){ return C.saveNote(id, {sectionId:null}); })
+               .then(function(){ $("moveDlg").close(); refreshLists(); });
+      });
+      host.appendChild(un);
+      secs.forEach(function(s){
+        if (state.note.sectionId === s.id) return;
+        var b0 = document.createElement("button");
+        b0.type = "button"; b0.className = "btn";
+        b0.textContent = s.name;
+        b0.addEventListener("click", function(){
+          var id = state.note.id;
+          flush().then(function(){ return C.saveNote(id, {sectionId:s.id}); })
+                 .then(function(){ $("moveDlg").close(); refreshLists(); });
+        });
+        host.appendChild(b0);
+      });
+    }
     var others = state.notebooks.filter(function(nb){ return nb.id !== state.nbId; });
-    if (!others.length){
+    if (!others.length && !secs.length){
       host.innerHTML = '<p class="hint">There is only one notebook. Make another first.</p>';
+    } else if (others.length){
+      var h2 = document.createElement("p");
+      h2.className = "hint";
+      h2.textContent = "A different notebook";
+      host.appendChild(h2);
     }
     others.forEach(function(nb){
       var b = document.createElement("button");
@@ -5496,7 +5834,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       b.textContent = nb.name;
       b.addEventListener("click", function(){
         var id = state.note.id;
-        flush().then(function(){ return C.saveNote(id, {notebookId:nb.id}); })
+        flush().then(function(){ return C.saveNote(id, {notebookId:nb.id, sectionId:null}); })
                .then(function(){ $("moveDlg").close(); go({nbId:nb.id, noteId:id}); });
       });
       host.appendChild(b);
@@ -7151,6 +7489,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
                                  "latch":  the hold turns it on and off */
     holdEraseMs: 650,     /* how long that hold has to be */
     favBar: false,     /* the floating favourites bar */
+    jumpBar: true,     /* the floating shortcuts bar (home / open / places) */
+    jumpMin: false,
+    jumpPos: null,
     favTools: ["pen_ink", "pen_blue", "pen_red", "hl_amber", "eraser", "lasso", "undo"],
     penHelp: true,     /* hover the pen over a control to hear what it does */
     favMin: false,     /* the favourites bar shrunk to its dot */
@@ -7219,6 +7560,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        which is why the bar came back missing after every reload. applyCfg is
        the one place that runs both at boot and on every change. */
     if (typeof buildFavBar === "function") buildFavBar();
+    if (typeof buildJumpBar === "function") buildJumpBar();
     if (cfg.wakeLock) requestWake();
   }
 
@@ -7309,6 +7651,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setPageFlow").checked = cfg.pageFlow !== false;
     $("setHints").checked = cfg.hints !== false;
     $("setFavBar").checked = cfg.favBar === true;
+    if ($("setJumpBar")) $("setJumpBar").checked = cfg.jumpBar !== false;
     $("setPenHelp").checked = cfg.penHelp !== false;
     $("setFavSize").value = cfg.favSize;
     $("favSizeOut").textContent = cfg.favSize + " px";
@@ -7407,6 +7750,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
     $("setFavBar").addEventListener("change", function(){
       cfg.favBar = this.checked; saveCfg(); buildFavBar();
+    });
+    if ($("setJumpBar")) $("setJumpBar").addEventListener("change", function(){
+      cfg.jumpBar = this.checked; saveCfg();
+      if (typeof buildJumpBar === "function") buildJumpBar();
     });
     bindCheck("setKeepFoot", "keepFoot");
     bindCheck("setTapType", "tapToType");
@@ -8054,38 +8401,255 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
   document.addEventListener("pointermove", function(e){
     if (!favDrag) return;
+    if (favDrag.jump){
+      var jp = jumpClamp(e.clientX - favDrag.dx, e.clientY - favDrag.dy);
+      $("jumpBar").style.left = jp.x + "px";
+      $("jumpBar").style.top = jp.y + "px";
+      return;
+    }
     var p = favClamp(e.clientX - favDrag.dx, e.clientY - favDrag.dy);
     $("favBar").style.left = p.x + "px";
     $("favBar").style.top = p.y + "px";
   });
   document.addEventListener("pointerup", function(){
     if (!favDrag) return;
+    if (favDrag.jump){
+      favDrag = null;
+      var jr = $("jumpBar").getBoundingClientRect();
+      cfg.jumpPos = { x: Math.round(jr.left), y: Math.round(jr.top) };
+      saveCfg();
+      return;
+    }
     favDrag = null;
     var r = $("favBar").getBoundingClientRect();
     cfg.favPos = { x: Math.round(r.left), y: Math.round(r.top) };
     saveCfg();
   });
-  window.addEventListener("resize", function(){ setTimeout(placeFavBar, 80); });
+  window.addEventListener("resize", function(){
+    setTimeout(function(){
+      placeFavBar();
+      if (typeof placeJumpBar === "function") placeJumpBar();
+    }, 80);
+  });
 
   $("favMini").addEventListener("click", function(e){
     e.preventDefault(); e.stopPropagation();
     cfg.favMin = true; saveCfg(); buildFavBar();
   });
-  $("favDot").addEventListener("click", function(e){
-    e.preventDefault(); e.stopPropagation();
+  /* the minimised dot can be dragged, not only tapped — a tap still opens */
+  bindDotDrag($("favDot"), function(){ return cfg.favPos; }, function(p){
+    cfg.favPos = p; saveCfg();
+    if ($("favBar") && !$("favBar").hidden){
+      $("favBar").style.left = p.x + "px";
+      $("favBar").style.top = p.y + "px";
+    }
+  }, function(){
     cfg.favMin = false; saveCfg(); buildFavBar();
   });
   $("favEdit").addEventListener("click", function(e){
     e.preventDefault(); e.stopPropagation();
     /* straight to the group that holds the tick boxes, already open */
     buildSettings();
-    Array.prototype.forEach.call(document.querySelectorAll("#setDlg .setgroup"), function(g, i){
-      g.open = (i === 4);        /* "The favourites bar" */
+    var hit = null;
+    Array.prototype.forEach.call(document.querySelectorAll("#setDlg .setgroup"), function(g){
+      var sum = g.querySelector("summary");
+      var here = !!(sum && /favourites/i.test(sum.textContent));
+      g.open = here;
+      if (here) hit = g;
     });
     openSettings();
-    var g = document.querySelectorAll("#setDlg .setgroup")[4];
-    if (g && g.scrollIntoView) setTimeout(function(){ g.scrollIntoView({ block: "start" }); }, 40);
+    if (hit && hit.scrollIntoView) setTimeout(function(){ hit.scrollIntoView({ block: "start" }); }, 40);
   });
+
+  /* ---- the shortcuts bar ----
+     A second floating bar, like favourites, but for jumping: home (open
+     another notebook without closing this one), the notebooks already open,
+     and this notebook's sections plus bookmarks. It can shrink to a dot,
+     and the dot itself can be dragged. */
+  function bindDotDrag(el, getPos, setPos, onTap){
+    if (!el) return;
+    var drag = null, moved = false;
+    el.addEventListener("pointerdown", function(e){
+      var r = el.getBoundingClientRect();
+      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+      moved = false;
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault(); e.stopPropagation();
+    });
+    el.addEventListener("pointermove", function(e){
+      if (!drag) return;
+      var x = e.clientX - drag.dx, y = e.clientY - drag.dy;
+      var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+      x = Math.max(4, Math.min(x, vw - el.offsetWidth - 4));
+      y = Math.max(4, Math.min(y, vh - el.offsetHeight - 4));
+      if (Math.abs(e.clientX - (drag.dx + el.offsetWidth / 2)) > 8 ||
+          Math.abs(e.clientY - (drag.dy + el.offsetHeight / 2)) > 8) moved = true;
+      el.style.left = x + "px";
+      el.style.top = y + "px";
+    });
+    el.addEventListener("pointerup", function(){
+      if (!drag) return;
+      var r = el.getBoundingClientRect();
+      var p = { x: Math.round(r.left), y: Math.round(r.top) };
+      drag = null;
+      setPos(p);
+      if (!moved && onTap) onTap();
+    });
+    el.addEventListener("click", function(e){
+      e.preventDefault(); e.stopPropagation();
+    });
+  }
+  function jumpClamp(x, y){
+    var el = $("jumpBar");
+    var w = (el && el.offsetWidth) || 54, h = (el && el.offsetHeight) || 180;
+    var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+    return { x: Math.max(4, Math.min(x, vw - w - 4)),
+             y: Math.max(4, Math.min(y, vh - h - 4)) };
+  }
+  function defaultJumpPos(){
+    var vw = window.innerWidth || 1024;
+    return { x: Math.max(8, vw - 62), y: Math.round((window.innerHeight || 768) * 0.28) };
+  }
+  function jumpBarWanted(){
+    if (cfg.jumpBar === false) return false;
+    return !!state.nbId;
+  }
+  function placeJumpBar(){
+    var el = $("jumpBar");
+    if (!el || el.hidden) return;
+    var p = jumpClamp((cfg.jumpPos || defaultJumpPos()).x, (cfg.jumpPos || defaultJumpPos()).y);
+    el.style.left = p.x + "px";
+    el.style.top = p.y + "px";
+  }
+  function buildJumpBar(){
+    var host = $("jumpBar"), dot = $("jumpDot");
+    if (!host) return;
+    var off = !jumpBarWanted();
+    host.hidden = off || cfg.jumpMin === true;
+    if (dot){
+      dot.hidden = off || cfg.jumpMin !== true;
+      var p = cfg.jumpPos || defaultJumpPos();
+      var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+      dot.style.left = Math.max(4, Math.min(p.x, vw - 52)) + "px";
+      dot.style.top = Math.max(4, Math.min(p.y, vh - 52)) + "px";
+    }
+    if (!host.hidden) placeJumpBar();
+  }
+  function closeJumpPop(){ if ($("jumpPop")) $("jumpPop").hidden = true; }
+  function openJumpPop(btn, kind){
+    var m = $("jumpPop");
+    if (!m) return;
+    m.innerHTML = "";
+    function head(t){
+      var h = document.createElement("div");
+      h.className = "jumph";
+      h.textContent = t;
+      m.appendChild(h);
+    }
+    function row(label, sub, fn, current){
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "holditem";
+      b.textContent = label + (sub ? "  ·  " + sub : "");
+      if (current) b.setAttribute("aria-pressed", "true");
+      b.addEventListener("click", function(){ closeJumpPop(); fn(); });
+      m.appendChild(b);
+    }
+    if (kind === "open"){
+      head("Open notebooks");
+      if (!openNbs.length){
+        var e = document.createElement("p");
+        e.className = "hint"; e.style.padding = "8px 10px";
+        e.textContent = "No other notebook is open yet.";
+        m.appendChild(e);
+      }
+      openNbs.forEach(function(id){
+        var nb = nbById(id);
+        if (!nb) return;
+        row(nb.name, id === state.nbId ? "here" : "", function(){
+          if (id !== state.nbId) go({ nbId: id });
+        }, id === state.nbId);
+      });
+    } else {
+      head("Sections");
+      var secs = state.sections || [];
+      if (!secs.length){
+        var e2 = document.createElement("p");
+        e2.className = "hint"; e2.style.padding = "8px 10px";
+        e2.textContent = "No sections yet. Tap Section in the page list to make one.";
+        m.appendChild(e2);
+      }
+      secs.forEach(function(s){
+        var pages = (state.notes || []).filter(function(n){ return n.sectionId === s.id; });
+        pages = C.sortPages(pages);
+        row(s.name, pages.length ? C.displayTitle(pages[0]) : "empty", function(){
+          if (pages[0]) go({ nbId: state.nbId, noteId: pages[0].id });
+          else addPageInSection(s.id);
+        }, state.note && state.note.sectionId === s.id);
+      });
+      head("Bookmarks");
+      var marks = (state.marks || []).slice();
+      if (!marks.length){
+        var e3 = document.createElement("p");
+        e3.className = "hint"; e3.style.padding = "8px 10px";
+        e3.textContent = "No bookmarks yet. Open a page and tap Bookmark.";
+        m.appendChild(e3);
+      }
+      marks.forEach(function(n){
+        var nb = nbById(n.notebookId);
+        row(markLabel(n), nb ? nb.name : "", function(){
+          flush(); go({ nbId: n.notebookId, noteId: n.id });
+        }, state.noteId === n.id);
+      });
+    }
+    var r = btn.getBoundingClientRect();
+    var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+    m.hidden = false;
+    m.style.left = Math.min(Math.max(8, r.left - 8), Math.max(8, vw - m.offsetWidth - 8)) + "px";
+    m.style.top = Math.min(Math.max(8, r.bottom + 8), Math.max(8, vh - m.offsetHeight - 8)) + "px";
+  }
+  if ($("jumpGrip")) $("jumpGrip").addEventListener("pointerdown", function(e){
+    var r = $("jumpBar").getBoundingClientRect();
+    favDrag = { dx: e.clientX - r.left, dy: e.clientY - r.top, jump: true };
+    try { $("jumpGrip").setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault(); e.stopPropagation();
+  });
+  /* jump bar reuses favDrag; the move/up handlers below notice .jump */
+  if ($("jumpMini")) $("jumpMini").addEventListener("click", function(e){
+    e.preventDefault(); e.stopPropagation();
+    cfg.jumpMin = true; saveCfg(); buildJumpBar();
+  });
+  if ($("jumpHome")) $("jumpHome").addEventListener("click", function(e){
+    e.preventDefault(); e.stopPropagation();
+    closeJumpPop();
+    flush();
+    setFocus(false);
+    go({});
+    hint("This notebook stays open. Tap another to have both.");
+  });
+  if ($("jumpOpen")) $("jumpOpen").addEventListener("click", function(e){
+    e.preventDefault(); e.stopPropagation();
+    if ($("jumpPop") && !$("jumpPop").hidden){ closeJumpPop(); return; }
+    openJumpPop($("jumpOpen"), "open");
+  });
+  if ($("jumpPlaces")) $("jumpPlaces").addEventListener("click", function(e){
+    e.preventDefault(); e.stopPropagation();
+    if ($("jumpPop") && !$("jumpPop").hidden){ closeJumpPop(); return; }
+    openJumpPop($("jumpPlaces"), "places");
+  });
+  bindDotDrag($("jumpDot"), function(){ return cfg.jumpPos || defaultJumpPos(); }, function(p){
+    cfg.jumpPos = p; saveCfg();
+    if ($("jumpBar") && !$("jumpBar").hidden){
+      $("jumpBar").style.left = p.x + "px";
+      $("jumpBar").style.top = p.y + "px";
+    }
+  }, function(){
+    cfg.jumpMin = false; saveCfg(); buildJumpBar();
+  });
+  document.addEventListener("pointerdown", function(e){
+    if (!$("jumpPop") || $("jumpPop").hidden) return;
+    if (e.target.closest && e.target.closest("#jumpPop, #jumpBar")) return;
+    closeJumpPop();
+  }, true);
 
   function buildPresets(){
     var host = $("penPresets");
@@ -9703,6 +10267,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     host.textContent = "";
     $("listTitle").textContent = "All rough working";
     $("addNote").style.visibility = "hidden";
+    if ($("addSectionBtn")) $("addSectionBtn").style.visibility = "hidden";
     $("editNotebook").style.visibility = "hidden";
     $("filter").parentNode.hidden = true;
     $("searchBar").hidden = true;
@@ -9735,6 +10300,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     host.textContent = "";
     $("listTitle").textContent = "Weak topics";
     $("addNote").style.visibility = "hidden";
+    if ($("addSectionBtn")) $("addSectionBtn").style.visibility = "hidden";
     $("editNotebook").style.visibility = "hidden";
     $("filter").parentNode.hidden = true;
     $("searchBar").hidden = true;
@@ -11397,6 +11963,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("nextPeekInk").setAttribute("data-for", next.id);
     paintPeekInk("nextPeekInk", next.id);
   }
+
+  /* The first time you scroll into a neighbour this session, its ink depth
+     is still unknown, so the preview band starts at the sheet floor and
+     grows a moment later — a small jump. Measuring both neighbours as soon
+     as this page is open fills the cache before the finger gets there. */
+  function warmNeighbourInk(){
+    [-1, 1].forEach(function(dir){
+      var n = neighbourPage(dir);
+      if (!n || pageInkDepth[n.id] != null) return;
+      C.getPageInk(n.id).then(function(a){
+        if (!a || !n) return;
+        var depth = C.inkDepth(a.strokes || []);
+        pageInkDepth[n.id] = depth;
+        if (dir < 0 && typeof paintPrevPeek === "function") paintPrevPeek();
+        if (dir > 0 && typeof paintPageEnd === "function") paintPageEnd();
+      }).catch(function(){});
+    });
+  }
   /* There is no "open the next page" button any more: you simply scroll into
      it and it takes over. The buttons at the foot of the page still offer the
      same jump for anyone who wants it in one tap. */
@@ -11647,7 +12231,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* the same reading order the data layer uses, so scrolling on from a page
      and the page numbers never disagree */
-  function pageOrder(){ return C.sortPages(state.notes); }
+  function pageOrder(){
+    var list = C.sortPages(state.notes);
+    var secs = state.sections || [];
+    if (!secs.length) return list;
+    var sid = state.note && state.note.sectionId;
+    if (!sid) return list.filter(function(n){ return !n.sectionId; });
+    return list.filter(function(n){ return n.sectionId === sid; });
+  }
   function neighbourPage(dir){
     var list = pageOrder();
     var i = -1;
@@ -13348,6 +13939,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
     C.getMeta("nbFold", {}).then(function(m){ state.nbFold = m || {}; });
     C.getMeta("gFold", {}).then(function(m){ state.gFold = m || {}; });
+    C.getMeta("sFold", {}).then(function(m){ state.sFold = m || {}; });
     loadOpenNbs();
     loadCfg();
     buildInkTools(); buildTextPalettes();

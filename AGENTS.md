@@ -24,6 +24,8 @@ lines). There is no build step, no bundler, no framework, no server code.
 - **Storage**: IndexedDB in the browser (`DB_VERSION` — see `index.html`,
   search `var DB_VERSION`). Notes never touch the repo; only the app code
   does. Uploading a new `index.html` never affects a user's existing notes.
+  Hierarchy inside a notebook is **notebooks → sections → pages**. Pages
+  with no `sectionId` stay unfiled and still belong to the notebook.
 - **Install**: see `READ-ME-FIRST.txt` for how the user gets it onto the
   tablet (GitHub Pages → "Add to Home screen").
 
@@ -283,6 +285,11 @@ to a user-chosen subset of tools. All bars:
   the side panel is actually on screen (measured via `offsetParent`/
   `offsetWidth`, never inferred from mode flags — flag-based guesses caused
   repeated bugs where the bar showed or hid in the wrong place).
+- A second floating **shortcuts bar** (`jumpBar`) sits on the opposite side
+  of the screen: Home (notebook list, current notebook stays open), Open
+  (notebooks already open), Places (this notebook's sections + every
+  bookmark). It minimises to a dot that can be dragged, same as the
+  favourites dot. Default is on (`cfg.jumpBar`).
 
 ### Everything else
 
@@ -345,8 +352,10 @@ built from scratch.**
   accident (see "Do not touch" above) — a history rewrite was offered, never
   requested.
 - Scroll-jump fix (see above) is believed complete for pages already
-  visited this session; unconfirmed for the very first crossing into a
-  brand-new page. Ask the user to confirm on their next test pass.
+  visited this session. Neighbour pages now have their ink depth measured
+  as soon as the current page opens (`warmNeighbourInk`), so the first
+  crossing should no longer start short. Ask the user to confirm on the
+  tablet.
 
 ## Working style expected of you (Claude Code, Grok, or otherwise)
 
