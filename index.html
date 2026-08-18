@@ -2489,7 +2489,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b64";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b65";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9201,10 +9201,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   function lassoFinish(S, poly){
     lasso.poly = poly; lasso.surface = S;
+    var box = C.polyBounds(poly);
+    if (box && (box.maxX - box.minX) < 8 && (box.maxY - box.minY) < 8){
+      lassoClear();
+      hint("Box was too small. Drag a larger one.");
+      return;
+    }
     var full = lassoFull();
     lasso.picked = S.strokes.filter(function(s){ return C.strokeInPoly(s, poly, full); });
     lasso.pickedEls = lassoPickEls(S, poly);
     var any = lassoHas();
+    if (!any){
+      hint("Nothing in that box.");
+    }
     $("lassoBar").hidden = !any;
     if ($("lassoMore")) $("lassoMore").hidden = true;
     hideLassoStyle();
