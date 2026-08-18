@@ -2492,7 +2492,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b74";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b75";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9732,14 +9732,30 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var what = $("findWhat").value;
     if (!what) return;
     var withText = $("findWith").value;
-    var html = $("body").innerHTML;
     var esc2 = what.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    var re = new RegExp(esc2, all ? "gi" : "i");
-    var hits = (html.match(new RegExp(esc2, "gi")) || []).length;
-    if (!hits){ $("findStat").textContent = "No matches."; return; }
-    $("body").innerHTML = html.replace(re, withText);
-    $("findStat").textContent = all ? ("Replaced " + hits + ".") : "Replaced 1 of " + hits + ".";
-    renderMath($("body"));
+    var re = new RegExp(esc2, "gi");
+    var walker = document.createTreeWalker($("body"), NodeFilter.SHOW_TEXT, null);
+    var nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    var n = 0;
+    nodes.forEach(function(node){
+      if (!node.parentNode) return;
+      if (node.parentNode.closest && node.parentNode.closest("figure, span.math, .filechip, .audioblock")) return;
+      if (!node.nodeValue) return;
+      re.lastIndex = 0;
+      var found = node.nodeValue.match(re);
+      if (!found) return;
+      if (!all && n) return;
+      if (all){
+        node.nodeValue = node.nodeValue.replace(re, withText);
+        n += found.length;
+      } else {
+        node.nodeValue = node.nodeValue.replace(new RegExp(esc2, "i"), withText);
+        n = 1;
+      }
+    });
+    if (!n){ $("findStat").textContent = "No matches."; return; }
+    $("findStat").textContent = all ? ("Replaced " + n + ".") : "Replaced 1.";
     markDirty(); flush();
   }
 
