@@ -2374,6 +2374,9 @@
         <tr><td>Ctrl+;</td><td>insert today's date</td></tr>
         <tr><td>Tab / Shift+Tab</td><td>indent or outdent a list</td></tr>
         <tr><td>Esc</td><td>close whatever is on top, or drop a lasso</td></tr>
+        <tr><td>Delete</td><td>remove a lasso selection</td></tr>
+        <tr><td>Ctrl+C / X / V</td><td>copy / cut / paste a lasso</td></tr>
+        <tr><td>Hold a left arrow</td><td>pin that list open while you write</td></tr>
         <tr><td>Two / three fingers</td><td>tap to undo / redo</td></tr>
         <tr><td>Pen side button</td><td>hold, then touch: eraser on; same again: last pen</td></tr>
         <tr><td>Long press</td><td>the spot menu: mark, link, paste, attach</td></tr>
@@ -2493,7 +2496,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b84";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b85";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -15248,7 +15251,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     C.getMeta("recentSearch", []).then(function(r){ state.recentSearch = r || []; });
     C.getMeta("toolMem", null).then(function(m){ if (m) { toolMem = m; restoreTool(ink.tool); paintInkTools(); } });
     C.getMeta("inkClip", []).then(function(v){ inkClip = Array.isArray(v) ? v : []; });
-    C.getMeta("elClip", []).then(function(v){ elClip = Array.isArray(v) ? v : []; });
+    C.getMeta("elClip", []).then(function(v){
+      elClip = Array.isArray(v) ? v : [];
+      if ($("lassoPaste")) $("lassoPaste").disabled = !inkClip.length && !elClip.length;
+    });
     C.getMeta("eraseMode", "all").then(function(v){
       ink.eraseMode = v || "all";
       if ($("eraseMode")) $("eraseMode").value = ink.eraseMode;
