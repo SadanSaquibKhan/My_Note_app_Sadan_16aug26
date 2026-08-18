@@ -932,7 +932,8 @@
   @media print{
     .top, .rail, .list, .sec, .docbar, .fmtbar, .inktools, .findbar, .lassobar,
     .lassostyle, .tagrow, .outlinepane, .docfoot, .pracsheet, .notice, .imgBar,
-    .cropwrap, .imggrip, .edgestack, .edgetab, .hovernib, .hint, .favbar, .jumpbar,
+    .cropwrap, .imggrip{display:none !important}
+    .edgestack, .edgetab, .hovernib, .hint, .favbar, .jumpbar,
     .favdot, .jumpdot, .viewer{display:none !important}
     html, body{height:auto; background:#fff; color:#000}
     .shell, .pane, .pagewrap{display:block; overflow:visible; height:auto}
@@ -2496,7 +2497,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b90";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b91";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
