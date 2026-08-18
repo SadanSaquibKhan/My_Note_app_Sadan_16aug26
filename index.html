@@ -2486,7 +2486,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b56";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b57";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9891,12 +9891,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   /* Three pen states on this tablet:
        far    — nothing reaches the page
-       hover  — the small circle under the nib; buttons bits may arrive here
-       touch  — the nib is on the glass (pressure / pointerdown)
-     The gesture you asked for: hold the side button in hover, then touch.
-     THAT contact is the toggle. Hover alone must not switch tools, and
-     lifting the nib must not switch them back. */
-  var barrel = { armed: false, at: 0, lastToggle: 0 };
+       hover  — the small circle under the nib; the side button is visible here
+       touch  — the nib is on the glass (tip bit / real pressure)
+     Hold the button in hover, then touch: that landing is the toggle.
+     A hover "click" of the button is NOT a touch — Chrome often sends it as
+     pointerdown button=2 with pressure 0. Treating that as contact was why
+     the eraser flipped before the nib landed, or flipped twice. */
+  var barrel = { armed: false, at: 0, lastToggle: 0, hx: 0, hy: 0, leaveT: 0 };
   var bitLatch = { n: 0 };
   function barrelBits(e){
     if (eraserButtonDown(e)) return true;
@@ -9908,16 +9909,39 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     return false;
   }
+  /* The nib is on the glass. A barrel-only pointerdown (button 2, no tip,
+     no pressure) is hover, not this. */
+  function penNibOnGlass(e){
+    if (!e) return false;
+    if ((e.buttons || 0) & 1) return true;
+    if (typeof e.pressure === "number" && e.pressure > 0.04) return true;
+    if ((e.type === "pointerdown" || e.type === "mousedown") && e.button === 0)
+      return e.pointerType === "pen" || e.pointerType === "eraser";
+    return false;
+  }
   function barrelArm(){
     /* hover + button: remember it. Do not switch tools until the nib touches. */
+    var fresh = !barrel.armed;
     barrel.armed = true;
     barrel.at = Date.now();
+    if (barrel.leaveT){ clearTimeout(barrel.leaveT); barrel.leaveT = 0; }
+    if (fresh) hint("Button held. Touch the page to erase.");
   }
   function barrelDisarm(){
     barrel.armed = false;
+    if (barrel.leaveT){ clearTimeout(barrel.leaveT); barrel.leaveT = 0; }
+  }
+  function barrelDisarmSoon(){
+    /* leave often fires a moment BEFORE the tip-down of the same gesture.
+       Forgetting the press there is why hold-then-touch did nothing. */
+    if (barrel.leaveT) clearTimeout(barrel.leaveT);
+    barrel.leaveT = setTimeout(function(){
+      barrel.leaveT = 0;
+      if (!penDown) barrelDisarm();
+    }, 280);
   }
   function barrelIsArmed(){
-    return barrel.armed && (Date.now() - barrel.at < 3000);
+    return barrel.armed && (Date.now() - barrel.at < 4000);
   }
   function barrelConvertStroke(){
     var S = ink.surfaces[ink.active];
@@ -9937,6 +9961,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (Date.now() - barrel.lastToggle < 280) return false;
     barrel.lastToggle = Date.now();
     barrel.armed = false;
+    if (barrel.leaveT){ clearTimeout(barrel.leaveT); barrel.leaveT = 0; }
     btnEraseToggle();
     btn.held = btnSpring.on;
     barrelConvertStroke();
@@ -9946,23 +9971,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var isPen = (e.pointerType === "pen" || e.pointerType === "eraser");
     var penJustHere = isPen || (Date.now() - (ink.lastPenAt || 0) < 2500);
     if (!penJustHere) return;
+    if (e.clientX != null){ barrel.hx = e.clientX; barrel.hy = e.clientY; }
     var down = barrelBits(e);
-    var typ = e.type || "";
-    var contact = typ === "pointerdown" || typ === "mousedown" ||
-                  (typeof e.pressure === "number" && e.pressure > 0.02) ||
-                  ((e.buttons || 0) & 1);
+    var nib = penNibOnGlass(e);
     penReport(e, down);
-    if (down && !contact){
-      /* (2) hover + button held: arm only. The small circle is under the
-         nib but it is not on the glass yet. */
+    if (down && !nib){
+      /* (2) hover + button held: arm only. */
       barrelArm();
       bitLatch.n += 1;
       return;
     }
-    if (contact && typ === "pointerdown"){
-      /* (1) nib just touched. Toggle only if the button is held now, or
-         was held in hover a moment ago. */
-      if (down || barrelIsArmed()) barrelContactToggle();
+    if (nib && (down || barrelIsArmed())){
+      /* (1) nib on the glass, button held now or a moment ago. */
+      barrelContactToggle();
     }
     /* letting the button go, or lifting the nib, must not switch tools. */
   }
@@ -10022,6 +10043,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     e.preventDefault();
     if (penDown && (Date.now() - penDown) < 200) barrelContactToggle();
     else barrelArm();
+  }, true);
+  /* When the button is held as the nib lands, Chrome on this tablet often
+     stops pointer events. A touchstart at the same spot is the landing. */
+  document.addEventListener("touchstart", function(e){
+    if (!barrelIsArmed()) return;
+    if (cfg.penButtonErase === false) return;
+    var t = e.touches && e.touches[0];
+    if (!t) return;
+    if (Math.abs(t.clientX - barrel.hx) > 96 || Math.abs(t.clientY - barrel.hy) > 96) return;
+    barrelContactToggle();
   }, true);
 
   /* ---- keyboard out of the way while the pen is in use ---- */
@@ -11354,7 +11385,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var lastContactEnd = 0;
   document.addEventListener("pointerdown", function(e){
     lastPointerKind = e.pointerType || "mouse";
-    if (e.pointerType === "pen" || e.pointerType === "eraser") penDown = Date.now();
+    /* only a real nib-down. A hover click of the side button is also a
+       pointerdown, and counting it as contact made the eraser flip too soon. */
+    if ((e.pointerType === "pen" || e.pointerType === "eraser") && penNibOnGlass(e))
+      penDown = Date.now();
   }, true);
   ["pointerup", "pointercancel"].forEach(function(evt){
     document.addEventListener(evt, function(e){
@@ -11550,11 +11584,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     document.addEventListener(evt, function(e){
       if (e.pointerType !== "pen" && e.pointerType !== "eraser") return;
       if (evt === "pointerout" && e.relatedTarget) return;   /* still over the page */
-      /* going far forgets a pending hover-press. Do not disarm if the nib
-         is touching — some builds fire leave as the tip lands, and that
-         must not throw away the button you just held. Never turn the
-         eraser off here: you asked to keep erasing after letting go. */
-      if (!penDown && !((e.buttons || 0) & 1) && !(e.pressure > 0.02)) barrelDisarm();
+      /* going far forgets a pending hover-press — but later, because leave
+         also fires as the tip lands. Never turn the eraser off here. */
+      if (!penDown && !penNibOnGlass(e)) barrelDisarmSoon();
       if (btnSpring.holdMode) btnEraseOff();
     }, true);
   });
