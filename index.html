@@ -2489,7 +2489,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b65";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b66";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -13948,6 +13948,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("findWhat").addEventListener("input", function(){
     clearTimeout(findState.timer);
     findState.timer = setTimeout(runFindMarks, 250);
+  });
+  $("findWhat").addEventListener("keydown", function(e){
+    if (e.key === "Enter"){ e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); }
   });
   $("findPrev").addEventListener("click", function(){ stepFind(-1); });
   $("findNext").addEventListener("click", function(){ stepFind(1); });
