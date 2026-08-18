@@ -2489,7 +2489,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b58";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b59";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5477,8 +5477,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof finishHandover === "function") finishHandover();
     if (undoJump && state.note && undoJump.noteId === state.note.id){
       var w = undoJump.which;
+      var want = undoJump.noteId;
       undoJump = null;
-      setTimeout(function(){ if (w === "redo") globalRedo(); else globalUndo(); }, 80);
+      /* the strokes live in IndexedDB; undoing before they land looks like
+         "nothing happened" and you stay put. Wait for this page's ink. */
+      var ready = (typeof inkReady !== "undefined" && inkReady) ? inkReady : Promise.resolve();
+      ready.then(function(){
+        if (!state.note || state.note.id !== want) return;
+        if (w === "redo") globalRedo(); else globalUndo();
+      });
     }
     /* a PDF page has no ruled lines under it and no page padding fighting it */
     document.body.classList.toggle("pdfpaper",
@@ -6569,6 +6576,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       op.undoneAt = nextRedoSeq();
       S.strokes = C.revertOp(S.strokes, op);
       S.redo.push(op); S.redraw(); S.queueSave(); paintInkTools(); paintGlobalUndo();
+      if (state.noteId && S.name === "note") parkPageUndo(state.noteId);
     };
     S.doRedo = function(){
       if (!S.redo.length) return;
@@ -6576,6 +6584,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       op.seq = nextSeq();
       S.strokes = C.applyOp(S.strokes, op);
       S.undo.push(op); S.redraw(); S.queueSave(); paintInkTools(); paintGlobalUndo();
+      if (state.noteId && S.name === "note") parkPageUndo(state.noteId);
     };
     S.clear = function(){
       if (!S.strokes.length) return;
@@ -7054,14 +7063,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
   wireSurface(noteSurface);
 
+  var inkReady = Promise.resolve();
   function loadNoteInk(){
     noteSurface.strokes = [];
     if (!state.noteId){
       noteSurface.undo = []; noteSurface.redo = [];
-      noteSurface.redraw(); return Promise.resolve();
+      noteSurface.redraw();
+      inkReady = Promise.resolve();
+      return inkReady;
     }
     var nid = state.noteId;
-    return C.getPageInk(nid).then(function(a){
+    inkReady = C.getPageInk(nid).then(function(a){
       if (state.noteId !== nid) return;
       noteSurface.strokes = (a && a.strokes) || [];
       restorePageUndo(nid);
@@ -7069,6 +7081,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       noteSurface.redraw();
       paintInkTools();
     });
+    return inkReady;
   }
 
   /* ---- toolbar ---- */
@@ -7087,8 +7100,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       b.setAttribute("aria-pressed", Number(b.dataset.w) === ink.width ? "true" : "false");
     });
     var S = activeSurface();
-    $("inkUndo").disabled = !S.undo.length;
-    $("inkRedo").disabled = !S.redo.length;
+    $("inkUndo").disabled = (typeof anyUndo === "function") ? !anyUndo() : !S.undo.length;
+    $("inkRedo").disabled = (typeof anyRedo === "function") ? !anyRedo() : !S.redo.length;
     $("inkInput").value = ink.input;
     if (typeof paintNib === "function"){ paintNib(); paintPenChip(); }
     if (typeof paintEvenWidth === "function") paintEvenWidth();
@@ -7191,8 +7204,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof buildFavBar === "function") buildFavBar();
     updateTouchAction(); paintInkTools();
   }
-  $("inkUndo").addEventListener("click", function(){ activeSurface().doUndo(); });
-  $("inkRedo").addEventListener("click", function(){ activeSurface().doRedo(); });
+  $("inkUndo").addEventListener("click", function(){ globalUndo(); });
+  $("inkRedo").addEventListener("click", function(){ globalRedo(); });
   $("inkClear").addEventListener("click", function(){
     if (!confirm("Rub out all the writing on this page? The typed text stays.")) return;
     activeSurface().clear();
@@ -14162,6 +14175,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (best.v < 0){ hint("Nothing to undo."); return; }
     if (best.noteId && best.noteId !== state.noteId && best.kind !== "big"){
       undoJump = { noteId: best.noteId, which: "undo" };
+      hint("Going to the page of that change…");
       go({ nbId: best.nbId || state.nbId, noteId: best.noteId });
       return;
     }
@@ -14191,6 +14205,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (best.v < 0){ hint("Nothing to redo."); return; }
     if (best.noteId && best.noteId !== state.noteId && best.kind !== "big"){
       undoJump = { noteId: best.noteId, which: "redo" };
+      hint("Going to the page of that change…");
       go({ nbId: best.nbId || state.nbId, noteId: best.noteId });
       return;
     }
