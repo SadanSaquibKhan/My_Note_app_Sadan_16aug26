@@ -772,6 +772,12 @@
   .pagetag.on{opacity:1}
   .pagetag[hidden]{display:none}
 
+  .secjoinlab{
+    flex:none; text-align:center; padding:10px 12px;
+    font-family:var(--mono); font-size:11px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--panel); background:var(--live);
+  }
+  .prevpeek.secjoin, .nextpeek.secjoin{box-shadow:0 0 0 3px var(--live)}
   /* at the foot of a page: carry on, or make room to carry on */
   .endkit{
     position:fixed; right:16px; bottom:16px; z-index:74;
@@ -2426,7 +2432,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b50";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b51";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -12246,6 +12252,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       $("prevPeekPage").style.minHeight = "";
       $("prevPeekLabel").textContent = "start of the first page";
       box.classList.add("thin");
+      box.classList.remove("secjoin");
       box.hidden = false;
     } else {
       $("prevPeekBody").innerHTML = previewHtml(prev.html);
@@ -12264,6 +12271,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       box.hidden = false;
       $("prevPeekInk").setAttribute("data-for", prev.id);
       paintPeekInk("prevPeekInk", prev.id);
+      markSectionJoin(box, state.note, prev);
     }
     /* the band changes how far down the page starts, so anything already
        drawn has to be repainted against the new offset */
@@ -12302,6 +12310,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     peek.hidden = false;
     $("nextPeekInk").setAttribute("data-for", next.id);
     paintPeekInk("nextPeekInk", next.id);
+    markSectionJoin(peek, state.note, next);
   }
 
   /* The first time you scroll into a neighbour this session, its ink depth
@@ -12575,12 +12584,33 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* the same reading order the data layer uses, so scrolling on from a page
      and the page numbers never disagree */
   function pageOrder(){
-    var list = C.sortPages(state.notes);
     var secs = state.sections || [];
-    if (!secs.length) return list;
-    var sid = state.note && state.note.sectionId;
-    if (!sid) return list.filter(function(n){ return !n.sectionId; });
-    return list.filter(function(n){ return n.sectionId === sid; });
+    if (!secs.length) return C.sortPages(state.notes);
+    var grouped = C.notesBySection(state.notes, secs);
+    var out = [];
+    grouped.forEach(function(g){ out = out.concat(g.notes); });
+    return out;
+  }
+  function sectionOfNote(n){
+    if (!n || !n.sectionId) return null;
+    var hit = null;
+    (state.sections || []).forEach(function(s){ if (s.id === n.sectionId) hit = s; });
+    return hit;
+  }
+  function markSectionJoin(el, from, to){
+    if (!el) return;
+    var a = sectionOfNote(from), b = sectionOfNote(to);
+    var join = !!(a && b && a.id !== b.id);
+    el.classList.toggle("secjoin", join);
+    var lab = el.querySelector(".secjoinlab");
+    if (!join){ if (lab) lab.hidden = true; return; }
+    if (!lab){
+      lab = document.createElement("div");
+      lab.className = "secjoinlab";
+      el.insertBefore(lab, el.firstChild);
+    }
+    lab.hidden = false;
+    lab.textContent = (b && b.name ? b.name : "Section") + "  ·  new section";
   }
   function neighbourPage(dir){
     var list = pageOrder();
