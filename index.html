@@ -762,7 +762,7 @@
   }
   .pagetag{
     position:fixed; right:14px; top:50%; transform:translateY(-50%);
-    z-index:74; pointer-events:none;
+    z-index:74; pointer-events:auto; touch-action:none; cursor:ns-resize;
     background:var(--panel); color:var(--ink); border:1px solid var(--rule);
     border-radius:999px; padding:6px 12px;
     font-family:var(--mono); font-size:11px; letter-spacing:.1em;
@@ -2432,7 +2432,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b51";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b52";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -12063,22 +12063,63 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      one goes to it. Writing near the bottom already grows the page (see
      growForInk), so this is about moving on rather than about room. */
   var pageTagTimer = null;
+  var pageTagDrag = null;
+  function pageTagLabel(i, list){
+    list = list || pageOrder();
+    var n = list[i];
+    var name = n ? ((n.title || "").trim() || C.displayTitle(n)) : "";
+    return name + (i >= 0 ? "   " + (i + 1) + " / " + list.length : "");
+  }
   function showPageTag(){
     var el = $("pageTag");
     if (!el || !state.note) return;
+    if (pageTagDrag) return;
     var list = pageOrder();
     var i = -1;
     list.forEach(function(n, k){ if (n.id === state.noteId) i = k; });
-    var name = (state.note.title || "").trim() || C.displayTitle(state.note);
-    el.textContent = name + (i >= 0 ? "   " + (i + 1) + " / " + list.length : "");
+    el.textContent = pageTagLabel(i, list);
     el.hidden = false;
     el.classList.add("on");
     clearTimeout(pageTagTimer);
     pageTagTimer = setTimeout(function(){
+      if (pageTagDrag) return;
       el.classList.remove("on");
-      setTimeout(function(){ el.hidden = true; }, 220);
-    }, 1100);
+      setTimeout(function(){ if (!pageTagDrag) el.hidden = true; }, 220);
+    }, 1400);
   }
+  if ($("pageTag")) $("pageTag").addEventListener("pointerdown", function(e){
+    var list = pageOrder();
+    if (list.length < 2) return;
+    var i = 0;
+    list.forEach(function(n, k){ if (n.id === state.noteId) i = k; });
+    pageTagDrag = { i: i, y0: e.clientY, n: list.length };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault(); e.stopPropagation();
+    clearTimeout(pageTagTimer);
+    $("pageTag").hidden = false;
+    $("pageTag").classList.add("on");
+  });
+  document.addEventListener("pointermove", function(e){
+    if (!pageTagDrag) return;
+    var p = $("paper");
+    var pr = p ? p.getBoundingClientRect() : { top: 0, height: 400 };
+    var frac = (e.clientY - pr.top) / Math.max(1, pr.height);
+    var i = Math.round(frac * (pageTagDrag.n - 1));
+    i = Math.max(0, Math.min(pageTagDrag.n - 1, i));
+    pageTagDrag.at = i;
+    $("pageTag").style.top = Math.max(pr.top + 20, Math.min(e.clientY, pr.bottom - 20)) + "px";
+    $("pageTag").style.transform = "translateY(-50%)";
+    $("pageTag").textContent = pageTagLabel(i);
+  });
+  document.addEventListener("pointerup", function(){
+    if (!pageTagDrag) return;
+    var i = pageTagDrag.at != null ? pageTagDrag.at : pageTagDrag.i;
+    var list = pageOrder();
+    pageTagDrag = null;
+    var n = list[i];
+    if (n && n.id !== state.noteId) go({ nbId: state.nbId, noteId: n.id });
+    showPageTag();
+  });
   /* A page's stored HTML, made safe to show a second time on screen.
      Every id is removed: ids are how the rest of the app finds things, and a
      duplicate would have anchors, links and the outline all pointing at the
