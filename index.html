@@ -137,6 +137,9 @@
   .list{flex:0 1 280px; min-width:0; background:var(--panel); border-right:1px solid var(--rule)}
   .doc{flex:1}
   /* a collapsed column is a thin strip with one button to open it again */
+  body[data-view="note"].railmin #railPane{display:none}
+  body[data-view="note"].secmin #secPane{display:none}
+  body[data-view="note"].listmin #listPane{display:none}
   body.railmin .rail{flex:0 0 42px; max-width:42px; min-width:42px; overflow:hidden}
   body.railmin .rail .filterwrap,
   body.railmin .rail .scroll,
@@ -933,6 +936,17 @@
   }
   .edgetab[hidden]{display:none}
   .edgetab:hover{background:var(--live)}
+  .edgestack{
+    position:fixed; left:0; top:50%; transform:translateY(-50%); z-index:75;
+    display:flex; flex-direction:column; gap:4px;
+  }
+  .edgestack[hidden]{display:none}
+  .edgestack .edgetab{
+    position:static; transform:none; width:22px; height:44px;
+    border-radius:0 6px 6px 0; background:var(--slab-2); color:var(--ink);
+  }
+  .edgestack .edgetab.on{background:var(--ink); color:var(--panel)}
+  body.lefty .edgestack{left:auto; right:0}
 
   .hint{
     position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:78;
@@ -1508,6 +1522,11 @@
 
 <i class="hovernib" id="hoverNib"></i>
 <button class="edgetab" id="edgeTab" hidden aria-label="Show the panels">&rsaquo;</button>
+<div class="edgestack" id="edgeStack" hidden>
+  <button type="button" class="edgetab" id="edgeList" title="Pages" data-help="Shows or hides the page list.">›</button>
+  <button type="button" class="edgetab" id="edgeSec" title="Sections" data-help="Shows or hides the section list.">›</button>
+  <button type="button" class="edgetab" id="edgeRail" title="Notebooks" data-help="Shows or hides the notebook list.">›</button>
+</div>
 <div class="hint" id="hint" hidden></div>
 <div class="viewer" id="viewer" hidden><img id="viewerImg" alt=""></div>
 <main class="shell">
@@ -2433,7 +2452,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b53";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b54";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4731,7 +4750,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     starred: [], recent: [], weak: [], pracAll: [], audio: [], lastLink: null,
     allNotes: [], inkNotes: {}, attNotes: {}, audNotes: {}, nbLast: null,
     groups: [], gFold: {}, marks: [],
-    sections: [], sFold: {}, sectionId: null,
+    sections: [], sFold: {}, sectionId: null, secPlace: {},
     dirty: false, saving: false
   };
 
@@ -4973,11 +4992,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   function applyPanes(){
     var inBook = !!state.nbId;
-    document.body.classList.toggle("railmin", inBook && cfg.railMin !== false);
-    document.body.classList.toggle("secmin", inBook && cfg.secMin === true);
+    var focused = document.body.dataset.focus === "1";
+    document.body.classList.toggle("railmin", !focused && inBook && cfg.railMin !== false);
+    document.body.classList.toggle("secmin", !focused && (cfg.secMin === true || !inBook));
+    document.body.classList.toggle("listmin", !focused && (cfg.listMin === true || !inBook));
     if ($("secPane")) $("secPane").hidden = !inBook;
     if ($("railTog")) $("railTog").textContent = (inBook && cfg.railMin !== false) ? "›" : "‹";
     if ($("secTog")) $("secTog").textContent = (inBook && cfg.secMin === true) ? "›" : "‹";
+    if (typeof paintEdge === "function") paintEdge();
   }
   function paintSections(){
     var host = $("sectionList");
@@ -5006,8 +5028,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       c.textContent = nHere;
       b.appendChild(sw); b.appendChild(m); b.appendChild(c);
       b.addEventListener("click", function(){
+        if (state.noteId && state.sectionId){
+          state.secPlace = state.secPlace || {};
+          state.secPlace[state.sectionId] = state.noteId;
+          C.setMeta("secPlace", state.secPlace);
+        }
         state.sectionId = s.id;
         paintSections(); paintNotes();
+        var last = (state.secPlace || {})[s.id];
+        var here = (state.notes || []).filter(function(n){ return n.sectionId === s.id; });
+        here = C.sortPages(here);
+        var dest = null;
+        if (last) here.forEach(function(n){ if (n.id === last) dest = n; });
+        if (!dest) dest = here[0] || null;
+        if (dest && dest.id !== state.noteId) go({ nbId: state.nbId, noteId: dest.id });
       });
       b.addEventListener("contextmenu", function(ev){
         ev.preventDefault();
@@ -6656,8 +6690,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          stay has the "Collapse the side panels when the pen starts" setting
          to turn the whole behaviour off. */
       if (ink.hideLists){
+        cfg.railMin = true; cfg.secMin = true; cfg.listMin = true;
         setFocus(true);
-        hint("Panels folded away. Tap the edge tab on the left to bring them back.");
+        applyPanes();
+        hint("Panels folded. The three arrows on the left bring pages, sections or notebooks back.");
       }
     }
   }
@@ -7728,6 +7764,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     favBar: false,     /* the floating favourites bar */
     railMin: true,     /* notebooks column starts collapsed */
     secMin: false,     /* sections column starts open */
+    listMin: false,    /* pages column starts open */
     jumpBar: true,     /* the floating shortcuts bar (home / open / places) */
     jumpMin: false,
     jumpPos: null,
@@ -12910,7 +12947,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   function paintEdge(){
     var off = panelsHidden();
-    $("edgeTab").hidden = !off;
+    $("edgeTab").hidden = true;
+    var stack = $("edgeStack");
+    if (stack) stack.hidden = !(state.note && document.body.dataset.immerse !== "1");
+    if ($("edgeList")) $("edgeList").classList.toggle("on", cfg.listMin !== true && !off);
+    if ($("edgeSec")) $("edgeSec").classList.toggle("on", cfg.secMin !== true && !off);
+    if ($("edgeRail")) $("edgeRail").classList.toggle("on", cfg.railMin === false && !off);
     /* One class, set from the one function that already knows whether the
        panels are showing. The footer's dates, counts and Duplicate / Move /
        Delete belong with the page list, so they follow it exactly — driving
@@ -12919,12 +12961,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     /* the favourites bar follows the same answer, from the same place */
     if (typeof buildFavBar === "function") buildFavBar();
   }
-  $("edgeTab").addEventListener("click", function(){
+  function toggleEdge(which){
     if (document.body.dataset.immerse === "1") setImmerse(false);
     setFocus(false);
     ink.focusOverride = true;
-    paintEdge();
-  });
+    if (which === "list") cfg.listMin = !cfg.listMin;
+    if (which === "sec") cfg.secMin = !cfg.secMin;
+    if (which === "rail") cfg.railMin = !(cfg.railMin !== false);
+    saveCfg(); applyPanes(); paintEdge();
+  }
+  $("edgeTab").addEventListener("click", function(){ toggleEdge("list"); });
+  if ($("edgeList")) $("edgeList").addEventListener("click", function(){ toggleEdge("list"); });
+  if ($("edgeSec")) $("edgeSec").addEventListener("click", function(){ toggleEdge("sec"); });
+  if ($("edgeRail")) $("edgeRail").addEventListener("click", function(){ toggleEdge("rail"); });
 
   /* swipe in from the very left edge */
   var edgeSwipe = null;
@@ -14502,6 +14551,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     C.getMeta("nbFold", {}).then(function(m){ state.nbFold = m || {}; });
     C.getMeta("gFold", {}).then(function(m){ state.gFold = m || {}; });
     C.getMeta("sFold", {}).then(function(m){ state.sFold = m || {}; });
+    C.getMeta("secPlace", {}).then(function(m){ state.secPlace = m || {}; });
     C.getMeta("pageInkDepth", {}).then(function(m){
       if (m && typeof m === "object") pageInkDepth = m;
     });
