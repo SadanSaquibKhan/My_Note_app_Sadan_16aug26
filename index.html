@@ -1561,6 +1561,7 @@
     <div class="panehead">
       <button type="button" class="panetog" id="secTog" title="Show or hide sections" data-help="Hides the section list to a thin strip, or brings it back.">‹</button>
       <h2>Sections</h2>
+      <button class="ghost" id="fixNamesBtn" title="Renumber pages to S1P1, S1P2… in this order">S#P#</button>
       <button class="add" id="addSectionBtn" aria-label="New section" title="New section">+</button>
     </div>
     <div class="scroll" id="sectionList"></div>
@@ -2432,7 +2433,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b52";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b53";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -3202,6 +3203,30 @@ var MarginCore = (function(){
     if (!best) return fallback;
     return seriesName(best.stem, best.max + 1, best.pad);
   }
+  /* S1P1 — section number, then page number inside that section.
+     Anything after the number (e.g. _topic) is kept when we retitle. */
+  function splitSecPage(title){
+    var m = /^S(\d+)P(\d+)(.*)$/i.exec(String(title == null ? "" : title).trim());
+    if (!m) return null;
+    return { s: parseInt(m[1], 10), p: parseInt(m[2], 10), suffix: m[3] || "" };
+  }
+  function secPageName(s, p, suffix){
+    return "S" + s + "P" + p + (suffix || "");
+  }
+  function planSecPageNames(notes, sections){
+    var grouped = notesBySection(notes, sections);
+    var plan = [];
+    grouped.forEach(function(g, si){
+      var sNum = si + 1;
+      (g.notes || []).forEach(function(n, pi){
+        var old = splitSecPage(n.title);
+        if (!old && (n.title || "").trim()) return;
+        var next = secPageName(sNum, pi + 1, old ? old.suffix : "");
+        if (next !== (n.title || "")) plan.push({ id: n.id, from: n.title || "", to: next });
+      });
+    });
+    return plan;
+  }
   /* Reading order for pages. It has to follow the numbers in the titles, not
      the order the records were made: a page inserted between p2 and p3 is
      created last of all, so ordering by createdAt put it at the very end and
@@ -3577,9 +3602,18 @@ var MarginCore = (function(){
       return nextSeriesName(names, "NB1");
     });
   }
-  function suggestPageTitle(nbId){
-    return pagesInOrder(nbId).then(function(list){
-      return nextSeriesName(list.map(function(n){ return n.title; }), "p1");
+  function suggestPageTitle(nbId, sectionId){
+    return Promise.all([pagesInOrder(nbId), sectionsIn(nbId)]).then(function(r){
+      var list = r[0], secs = r[1] || [];
+      var sNum = 1;
+      secs.forEach(function(s, i){ if (s.id === sectionId) sNum = i + 1; });
+      var here = list.filter(function(n){ return (n.sectionId || null) === (sectionId || null); });
+      var maxP = 0;
+      here.forEach(function(n){
+        var sp = splitSecPage(n.title);
+        if (sp && sp.p > maxP) maxP = sp.p;
+      });
+      return secPageName(sNum, maxP + 1, "");
     });
   }
   /* Insert a page directly after another one. Every later page in the same
@@ -4632,6 +4666,7 @@ var MarginCore = (function(){
     ensureDefaultSection:ensureDefaultSection, suggestSectionName:suggestSectionName,
     defaultSectionOf:defaultSectionOf,
     splitSeries:splitSeries, seriesName:seriesName, nextSeriesName:nextSeriesName,
+    splitSecPage:splitSecPage, secPageName:secPageName, planSecPageNames:planSecPageNames,
     renumberPlan:renumberPlan, sortPages:sortPages, suggestNotebookName:suggestNotebookName,
     suggestPageTitle:suggestPageTitle, insertPageAfter:insertPageAfter,
     INK_TOOLS:INK_TOOLS, INK_COLOURS:INK_COLOURS, INK_WIDTHS:INK_WIDTHS,
@@ -5797,6 +5832,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     cfg.secMin = !cfg.secMin;
     saveCfg(); applyPanes();
   });
+  if ($("fixNamesBtn")) $("fixNamesBtn").addEventListener("click", function(){
+    if (!state.nbId) return;
+    var plan = C.planSecPageNames(state.notes, state.sections);
+    if (!plan.length){ hint("Names already match S1P1, S1P2…"); return; }
+    var prev = plan.map(function(p){ return { id: p.id, title: p.from }; });
+    var next = plan.map(function(p){ return { id: p.id, title: p.to }; });
+    function apply(rows){
+      return rows.reduce(function(ch, r){
+        return ch.then(function(){ return C.saveNote(r.id, { title: r.title }); });
+      }, Promise.resolve()).then(function(){ return refreshLists(); });
+    }
+    apply(next).then(function(){
+      pushBigOp({
+        label: "Renumber to S#P#",
+        undo: function(){ return apply(prev); },
+        redo: function(){ return apply(next); }
+      });
+      hint("Renamed " + plan.length + " page" + (plan.length === 1 ? "" : "s") + ". Undo puts the old names back.");
+    });
+  });
   if ($("addSectionBtn")) $("addSectionBtn").addEventListener("click", function(){
     openSectionDialog(null);
   });
@@ -5909,7 +5964,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!state.nbId) return;
     var nbId = state.nbId;
     flush().then(function(){
-      return C.suggestPageTitle(nbId);
+      return C.suggestPageTitle(nbId, sectionId || null);
     }).then(function(title){
       return C.createNote(nbId, title, sectionId || null);
     }).then(function(n){
