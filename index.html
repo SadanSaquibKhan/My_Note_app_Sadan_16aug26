@@ -2492,7 +2492,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b69";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b70";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9241,6 +9241,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (any) lassoSnapBox();
     S.redraw();
     if (any) placeLassoPop();
+    if ($("lassoPaste")) $("lassoPaste").disabled = !inkClip.length && !(typeof elClip !== "undefined" && elClip.length);
   }
   function dropBounds(list){ dropBoundsOf(list); }
   function lassoMoveFig(fig, dx, dy){
@@ -9490,6 +9491,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("lassoCopy").addEventListener("click", function(){
     var n = copyPickedInk();
     if (!n) return;
+    if ($("lassoPaste")) $("lassoPaste").disabled = false;
     hint("Copied. Paste keeps it selected.");
   });
   $("lassoCut").addEventListener("click", function(){
