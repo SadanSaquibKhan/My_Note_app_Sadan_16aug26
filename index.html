@@ -2042,6 +2042,9 @@
         <summary>While writing</summary>
         <div class="field">
           <label class="check"><input type="checkbox" id="setCollapseWrite"> Collapse the side panels when the pen starts</label>
+          <label class="check"><input type="checkbox" id="setLockList"> Keep the page list open while I write</label>
+          <label class="check"><input type="checkbox" id="setLockSec"> Keep the section list open while I write</label>
+          <label class="check"><input type="checkbox" id="setLockRail"> Keep the notebook list open while I write</label>
           <label class="check"><input type="checkbox" id="setCollapseType"> Collapse them when I start typing too</label>
           <label for="setShapeMode" style="display:block;margin-top:10px">Tidy shapes</label>
           <select id="setShapeMode">
@@ -2489,7 +2492,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b66";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b67";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -8019,6 +8022,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   function buildSettings(){
     $("setCollapseWrite").checked = cfg.collapseOnWrite;
+    if ($("setLockList")) $("setLockList").checked = !!cfg.lockList;
+    if ($("setLockSec")) $("setLockSec").checked = !!cfg.lockSec;
+    if ($("setLockRail")) $("setLockRail").checked = !!cfg.lockRail;
     $("setCollapseType").checked = cfg.collapseOnType;
     $("setShapeMode").value = shapeMode();
     $("setHover").checked = cfg.hoverDot;
@@ -8097,6 +8103,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       $(id).addEventListener("change", function(){ cfg[key] = this.checked; saveCfg(); });
     }
     bindCheck("setCollapseWrite", "collapseOnWrite");
+    [["setLockList","lockList"],["setLockSec","lockSec"],["setLockRail","lockRail"]].forEach(function(pair){
+      if (!$(pair[0])) return;
+      $(pair[0]).addEventListener("change", function(){
+        cfg[pair[1]] = this.checked; saveCfg();
+        if (typeof applyPanes === "function") applyPanes();
+        if (typeof paintEdge === "function") paintEdge();
+      });
+    });
     bindCheck("setCollapseType", "collapseOnType");
     $("setShapeMode").addEventListener("change", function(){
       cfg.shapeMode = this.value;
