@@ -2496,7 +2496,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b87";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b88";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -7400,7 +7400,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   window.addEventListener("resize", function(){
     setTimeout(redrawAll, 60);
     /* a narrower window can take the lists away without any flag changing */
-    setTimeout(function(){ if (typeof paintEdge === "function") paintEdge(); }, 80);
+    setTimeout(function(){
+      if (typeof paintEdge === "function") paintEdge();
+      if (typeof lassoHas === "function" && lassoHas() && typeof placeLassoPop === "function")
+        placeLassoPop();
+    }, 80);
   });
 
   /* ================= the practice space =================
