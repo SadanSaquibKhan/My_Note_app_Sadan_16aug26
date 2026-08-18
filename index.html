@@ -133,8 +133,29 @@
   /* 0 0 meant "never shrink": on a narrow screen the two side panes alone
      demanded 570px before the page had any room at all */
   .rail{flex:0 1 250px; min-width:0; background:var(--panel); border-right:1px solid var(--rule)}
-  .list{flex:0 1 320px; min-width:0; background:var(--panel); border-right:1px solid var(--rule)}
+  .sec{flex:0 1 180px; min-width:0; background:var(--panel); border-right:1px solid var(--rule)}
+  .list{flex:0 1 280px; min-width:0; background:var(--panel); border-right:1px solid var(--rule)}
   .doc{flex:1}
+  /* a collapsed column is a thin strip with one button to open it again */
+  body.railmin .rail{flex:0 0 42px; max-width:42px; min-width:42px; overflow:hidden}
+  body.railmin .rail .filterwrap,
+  body.railmin .rail .scroll,
+  body.railmin .rail .recentwrap,
+  body.railmin .rail .railfoot,
+  body.railmin .rail .panehead h2,
+  body.railmin .rail .panehead #addGroup,
+  body.railmin .rail .panehead #addNotebook{display:none}
+  body.secmin .sec{flex:0 0 42px; max-width:42px; min-width:42px; overflow:hidden}
+  body.secmin .sec .scroll,
+  body.secmin .sec .panehead h2,
+  body.secmin .sec .panehead #addSectionBtn{display:none}
+  .panetog{
+    flex:none; width:28px; height:28px; padding:0; border:1px solid var(--rule);
+    border-radius:3px; background:transparent; color:var(--ink-2); font-size:14px; line-height:1;
+  }
+  .panetog:hover{border-color:var(--live); color:var(--live)}
+  body.railmin .rail .panehead{flex-direction:column; padding:8px 6px; gap:8px}
+  body.secmin .sec .panehead{flex-direction:column; padding:8px 6px; gap:8px}
 
   /* also wraps: this row gained Folder and Insert, which pushed the + off
      the edge on a narrow pane */
@@ -552,17 +573,17 @@
   body.erasing .hovernib{z-index:61}
   .lassopath{stroke-dasharray:6 5}
 
-  #body figure.imgblock{
+  #body figure.imgblock, #pracText figure.imgblock{
     margin:var(--lead) 0; width:70%; position:relative;
     border:1px solid transparent; border-radius:3px; line-height:0;
   }
   /* a picture that has been dragged is placed, not flowed */
-  #body figure.imgblock[data-free="1"]{margin:0}
+  #body figure.imgblock[data-free="1"], #pracText figure.imgblock[data-free="1"]{margin:0}
   /* the page is the frame a placed picture is measured against */
-  #body{position:relative}
-  #body figure.imgblock img{width:100%; height:auto; display:block; border-radius:3px}
-  #body figure.imgblock.on{border-color:var(--live); box-shadow:0 0 0 3px var(--live-soft)}
-  #body figure.imgblock.missing{
+  #body, #pracText{position:relative}
+  #body figure.imgblock img, #pracText figure.imgblock img{width:100%; height:auto; display:block; border-radius:3px}
+  #body figure.imgblock.on, #pracText figure.imgblock.on{border-color:var(--live); box-shadow:0 0 0 3px var(--live-soft)}
+  #body figure.imgblock.missing, #pracText figure.imgblock.missing{
     line-height:1.5; padding:16px; text-align:center; color:var(--warn);
     background:var(--warnbg); border-color:var(--warnline);
   }
@@ -767,20 +788,22 @@
 
   /* corner grips on the selected picture. Big enough for a fingertip, which
      is why they overhang the corner rather than sitting inside it. */
-  #body figure.imgblock .imggrip{
+  #body figure.imgblock .imggrip, #pracText figure.imgblock .imggrip{
     position:absolute; width:22px; height:22px; border-radius:50%;
     background:var(--live); border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.35);
     touch-action:none; z-index:2;
   }
-  #body figure.imgblock .imggrip-nw{left:-11px; top:-11px; cursor:nwse-resize}
-  #body figure.imgblock .imggrip-ne{right:-11px; top:-11px; cursor:nesw-resize}
-  #body figure.imgblock .imggrip-sw{left:-11px; bottom:-11px; cursor:nesw-resize}
-  #body figure.imgblock .imggrip-se{right:-11px; bottom:-11px; cursor:nwse-resize}
+  #body figure.imgblock .imggrip-nw, #pracText figure.imgblock .imggrip-nw{left:-11px; top:-11px; cursor:nwse-resize}
+  #body figure.imgblock .imggrip-ne, #pracText figure.imgblock .imggrip-ne{right:-11px; top:-11px; cursor:nesw-resize}
+  #body figure.imgblock .imggrip-sw, #pracText figure.imgblock .imggrip-sw{left:-11px; bottom:-11px; cursor:nesw-resize}
+  #body figure.imgblock .imggrip-se, #pracText figure.imgblock .imggrip-se{right:-11px; bottom:-11px; cursor:nwse-resize}
   /* The whole picture, not just its grips, must swallow the gesture: dragging
      a corner was resizing the picture AND scrolling the page at the same time
      because the scroller still saw the drag. */
-  #body figure.imgblock{touch-action:none}
-  #body figure.imgblock.on{touch-action:none; user-select:none; -webkit-user-select:none}
+  /* Unselected pictures must not steal a finger-scroll. Once picked, they
+     take the pointer so they can be dragged. */
+  #body figure.imgblock, #pracText figure.imgblock{touch-action:pan-y}
+  #body figure.imgblock.on, #pracText figure.imgblock.on{touch-action:none; user-select:none; -webkit-user-select:none}
   /* the line showing where a dragged picture will land */
   .dropmark{
     position:fixed; height:0; border-top:3px solid var(--live);
@@ -792,12 +815,12 @@
      proportions of the sheet it came from, so an A4 page reads as A4 and a
      wide slide as a slide. No border, no selected state, no cursor change:
      it should feel like the page rather than something sitting on it. */
-  #body figure.imgblock.pdfpage{
+  #body figure.imgblock.pdfpage, #pracText figure.imgblock.pdfpage{
     width:100% !important; margin:0 0 var(--lead); border-color:transparent;
     line-height:0; pointer-events:none;
   }
-  #body figure.imgblock.pdfpage img{width:100%; height:auto; border-radius:0}
-  #body figure.imgblock.pdfpage::after{content:none}
+  #body figure.imgblock.pdfpage img, #pracText figure.imgblock.pdfpage img{width:100%; height:auto; border-radius:0}
+  #body figure.imgblock.pdfpage::after, #pracText figure.imgblock.pdfpage::after{content:none}
   /* On a page that came from a PDF the sheet IS the PDF page: no ruled lines
      showing through it, no side padding shrinking it, and none of the tall
      run-off at the foot that a written page wants. The result is one PDF page
@@ -808,24 +831,24 @@
   body.pdfpaper #body p:last-child{margin:0}
 
   /* a locked picture says so, and stops taking the drag itself */
-  #body figure.imgblock.locked{border-color:var(--rule); border-style:dashed}
-  #body figure.imgblock.locked img{pointer-events:none}
-  #body figure.imgblock.locked::after{
+  #body figure.imgblock.locked, #pracText figure.imgblock.locked{border-color:var(--rule); border-style:dashed}
+  #body figure.imgblock.locked img, #pracText figure.imgblock.locked img{pointer-events:none}
+  #body figure.imgblock.locked::after, #pracText figure.imgblock.locked::after{
     content:"\1F512"; position:absolute; top:4px; right:6px;
     font-size:13px; line-height:1; opacity:.75;
   }
   /* A PDF page is locked too, but it should not wear the padlock or the
      dashed edge — it is the page. Stated after .locked so it wins. */
-  #body figure.imgblock.pdfpage.locked{border-style:solid; border-color:transparent}
-  #body figure.imgblock.pdfpage.locked::after{content:none}
-  #body figure.imgblock.pdfpage.on{border-color:transparent; box-shadow:none}
+  #body figure.imgblock.pdfpage.locked, #pracText figure.imgblock.pdfpage.locked{border-style:solid; border-color:transparent}
+  #body figure.imgblock.pdfpage.locked::after, #pracText figure.imgblock.pdfpage.locked::after{content:none}
+  #body figure.imgblock.pdfpage.on, #pracText figure.imgblock.pdfpage.on{border-color:transparent; box-shadow:none}
   /* the picture being moved, and the line showing where it will land */
-  #body figure.imgblock.moving{opacity:.45}
+  #body figure.imgblock.moving, #pracText figure.imgblock.moving{opacity:.45}
   #body .dropline{
     height:0; border-top:2px solid var(--live); margin:2px 0; pointer-events:none;
   }
   /* crop, done on the picture in the page */
-  #body figure.imgblock.cropping{border-color:var(--live)}
+  #body figure.imgblock.cropping, #pracText figure.imgblock.cropping{border-color:var(--live)}
   .cropwrap{position:absolute; inset:0; z-index:3; touch-action:none}
   .cropshade{position:absolute; inset:0; background:rgba(0,0,0,.55); pointer-events:none}
   .crophandle{
@@ -930,7 +953,7 @@
   .scrolldot[hidden]{display:none}
   #body mark.findhit{background:var(--hl-yellow); color:var(--ink)}
   #body mark.findhit.here{background:var(--live); color:var(--panel)}
-  #body figure.imgblock figcaption{
+  #body figure.imgblock figcaption, #pracText figure.imgblock figcaption{
     line-height:1.4; font-size:12.5px; color:var(--ink-2); padding-top:6px; text-align:center;
   }
   .paper.dropping{outline:2px dashed var(--live); outline-offset:-6px}
@@ -1136,16 +1159,12 @@
   .pracmark{font-family:var(--mono); font-size:9.5px; letter-spacing:.2em; color:var(--live); flex:none}
   .pracwhere{font-size:12px; color:var(--ink-2); max-width:34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .pracpage{font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--ink-2); flex:none}
-  .paper.prac{
-    background:
-      radial-gradient(var(--paper-rule) 1.1px, transparent 1.1px) 0 0/26px 26px,
-      var(--field);
-  }
+  .paper.prac{background:var(--ground)}
   .sheet.prac{max-width:none; padding:0 20px 40vh; zoom:1}
   #pracText{min-height:80vh; outline:none; font-size:15px; line-height:26px; padding-top:10px; color:var(--ink-2)}
   #pracText:empty::before{content:attr(data-placeholder); color:var(--ink-2); opacity:.75}
 
-  body[data-focus="1"] .rail, body[data-focus="1"] .list{display:none}
+  body[data-focus="1"] .rail, body[data-focus="1"] .list, body[data-focus="1"] .sec{display:none}
 
   .zoomer{display:flex; gap:0; flex:none}
   .zoomer .ghost{border-radius:0; padding:9px 8px; min-width:34px}
@@ -1366,6 +1385,9 @@
     .rail{flex:1 1 auto; border-right:0}
     body[data-view="home"] #railPane{display:flex}
     body[data-view="notebook"] #listPane{display:flex; flex:1 1 auto; border-right:0}
+    body[data-view="notebook"] #secPane{display:flex; flex:0 1 160px}
+    body[data-view="note"] #secPane{display:flex; flex:0 1 140px}
+    body[data-view="note"] #railPane{display:flex}
     body[data-view="trash"] #listPane{display:flex; flex:1 1 auto; border-right:0}
     body[data-view="search"] #listPane{display:flex; flex:1 1 auto; border-right:0}
     body[data-view="starred"] #listPane{display:flex; flex:1 1 auto; border-right:0}
@@ -1473,6 +1495,7 @@
 
   <aside class="pane rail" id="railPane" aria-label="Notebooks">
     <div class="panehead">
+      <button type="button" class="panetog" id="railTog" title="Show or hide notebooks" data-help="Hides the notebook list to a thin strip, or brings it back.">‹</button>
       <h2>Notebooks</h2>
       <button class="ghost" id="addGroup" title="New folder">Folder</button>
       <button class="add" id="addNotebook" aria-label="New notebook" title="New notebook">+</button>
@@ -1515,6 +1538,15 @@
     </div>
   </aside>
 
+  <aside class="pane sec" id="secPane" aria-label="Sections" hidden>
+    <div class="panehead">
+      <button type="button" class="panetog" id="secTog" title="Show or hide sections" data-help="Hides the section list to a thin strip, or brings it back.">‹</button>
+      <h2>Sections</h2>
+      <button class="add" id="addSectionBtn" aria-label="New section" title="New section">+</button>
+    </div>
+    <div class="scroll" id="sectionList"></div>
+  </aside>
+
   <section class="pane list" id="listPane" aria-label="Notes">
     <div class="nbtabs" id="nbTabs" hidden>
       <div class="nbtabstrip" id="nbTabStrip"></div>
@@ -1527,7 +1559,6 @@
       <button class="ghost" id="editNotebook" title="Rename, recolour or delete this notebook">Edit</button>
       <button class="ghost" id="pickBtn" title="Select several notes">Select</button>
       <button class="ghost" id="insertPageBtn" title="Insert a page after the open one and renumber the rest">Insert</button>
-      <button class="ghost" id="addSectionBtn" title="New section in this notebook">Section</button>
       <button class="add" id="addNote" aria-label="New note" title="New note">+</button>
     </div>
     <div class="filterwrap">
@@ -2378,7 +2409,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b43";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b44";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -3228,6 +3259,9 @@ var MarginCore = (function(){
         order: now,
         createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
       });
+    }).then(function(nb){
+      return createSection(nb.id, "sec0", "slate", { isDefault:true, order:0 })
+        .then(function(){ return nb; });
     });
   }
   function allNotebooks(opts){
@@ -3340,18 +3374,59 @@ var MarginCore = (function(){
   /* ---------- sections (inside a notebook) ----------
      Notebooks → sections → pages. A page with no sectionId is unfiled and
      still belongs to the notebook; creating a section never hides old pages. */
-  function createSection(notebookId, name, colour){
+  function createSection(notebookId, name, colour, extra){
     var now = Date.now();
+    extra = extra || {};
     return open().then(function(){
       return putOne("sections", {
         id: newId("sc"),
         notebookId: notebookId,
         name: (name||"").trim() || "New section",
         colour: COLOURS.indexOf(colour) >= 0 ? colour : "slate",
-        order: now,
+        isDefault: extra.isDefault === true,
+        order: extra.order != null ? extra.order : now,
         createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
       });
     });
+  }
+  /* Every notebook has a sec0. Pages with no section land there, so the
+     list is never "unfiled" — it is always notebooks → sections → pages. */
+  function ensureDefaultSection(notebookId){
+    return sectionsIn(notebookId).then(function(list){
+      var def = null;
+      list.forEach(function(s){
+        if (s.isDefault || s.name === "sec0") def = s;
+      });
+      var ready = def
+        ? Promise.resolve(def)
+        : createSection(notebookId, "sec0", "slate", { isDefault:true, order:0 });
+      return ready.then(function(sec){
+        return notesIn(notebookId).then(function(notes){
+          var jobs = [];
+          notes.forEach(function(n){
+            if (!n.sectionId){
+              n.sectionId = sec.id;
+              touch(n);
+              jobs.push(putOne("notes", n));
+            }
+          });
+          return Promise.all(jobs).then(function(){ return sectionsIn(notebookId); });
+        });
+      });
+    });
+  }
+  function suggestSectionName(notebookId){
+    return sectionsIn(notebookId).then(function(list){
+      var names = list.map(function(s){ return s.name; });
+      return nextSeriesName(names, "sec1");
+    });
+  }
+  function defaultSectionOf(sections){
+    var def = null;
+    (sections || []).forEach(function(s){
+      if (s.isDefault || s.name === "sec0") def = s;
+    });
+    return def || (sections && sections[0]) || null;
   }
   function sectionsIn(notebookId, opts){
     opts = opts || {};
@@ -3376,20 +3451,27 @@ var MarginCore = (function(){
       return putOne("sections", s);
     });
   }
-  /* Deleting a section never deletes its pages: they become unfiled. */
+  /* Deleting a section never deletes its pages: they move to sec0. */
   function deleteSection(id){
-    return Promise.all([getSection(id), getAll("notes")]).then(function(r){
-      var sec = r[0];
+    return getSection(id).then(function(sec){
       if (!sec) return null;
-      sec.deletedAt = Date.now();
-      touch(sec);
-      var notes = [];
-      r[1].forEach(function(n){
-        if (n.sectionId === id && !n.deletedAt){
-          n.sectionId = null; touch(n); notes.push(n);
-        }
+      if (sec.isDefault || sec.name === "sec0"){
+        throw new Error("The default section cannot be deleted.");
+      }
+      return ensureDefaultSection(sec.notebookId).then(function(list){
+        var home = defaultSectionOf(list);
+        return getAll("notes").then(function(all){
+          sec.deletedAt = Date.now();
+          touch(sec);
+          var notes = [];
+          all.forEach(function(n){
+            if (n.sectionId === id && !n.deletedAt){
+              n.sectionId = home ? home.id : null; touch(n); notes.push(n);
+            }
+          });
+          return putMany(["sections","notes"], {sections:[sec], notes:notes});
+        });
       });
-      return putMany(["sections","notes"], {sections:[sec], notes:notes});
     });
   }
   /* Pages grouped the way the list and the shortcuts pop both want them. */
@@ -4518,6 +4600,8 @@ var MarginCore = (function(){
     wouldCycle:wouldCycle,
     createSection:createSection, sectionsIn:sectionsIn, getSection:getSection,
     updateSection:updateSection, deleteSection:deleteSection, notesBySection:notesBySection,
+    ensureDefaultSection:ensureDefaultSection, suggestSectionName:suggestSectionName,
+    defaultSectionOf:defaultSectionOf,
     splitSeries:splitSeries, seriesName:seriesName, nextSeriesName:nextSeriesName,
     renumberPlan:renumberPlan, sortPages:sortPages, suggestNotebookName:suggestNotebookName,
     suggestPageTitle:suggestPageTitle, insertPageAfter:insertPageAfter,
@@ -4583,7 +4667,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     starred: [], recent: [], weak: [], pracAll: [], audio: [], lastLink: null,
     allNotes: [], inkNotes: {}, attNotes: {}, audNotes: {}, nbLast: null,
     groups: [], gFold: {}, marks: [],
-    sections: [], sFold: {},
+    sections: [], sFold: {}, sectionId: null,
     dirty: false, saving: false
   };
 
@@ -4823,6 +4907,52 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     drawLevel("", 0);
   }
 
+  function applyPanes(){
+    var inBook = !!state.nbId;
+    document.body.classList.toggle("railmin", inBook && cfg.railMin !== false);
+    document.body.classList.toggle("secmin", inBook && cfg.secMin === true);
+    if ($("secPane")) $("secPane").hidden = !inBook;
+    if ($("railTog")) $("railTog").textContent = (inBook && cfg.railMin !== false) ? "›" : "‹";
+    if ($("secTog")) $("secTog").textContent = (inBook && cfg.secMin === true) ? "›" : "‹";
+  }
+  function paintSections(){
+    var host = $("sectionList");
+    if (!host) return;
+    host.textContent = "";
+    applyPanes();
+    if (!state.nbId) return;
+    var list = state.sections || [];
+    if (!list.length){
+      host.innerHTML = '<div class="empty">No sections.</div>';
+      return;
+    }
+    list.forEach(function(s){
+      var nHere = (state.notes || []).filter(function(n){ return n.sectionId === s.id; }).length;
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "row";
+      if (s.id === state.sectionId) b.setAttribute("aria-current", "true");
+      var sw = document.createElement("i");
+      sw.className = "swatch";
+      sw.style.background = SWATCH[s.colour] || SWATCH.slate;
+      var m = document.createElement("span"); m.className = "rowmain";
+      var t = document.createElement("span"); t.className = "rowtitle";
+      t.textContent = s.name + ((s.isDefault || s.name === "sec0") ? "" : "");
+      m.appendChild(t);
+      var c = document.createElement("span"); c.className = "count";
+      c.textContent = nHere;
+      b.appendChild(sw); b.appendChild(m); b.appendChild(c);
+      b.addEventListener("click", function(){
+        state.sectionId = s.id;
+        paintSections(); paintNotes();
+      });
+      b.addEventListener("contextmenu", function(ev){
+        ev.preventDefault();
+        openSectionDialog(s);
+      });
+      host.appendChild(b);
+    });
+  }
+
   function paintTrashRow(){
     $("trashCount").textContent = state.trash.length;
     $("trashRow").setAttribute("aria-current", state.view === "trash" ? "true" : "false");
@@ -5032,8 +5162,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return;
     }
     var q = state.filter.trim();
+    var sid = state.sectionId;
     var shown = C.sortNotes(state.notes, state.sort)
-                 .filter(function(n){ return C.matchNote(n, q); });
+                 .filter(function(n){
+                   if (sid && n.sectionId && n.sectionId !== sid) return false;
+                   return C.matchNote(n, q);
+                 });
 
     if (!shown.length){
       var e = document.createElement("div");
@@ -5108,55 +5242,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       host.appendChild(b);
     }
 
-    var secs = state.sections || [];
-    if (!secs.length){
-      shown.forEach(paintNoteRow);
-      return;
-    }
-    /* with sections, the list is notebooks → sections → pages */
-    var grouped = C.notesBySection(shown, secs);
-    grouped.forEach(function(g){
-      var sid = g.section ? g.section.id : "";
-      var open = state.sFold[sid || "_none"] !== false;
-      var head = document.createElement("button");
-      head.type = "button";
-      head.className = "row grouprow secrow";
-      var tw = document.createElement("span");
-      tw.className = "twisty";
-      tw.textContent = open ? "▾" : "▸";
-      var sw = document.createElement("i");
-      sw.className = "swatch folder";
-      sw.style.background = g.section
-        ? (SWATCH[g.section.colour] || SWATCH.slate)
-        : "var(--rule)";
-      var m2 = document.createElement("span"); m2.className = "rowmain";
-      var t2 = document.createElement("span"); t2.className = "rowtitle";
-      t2.textContent = g.section ? g.section.name : "Pages";
-      m2.appendChild(t2);
-      var c2 = document.createElement("span"); c2.className = "count";
-      c2.textContent = g.notes.length;
-      head.appendChild(tw); head.appendChild(sw); head.appendChild(m2); head.appendChild(c2);
-      if (g.section){
-        var plus = document.createElement("button");
-        plus.type = "button"; plus.className = "secplus"; plus.textContent = "+";
-        plus.title = "New page in this section";
-        plus.addEventListener("click", function(ev){
-          ev.stopPropagation();
-          addPageInSection(g.section.id);
-        });
-        head.appendChild(plus);
-        head.addEventListener("contextmenu", function(ev){
-          ev.preventDefault(); openSectionDialog(g.section);
-        });
-      }
-      head.addEventListener("click", function(){
-        state.sFold[sid || "_none"] = !open;
-        C.setMeta("sFold", state.sFold);
-        paintNotes();
-      });
-      host.appendChild(head);
-      if (open) g.notes.forEach(paintNoteRow);
-    });
+    shown.forEach(paintNoteRow);
   }
 
   function esc(s){
@@ -5181,6 +5267,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (typeof deselectImage === "function") deselectImage();
       $("body").innerHTML = state.note.html || "";
       $("body").dataset.noteId = state.note.id;
+      /* size the sheet from the last measured ink BEFORE pictures decode,
+         so the first scroll into this page does not grow under you */
+      if (pageInkDepth[state.note.id] != null && typeof pageHeightFor === "function"){
+        $("body").style.minHeight = Math.round(pageHeightFor(pageInkDepth[state.note.id])) + "px";
+      }
       ink.focusOverride = false;
       resetTextHist();
       paintGlobalUndo();
@@ -5314,18 +5405,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       C.allNotebooks(),
       state.nbId ? C.notesIn(state.nbId) : Promise.resolve([]),
       C.notesSnapshot(), C.trash(), C.practiceCounts(), C.allGroups(),
-      state.nbId ? C.sectionsIn(state.nbId) : Promise.resolve([])
+      state.nbId ? C.ensureDefaultSection(state.nbId) : Promise.resolve([])
     ]).then(function(r){
       state.notebooks = r[0]; state.notes = r[1];
       state.groups = r[5] || [];
       state.sections = r[6] || [];
+      var d0 = C.defaultSectionOf(state.sections);
+      if (d0){
+        if (!state.sectionId || !state.sections.some(function(s){ return s.id === state.sectionId; }))
+          state.sectionId = d0.id;
+        state.notes.forEach(function(n){ if (!n.sectionId) n.sectionId = d0.id; });
+      }
       var snap = r[2];
       void snap;
       state.allNotes = snap.all; state.counts = snap.counts;
       state.starred = snap.starred; state.weak = snap.weak; state.marks = snap.marks || [];
       state.trash = r[3]; state.prac = r[4];
       indexAssets();
-      paintNotebooks(); paintTrashRow(); paintNotes(); paintCrumbs(); paintRecent();
+      paintNotebooks(); paintSections(); paintTrashRow(); paintNotes(); paintCrumbs(); paintRecent();
       paintTabs();
     });
   }
@@ -5351,12 +5448,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       Promise.resolve(null),
       r.noteId ? C.getNote(r.noteId) : Promise.resolve(null),
       C.trash(), C.notesSnapshot(), C.practiceCounts(), C.allGroups(),
-      r.nbId ? C.sectionsIn(r.nbId) : Promise.resolve([])
+      r.nbId ? C.ensureDefaultSection(r.nbId) : Promise.resolve([])
     ]).then(function(res){
       state.notebooks = res[0];
       state.groups = res[7] || [];
       state.sections = res[8] || [];
       state.notes = res[1];
+      var d1 = C.defaultSectionOf(state.sections);
+      if (d1){
+        if (!state.sectionId || !state.sections.some(function(s){ return s.id === state.sectionId; }))
+          state.sectionId = d1.id;
+        state.notes.forEach(function(n){ if (!n.sectionId) n.sectionId = d1.id; });
+        if (state.note && !state.note.sectionId) state.note.sectionId = d1.id;
+      }
       state.counts = res[2];
       state.note = (res[3] && !res[3].deletedAt) ? res[3] : null;
       state.trash = res[4];
@@ -5396,7 +5500,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         }
         /* visiting a notebook is what puts it in the open set */
         if (state.nbId) openNotebookTab(state.nbId); else paintTabs();
-        paintNotebooks(); paintTrashRow(); paintNotes(); paintDoc(); paintCrumbs(); paintRecent();
+        if (state.note && state.note.sectionId) state.sectionId = state.note.sectionId;
+        paintNotebooks(); paintSections(); paintTrashRow(); paintNotes(); paintDoc(); paintCrumbs(); paintRecent();
         /* the layout may have changed which panes are on screen */
         if (typeof paintEdge === "function") paintEdge();
         if (typeof buildJumpBar === "function") buildJumpBar();
@@ -5634,11 +5739,29 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     secColour = sec ? (sec.colour || "slate") : "slate";
     $("secDlgHead").textContent = sec ? "Section" : "New section";
     $("secName").value = sec ? sec.name : "";
-    $("secDelete").style.display = sec ? "" : "none";
+    var locked = !!(sec && (sec.isDefault || sec.name === "sec0"));
+    $("secDelete").style.display = (sec && !locked) ? "" : "none";
+    if (locked) $("secName").readOnly = true; else $("secName").readOnly = false;
     buildSecSwatches();
     $("secDlg").showModal();
+    if (!sec){
+      C.suggestSectionName(state.nbId).then(function(name){
+        if (!$("secDlg").open || $("secName").value) return;
+        $("secName").value = name;
+        try { $("secName").select(); } catch (err) {}
+      });
+    }
     setTimeout(function(){ $("secName").focus(); }, 30);
   }
+  if ($("railTog")) $("railTog").addEventListener("click", function(){
+    if (!state.nbId) return;
+    cfg.railMin = document.body.classList.contains("railmin") ? false : true;
+    saveCfg(); applyPanes();
+  });
+  if ($("secTog")) $("secTog").addEventListener("click", function(){
+    cfg.secMin = !cfg.secMin;
+    saveCfg(); applyPanes();
+  });
   if ($("addSectionBtn")) $("addSectionBtn").addEventListener("click", function(){
     openSectionDialog(null);
   });
@@ -5650,8 +5773,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var p = secEditing
       ? C.updateSection(secEditing.id, { name:name, colour:secColour })
       : C.createSection(state.nbId, name, secColour);
-    p.then(function(){
+    p.then(function(s){
       $("secDlg").close();
+      if (s && s.id) state.sectionId = s.id;
       return refreshLists();
     }).catch(dbFail("Could not save the section"));
   });
@@ -5744,7 +5868,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* ---------------- notes ---------------- */
   function currentSectionId(){
-    return (state.note && state.note.sectionId) || null;
+    return state.sectionId || (state.note && state.note.sectionId) || null;
   }
   function addPageInSection(sectionId){
     if (!state.nbId) return;
@@ -7064,6 +7188,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       pracSurface.strokes = prac.rec.strokes || [];
       pracSurface.undo = []; pracSurface.redo = [];
       ink.active = "practice";
+      if (typeof hydrateImages === "function") hydrateImages();
+      if (typeof applyTemplate === "function") applyTemplate(cfg.template);
       if (ink.mode === "type") setMode("auto");    /* ink-first, as intended */
       $("inkTools").hidden = false;
       paintPracHead();
@@ -7108,6 +7234,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       $("pracText").innerHTML = prac.rec.html || "";
       pracSurface.strokes = prac.rec.strokes || [];
       pracSurface.undo = []; pracSurface.redo = [];
+      if (typeof hydrateImages === "function") hydrateImages();
       pracSurface.redraw();
       paintPracHead(); paintInkTools();
     });
@@ -7134,6 +7261,21 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     prac.saveTimer = setTimeout(flushPractice, 700);
   });
   $("pracText").addEventListener("pointerdown", function(){ ink.active = "practice"; });
+  $("pracText").addEventListener("paste", function(e){
+    var dt = e.clipboardData;
+    if (!dt) return;
+    var pics = [];
+    var files = dt.files ? Array.prototype.slice.call(dt.files) : [];
+    files.forEach(function(f){ if (f && /^image\//.test(f.type)) pics.push(f); });
+    if (pics.length){
+      e.preventDefault();
+      ink.active = "practice";
+      (function next(){
+        if (!pics.length) return;
+        insertImageFile(pics.shift()).then(next);
+      })();
+    }
+  });
   $("paper").addEventListener("pointerdown", function(){ if (!prac.open) ink.active = "note"; });
 
   function paintPracBadge(){
@@ -7489,6 +7631,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
                                  "latch":  the hold turns it on and off */
     holdEraseMs: 650,     /* how long that hold has to be */
     favBar: false,     /* the floating favourites bar */
+    railMin: true,     /* notebooks column starts collapsed */
+    secMin: false,     /* sections column starts open */
     jumpBar: true,     /* the floating shortcuts bar (home / open / places) */
     jumpMin: false,
     jumpPos: null,
@@ -7561,6 +7705,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        the one place that runs both at boot and on every change. */
     if (typeof buildFavBar === "function") buildFavBar();
     if (typeof buildJumpBar === "function") buildJumpBar();
+    if (typeof applyPanes === "function") applyPanes();
     if (cfg.wakeLock) requestWake();
   }
 
@@ -7602,10 +7747,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var TEMPLATE_LABEL = { blank:"Blank", lined:"Lined", grid:"Grid", dot:"Dots",
                          graph:"Graph", cornell:"Cornell", iso:"Isometric" };
   function applyTemplate(name){
-    var p = $("paper");
-    C.TEMPLATES.forEach(function(t){ p.classList.remove("tpl-" + t); });
-    p.classList.add("tpl-" + (C.TEMPLATES.indexOf(name) >= 0 ? name : "lined"));
-    $("sheetCornell").hidden = (name !== "cornell");
+    var cls = "tpl-" + (C.TEMPLATES.indexOf(name) >= 0 ? name : "lined");
+    ["paper", "pracPaper"].forEach(function(id){
+      var p = $(id);
+      if (!p) return;
+      C.TEMPLATES.forEach(function(t){ p.classList.remove("tpl-" + t); });
+      p.classList.add(cls);
+    });
+    if ($("sheetCornell")) $("sheetCornell").hidden = (name !== "cornell");
   }
 
   /* ---- settings panel ---- */
@@ -9133,6 +9282,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (b & 4)  return true;      /* middle, as some S Pen builds report it */
     return e.button === 5 || e.button === 2 || e.button === 1;
   }
+  /* How many consecutive events actually carried a barrel bit. A single
+     pointerdown with button=2 followed by moves with buttons=0 is what
+     Samsung reports for a press that One UI then swallows — treating that
+     as a release made the eraser flash on and off in the same instant, so
+     the button appeared to do nothing. We only honour a bits-cleared
+     release after the bit has been seen several times in a row. */
+  var bitLatch = { n: 0 };
   function applyPenButton(e){
     /* Not restricted to pointerType "pen" any more. The button demonstrably
        reaches other web apps on this tablet, which means Chrome does deliver
@@ -9144,27 +9300,39 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var penJustHere = isPen || (Date.now() - (ink.lastPenAt || 0) < 2500);
     if (!penJustHere) return;
     var down = eraserButtonDown(e);
+    if (!down && e.getCoalescedEvents){
+      var coal = e.getCoalescedEvents();
+      for (var ci = 0; coal && ci < coal.length; ci++){
+        if (eraserButtonDown(coal[ci])){ down = true; break; }
+      }
+    }
     if (!isPen && !down) return;      /* an ordinary mouse move, not the pen */
     penReport(e, down);
-    if (down && !btn.held){
-      btn.held = true;
-      btn.was = ink.tool;
-      ink.tool = "eraser";
-      paintInkTools();
-      $("modeChip").classList.add("live");
-      /* The press very often lands AFTER the nib is already down — you start
-         a stroke, realise it is wrong, and squeeze the button. Switching the
-         tool alone did nothing then, because the surface was already midway
-         through drawing and kept on drawing. Throw the half-made stroke away
-         and start erasing from the same point instead. */
-      var S = ink.surfaces[ink.active];
-      if (S && S.drawing && S.drawing.stroke){
-        var st = S.drawing.stroke;
-        S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
-        S.drawing = { erasing: true, removed: [] };
-        S.redraw();
+    if (down){
+      bitLatch.n += 1;
+      if (!btn.held){
+        btn.held = true;
+        btn.was = ink.tool;
+        ink.tool = "eraser";
+        paintInkTools();
+        $("modeChip").classList.add("live");
+        /* The press very often lands AFTER the nib is already down — you start
+           a stroke, realise it is wrong, and squeeze the button. Switching the
+           tool alone did nothing then, because the surface was already midway
+           through drawing and kept on drawing. Throw the half-made stroke away
+           and start erasing from the same point instead. */
+        var S = ink.surfaces[ink.active];
+        if (S && S.drawing && S.drawing.stroke){
+          var st = S.drawing.stroke;
+          S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
+          S.drawing = { erasing: true, removed: [] };
+          if (st.pts.length >= 3 && S.eraseAt) S.eraseAt(st.pts[0], st.pts[1]);
+          S.redraw();
+        }
+        if (typeof btnSpring === "object" && !btnSpring.on) btnEraseOn();
       }
-    } else if (!down && btn.held){
+    } else if (!down && btn.held && bitLatch.n >= 3){
+      bitLatch.n = 0;
       btn.held = false;
       ink.tool = btn.was || "pen";
       btn.was = null;
@@ -9173,19 +9341,47 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       /* the button came in by the right-click route, but this pen genuinely
          reports the release too — so honour it at once rather than waiting for
          the pen to be lifted away */
-      btnEraseOff();
+      if (bitLatch.n >= 3){ bitLatch.n = 0; btnEraseOff(); }
     }
   }
   /* Listened for on the document as well as on the drawing surface. A barrel
      press while the pen hovers over a toolbar, or over the gap beside the
      page, never reaches the scroller's handlers — and that is exactly when
      people press it, before bringing the nib down. */
-  ["pointerdown", "pointermove", "pointerup", "pointerenter", "pointerover"].forEach(function(evt){
+  ["pointerdown", "pointermove", "pointerup", "pointerenter", "pointerover",
+   "pointerrawupdate", "gotpointercapture"].forEach(function(evt){
     document.addEventListener(evt, function(e){
       applyPenButton(e);
       penSaw(e);
     }, true);
   });
+  /* More doors for the same button. Samsung has been seen delivering it as
+     any one of these and never as the others, depending on Air Actions,
+     Chrome version, and whether the nib is on the glass or hovering. */
+  window.addEventListener("auxclick", function(e){
+    if (e.button !== 1 && e.button !== 2) return;
+    if (lastPointerKind !== "pen" && Date.now() - (ink.lastPenAt || 0) > 2500) return;
+    if (cfg.penButtonErase === false) return;
+    e.preventDefault();
+    btnEraseOn();
+  }, true);
+  document.addEventListener("mouseup", function(e){
+    if (e.button !== 1 && e.button !== 2 && e.button !== 5) return;
+    if (btnSpring.on || btn.held) btnEraseOff();
+  }, true);
+  document.addEventListener("keyup", function(e){
+    if (!btnSpring.on && !btn.held) return;
+    var k = e.key || e.code || "";
+    if (k === "ContextMenu" || k === "F10" || k === "Unidentified") btnEraseOff();
+  }, true);
+  document.addEventListener("keydown", function(e){
+    if (cfg.penButtonErase === false) return;
+    if (lastPointerKind !== "pen" && Date.now() - (ink.lastPenAt || 0) > 2500) return;
+    var k = e.key || e.code || "";
+    if (k === "ContextMenu" || (k === "F10" && e.shiftKey) || k === "Unidentified"){
+      btnEraseOn();
+    }
+  }, true);
   /* And the last route it can take. Some builds deliver the barrel press as a
      plain secondary mousedown with no pointer event carrying the button bits
      at all, so nothing above ever sees it. Guarded on the last pointer having
@@ -9448,9 +9644,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
   }
 
+  function activeTextHost(){
+    if (ink.active === "practice" && prac.open && $("pracText")) return $("pracText");
+    return $("body");
+  }
   function insertImageFile(file){
     if (!state.note) return Promise.resolve();
     var noteId = state.note.id;
+    var host = activeTextHost();
     return shrink(file).then(function(r){
       return C.createImage(noteId, r.blob, r.w, r.h);
     }).then(function(asset){
@@ -9463,11 +9664,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var tail = document.createElement("p");
       tail.appendChild(document.createElement("br"));
       var sel = window.getSelection();
-      if (sel && sel.rangeCount && $("body").contains(sel.anchorNode)){
+      if (sel && sel.rangeCount && host.contains(sel.anchorNode)){
         var rr = sel.getRangeAt(0); rr.collapse(false);
         rr.insertNode(tail); rr.insertNode(fig);
-      } else { $("body").appendChild(fig); $("body").appendChild(tail); }
+      } else { host.appendChild(fig); host.appendChild(tail); }
       return hydrateImages().then(function(){
+        if (host.id === "pracText"){
+          if (typeof flushPractice === "function") return flushPractice();
+          return;
+        }
         markDirty();
         /* Putting a picture in is not a request to type. The file picker
            hands focus back to the page, and a focused editable page is what
@@ -9502,7 +9707,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function hydrateImages(){
     Object.keys(imgUrls).forEach(function(k){ URL.revokeObjectURL(imgUrls[k]); });
     imgUrls = {};
-    var figs = Array.prototype.slice.call($("body").querySelectorAll("figure.imgblock"));
+    var figs = Array.prototype.slice.call(document.querySelectorAll("#body figure.imgblock, #pracText figure.imgblock"));
     return Promise.all(figs.map(function(fig){
       var id = fig.getAttribute("data-img");
       /* The box is claimed NOW, from the shape remembered on the figure, and
@@ -9946,9 +10151,23 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return null;
   }
 
+  /* A finger that lands on a picture while scrolling must scroll, not pick
+     the picture up. A tap (no move) still selects. A drag on a picture that
+     is already selected still moves it. The pen is left alone: it writes. */
+  var imgPend = null;
   $("body").addEventListener("pointerdown", function(e){
     var fig = figOf(e.target);
     if (!fig) return;
+    if (fig.getAttribute("data-pdfpage") === "1") return;
+    if (e.pointerType === "pen") return;   /* the pen writes on the picture */
+
+    /* Finger on an unselected picture: do not capture. Wait to see whether
+       this is a scroll (mostly vertical) or a tap. */
+    if (e.pointerType === "touch" && !fig.classList.contains("on")){
+      imgPend = { fig: fig, x: e.clientX, y: e.clientY, t: Date.now() };
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();            /* never let this start a pen stroke */
 
@@ -9994,6 +10213,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }, true);
 
   document.addEventListener("pointermove", function(e){
+    if (imgPend){
+      var pdx = e.clientX - imgPend.x, pdy = e.clientY - imgPend.y;
+      if (Math.abs(pdx) + Math.abs(pdy) < 10) return;
+      /* mostly vertical = a page scroll. Drop the pending pick. */
+      if (Math.abs(pdy) >= Math.abs(pdx)){ imgPend = null; return; }
+      /* sideways on an unselected picture: still a scroll-ish gesture on
+         a tablet; do not steal it. Tap-only selects. */
+      imgPend = null;
+      return;
+    }
     if (!imgAct) return;
     var dx = e.clientX - imgAct.x0, dy = e.clientY - imgAct.y0;
     if (!imgAct.moved && Math.abs(dx) + Math.abs(dy) < 8) return;
@@ -10036,6 +10265,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   document.addEventListener("pointerup", function(e){
     clearTimeout(imgHoldTimer);
+    if (imgPend){
+      var pend = imgPend; imgPend = null;
+      if (Math.abs(e.clientX - pend.x) + Math.abs(e.clientY - pend.y) < 10){
+        selectImage(pend.fig, null);
+        C.getAsset(pend.fig.getAttribute("data-img")).then(function(a){
+          if (pickedImage && pickedImage.fig === pend.fig){
+            pickedImage.asset = a;
+            paintImgBar();
+          }
+        });
+      }
+      return;
+    }
     if (!imgAct) return;
     var act = imgAct; imgAct = null;
     clearDropMark();
@@ -12433,9 +12675,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        no flag is set then, so the footer stayed on screen with nothing to
        belong to. offsetWidth of 0 (or no offsetParent) means it is not there,
        whatever the reason. */
-    var list = $("listPane"), rail = $("railPane");
+    var list = $("listPane"), rail = $("railPane"), sec = $("secPane");
     var showing = (list && list.offsetParent !== null && list.offsetWidth > 0) ||
-                  (rail && rail.offsetParent !== null && rail.offsetWidth > 0);
+                  (rail && rail.offsetParent !== null && rail.offsetWidth > 0) ||
+                  (sec && sec.offsetParent !== null && sec.offsetWidth > 0);
     return !showing;
   }
   function paintEdge(){
@@ -12624,7 +12867,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var y = Number(fig.getAttribute("data-y"));
       if (isFinite(y)) depth = Math.max(depth, y + (fig.offsetHeight || 0));
     });
-    if (state.noteId) pageInkDepth[state.noteId] = depth;
+    if (state.noteId){
+      pageInkDepth[state.noteId] = depth;
+      clearTimeout(growForInk.saveT);
+      growForInk.saveT = setTimeout(function(){
+        C.setMeta("pageInkDepth", pageInkDepth);
+      }, 900);
+    }
     b.style.minHeight = Math.round(pageHeightFor(depth)) + "px";
   }
 
@@ -13940,6 +14189,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     C.getMeta("nbFold", {}).then(function(m){ state.nbFold = m || {}; });
     C.getMeta("gFold", {}).then(function(m){ state.gFold = m || {}; });
     C.getMeta("sFold", {}).then(function(m){ state.sFold = m || {}; });
+    C.getMeta("pageInkDepth", {}).then(function(m){
+      if (m && typeof m === "object") pageInkDepth = m;
+    });
     loadOpenNbs();
     loadCfg();
     buildInkTools(); buildTextPalettes();

@@ -285,6 +285,18 @@ to a user-chosen subset of tools. All bars:
   the side panel is actually on screen (measured via `offsetParent`/
   `offsetWidth`, never inferred from mode flags — flag-based guesses caused
   repeated bugs where the bar showed or hid in the wrong place).
+- Side panels when open are three columns: **notebooks | sections | pages**.
+  Notebooks start collapsed (`cfg.railMin`) to a thin strip with `railTog`;
+  sections have `secTog`. Every notebook has a default **sec0**; unfiled
+  pages are moved into it. New sections auto-name `sec1`, `sec2`, …
+- S Pen side-button eraser: a single `buttons` flash then `0` must NOT
+  release (that was the “button does nothing” bug). Release only after
+  the bit has been seen several times, or the pen leaves the glass, or a
+  real mouseup/keyup. Ten listener routes coexist (bits, coalesced,
+  pointerrawupdate, auxclick, contextmenu, mousedown, mouseup, keydown).
+- Finger-scroll over an unselected picture must scroll: `touch-action:pan-y`
+  plus a pending-tap (`imgPend`) that cancels on vertical move.
+- Rough working uses the same page ruling and can take pasted pictures.
 - A second floating **shortcuts bar** (`jumpBar`) sits on the opposite side
   of the screen: Home (notebook list, current notebook stays open), Open
   (notebooks already open), Places (this notebook's sections + every
