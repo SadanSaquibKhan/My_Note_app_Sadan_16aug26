@@ -2492,7 +2492,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b70";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b71";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -8103,6 +8103,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       $(id).addEventListener("change", function(){ cfg[key] = this.checked; saveCfg(); });
     }
     bindCheck("setCollapseWrite", "collapseOnWrite");
+    $("setCollapseWrite").addEventListener("change", function(){
+      ink.hideLists = cfg.collapseOnWrite;
+    });
     [["setLockList","lockList"],["setLockSec","lockSec"],["setLockRail","lockRail"]].forEach(function(pair){
       if (!$(pair[0])) return;
       $(pair[0]).addEventListener("change", function(){
