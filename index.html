@@ -2423,7 +2423,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b47";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b48";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5285,6 +5285,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       /* the page under it is about to be replaced: anything still holding a
          picture on it is holding a node that will not exist in a moment */
       if (typeof deselectImage === "function") deselectImage();
+      parkPageUndo($("body").dataset.noteId);
       $("body").innerHTML = state.note.html || "";
       $("body").dataset.noteId = state.note.id;
       /* size the sheet from the last measured ink BEFORE pictures decode,
@@ -5359,6 +5360,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof watchPad === "function") watchPad();
     /* the swapped-to page is now really here, with its bands rebuilt */
     if (typeof finishHandover === "function") finishHandover();
+    if (undoJump && state.note && undoJump.noteId === state.note.id){
+      var w = undoJump.which;
+      undoJump = null;
+      setTimeout(function(){ if (w === "redo") globalRedo(); else globalUndo(); }, 80);
+    }
     /* a PDF page has no ruled lines under it and no page padding fighting it */
     document.body.classList.toggle("pdfpaper",
       (state.note.html || "").indexOf("data-pdfpage") > -1);
@@ -6875,12 +6881,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   wireSurface(noteSurface);
 
   function loadNoteInk(){
-    noteSurface.strokes = []; noteSurface.undo = []; noteSurface.redo = [];
-    if (!state.noteId){ noteSurface.redraw(); return Promise.resolve(); }
+    noteSurface.strokes = [];
+    if (!state.noteId){
+      noteSurface.undo = []; noteSurface.redo = [];
+      noteSurface.redraw(); return Promise.resolve();
+    }
     var nid = state.noteId;
     return C.getPageInk(nid).then(function(a){
       if (state.noteId !== nid) return;
       noteSurface.strokes = (a && a.strokes) || [];
+      restorePageUndo(nid);
       growForInk();
       noteSurface.redraw();
       paintInkTools();
@@ -11611,7 +11621,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var html = serializeBody();
     if (html === textHist.last) return;
     if (textHist.last !== null){
-      textHist.past.push({ html: textHist.last, seq: nextSeq() });
+      textHist.past.push({ html: textHist.last, seq: nextSeq(), noteId: state.noteId, nbId: state.nbId });
       if (textHist.past.length > 80) textHist.past.shift();
       textHist.future = [];
       clearInkRedoAll();               /* a fresh edit ends the shared redo line */
@@ -13289,7 +13299,79 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var undoSeq = 0, redoSeq = 0;
   function nextSeq(){ return ++undoSeq; }
   function nextRedoSeq(){ return ++redoSeq; }
-  function tagOp(op){ op.seq = nextSeq(); return op; }
+  function tagOp(op){
+    op.seq = nextSeq();
+    op.noteId = state.noteId;
+    op.nbId = state.nbId;
+    var b = opBounds(op);
+    if (b){ op.atY = (b.minY + b.maxY) / 2; op.atX = (b.minX + b.maxX) / 2; }
+    return op;
+  }
+  var pageUndo = {};
+  var undoJump = null;
+  function parkPageUndo(id){
+    if (!id || id === "undefined") return;
+    pageUndo[id] = {
+      inkUndo: (noteSurface.undo || []).slice(),
+      inkRedo: (noteSurface.redo || []).slice(),
+      textPast: (textHist.past || []).slice(),
+      textFuture: (textHist.future || []).slice(),
+      textLast: textHist.last,
+      nbId: state.nbId
+    };
+  }
+  function restorePageUndo(id){
+    var p = pageUndo[id];
+    if (!p){
+      noteSurface.undo = []; noteSurface.redo = [];
+      return;
+    }
+    noteSurface.undo = p.inkUndo;
+    noteSurface.redo = p.inkRedo;
+    textHist.past = p.textPast;
+    textHist.future = p.textFuture;
+    textHist.last = p.textLast;
+  }
+  function latestAcross(which){
+    var best = { v: -1, noteId: state.noteId, nbId: state.nbId, kind: null };
+    function consider(v, noteId, nbId, kind){
+      if (v > best.v) best = { v: v, noteId: noteId, nbId: nbId, kind: kind };
+    }
+    if (which === "undo"){
+      consider(inkTop("undo").v, state.noteId, state.nbId, "ink");
+      if (textHist.past.length) consider(textHist.past[textHist.past.length - 1].seq || 0, state.noteId, state.nbId, "text");
+      consider(bigTop("undo"), state.noteId, state.nbId, "big");
+    } else {
+      consider(inkTop("redo").v, state.noteId, state.nbId, "ink");
+      if (textHist.future.length) consider(textHist.future[textHist.future.length - 1].undoneAt || 0, state.noteId, state.nbId, "text");
+      consider(bigTop("redo"), state.noteId, state.nbId, "big");
+    }
+    Object.keys(pageUndo).forEach(function(id){
+      if (id === state.noteId) return;
+      var p = pageUndo[id];
+      if (which === "undo"){
+        var iu = p.inkUndo[p.inkUndo.length - 1];
+        if (iu) consider(iu.seq || 0, id, p.nbId, "ink");
+        var tu = p.textPast[p.textPast.length - 1];
+        if (tu) consider(tu.seq || 0, id, p.nbId, "text");
+      } else {
+        var ir = p.inkRedo[p.inkRedo.length - 1];
+        if (ir) consider(ir.undoneAt || 0, id, p.nbId, "ink");
+        var tr = p.textFuture[p.textFuture.length - 1];
+        if (tr) consider(tr.undoneAt || 0, id, p.nbId, "text");
+      }
+    });
+    return best;
+  }
+  function revealOp(op){
+    if (!op) return;
+    if (op.atY != null){
+      revealBounds({ minY: op.atY - 20, maxY: op.atY + 20, minX: op.atX || 0, maxX: op.atX || 0 });
+    } else {
+      revealBounds(opBounds(op));
+      revealCaret();
+    }
+  }
   function clearTextRedo(){ if (typeof textHist === "object"){ textHist.future = []; paintTextUndo(); } }
   function clearInkRedoAll(){ Object.keys(ink.surfaces).forEach(function(k){ ink.surfaces[k].redo = []; }); }
 
@@ -13353,6 +13435,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   function globalUndo(){
+    var best = latestAcross("undo");
+    if (best.v < 0){ hint("Nothing to undo."); return; }
+    if (best.noteId && best.noteId !== state.noteId && best.kind !== "big"){
+      undoJump = { noteId: best.noteId, which: "undo" };
+      go({ nbId: best.nbId || state.nbId, noteId: best.noteId });
+      return;
+    }
     var i = inkTop("undo");
     var t = textHist.past.length ? (textHist.past[textHist.past.length - 1].seq || 0) : -1;
     var g = bigTop("undo");
@@ -13367,7 +13456,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (i.v >= t && i.S){
       var top = i.S.undo[i.S.undo.length - 1];
       i.S.doUndo();
-      revealBounds(opBounds(top));
+      revealOp(top);
     } else {
       textUndo();
       revealCaret();
@@ -13375,6 +13464,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     paintGlobalUndo();
   }
   function globalRedo(){
+    var best = latestAcross("redo");
+    if (best.v < 0){ hint("Nothing to redo."); return; }
+    if (best.noteId && best.noteId !== state.noteId && best.kind !== "big"){
+      undoJump = { noteId: best.noteId, which: "redo" };
+      go({ nbId: best.nbId || state.nbId, noteId: best.noteId });
+      return;
+    }
     var i = inkTop("redo");
     var t = textHist.future.length ? (textHist.future[textHist.future.length - 1].undoneAt || 0) : -1;
     var g = bigTop("redo");
@@ -13389,15 +13485,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (i.v >= t && i.S){
       var top = i.S.redo[i.S.redo.length - 1];
       i.S.doRedo();
-      revealBounds(opBounds(top));
+      revealOp(top);
     } else {
       textRedo();
       revealCaret();
     }
     paintGlobalUndo();
   }
-  function anyUndo(){ return inkTop("undo").v >= 0 || textHist.past.length > 0 || bigOps.length > 0; }
-  function anyRedo(){ return inkTop("redo").v >= 0 || textHist.future.length > 0 || bigRedo.length > 0; }
+  function anyUndo(){ return latestAcross("undo").v >= 0; }
+  function anyRedo(){ return latestAcross("redo").v >= 0; }
   function paintGlobalUndo(){
     var u = $("gUndo"), r = $("gRedo");
     if (u) u.disabled = !anyUndo();
