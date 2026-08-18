@@ -2409,7 +2409,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b44";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b45";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9280,7 +9280,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (b & 32) return true;      /* eraser end */
     if (b & 2)  return true;      /* barrel */
     if (b & 4)  return true;      /* middle, as some S Pen builds report it */
-    return e.button === 5 || e.button === 2 || e.button === 1;
+    /* button 2/1/5 only count at the START of a press. Counting them on
+       every move/up made a lift look like a new press, which is why the
+       eraser came on AFTER you lifted the nib. */
+    var typ = e.type || "";
+    if (typ === "pointerdown" || typ === "mousedown")
+      return e.button === 5 || e.button === 2 || e.button === 1;
+    return false;
   }
   /* How many consecutive events actually carried a barrel bit. A single
      pointerdown with button=2 followed by moves with buttons=0 is what
@@ -9332,16 +9338,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         if (typeof btnSpring === "object" && !btnSpring.on) btnEraseOn();
       }
     } else if (!down && btn.held && bitLatch.n >= 3){
-      bitLatch.n = 0;
-      btn.held = false;
-      ink.tool = btn.was || "pen";
-      btn.was = null;
-      paintInkTools();
+      /* A cleared bit used to mean "button released". On this tablet it
+         also means "nib just touched the glass", which turned the eraser
+         off the moment you started rubbing. The button is a latch: only
+         a second press turns it off. */
     } else if (!down && typeof btnSpring === "object" && btnSpring.on){
       /* the button came in by the right-click route, but this pen genuinely
          reports the release too — so honour it at once rather than waiting for
          the pen to be lifted away */
-      if (bitLatch.n >= 3){ bitLatch.n = 0; btnEraseOff(); }
     }
   }
   /* Listened for on the document as well as on the drawing surface. A barrel
@@ -9367,12 +9371,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }, true);
   document.addEventListener("mouseup", function(e){
     if (e.button !== 1 && e.button !== 2 && e.button !== 5) return;
-    if (btnSpring.on || btn.held) btnEraseOff();
+    /* a mouseup here is the end of the same press that turned the eraser
+       on (contextmenu). Turning it off now is why it died after a few ms. */
   }, true);
   document.addEventListener("keyup", function(e){
     if (!btnSpring.on && !btn.held) return;
     var k = e.key || e.code || "";
-    if (k === "ContextMenu" || k === "F10" || k === "Unidentified") btnEraseOff();
+    if (k === "ContextMenu" || k === "F10" || k === "Unidentified"){
+      /* same press as keydown — do not treat the key-up as a release */
+    }
   }, true);
   document.addEventListener("keydown", function(e){
     if (cfg.penButtonErase === false) return;
@@ -10763,7 +10770,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         if (cfg.holdErase !== false) holdEraseFired();
         return;
       }
-      /* the button, held: erase now, come back when you let go or lift away */
+      /* the button is a latch: first press on, second press off. Lifting
+         the nib must not count as the second press. */
       if (cfg.penButtonErase !== false) btnEraseToggle();
       return;
     }
@@ -10903,7 +10911,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         S.redraw();
       }
       paintInkTools();
-      hint("Erasing while the button is held. Let go, or lift the pen away, for the pen.");
+      hint("Eraser on. Press the side button again for the pen.");
     }
   }
   function btnEraseOff(){
@@ -10919,7 +10927,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     document.addEventListener(evt, function(e){
       if (e.pointerType !== "pen" && e.pointerType !== "eraser") return;
       if (evt === "pointerout" && e.relatedTarget) return;   /* still over the page */
-      btnEraseOff();
+      /* lifting the nib used to call btnEraseOff(); that turned the eraser
+         off the moment you lifted to make another stroke. The button is a
+         latch now: only a second press turns it off. */
+      if (btnSpring.holdMode) btnEraseOff();
     }, true);
   });
 
