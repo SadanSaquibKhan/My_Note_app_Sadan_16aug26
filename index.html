@@ -2492,7 +2492,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b67";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b68";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9525,7 +9525,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     placeLassoPop();
   });
   if ($("lassoToText")) $("lassoToText").addEventListener("click", function(){
-    hint("Turning handwriting into typed words is not built yet.");
+    var words = (lasso.pickedEls || []).filter(function(el){
+      return !(el.classList && el.classList.contains("imgblock"));
+    }).map(function(el){ return (el.textContent || "").trim(); }).filter(Boolean);
+    var inkN = lasso.picked.length;
+    if (!words.length && !inkN){ hint("Nothing to convert."); return; }
+    var p = document.createElement("p");
+    if (words.length){
+      p.textContent = words.join(" ");
+    } else {
+      p.textContent = "(" + inkN + " handwritten " + (inkN === 1 ? "mark" : "marks") +
+        " — reading handwriting as typed words is not built yet)";
+    }
+    var host = lassoHost() || $("body");
+    host.appendChild(p);
+    markDirty(); flush();
+    hint(words.length ? "Typed words copied out under the page." : "Handwriting cannot be read yet. A note was added.");
   });
   function paintLassoSwatches(){
     var host = $("lassoSwatches");
