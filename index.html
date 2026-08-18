@@ -2492,7 +2492,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b72";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b73";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9383,6 +9383,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   $("lassoDelete").addEventListener("click", function(){
     var S = lasso.surface; if (!S) return;
+    var n = lasso.picked.length + ((lasso.pickedEls && lasso.pickedEls.length) || 0);
+    if (n >= 5 && !confirm("Delete " + n + " things from this page?")) return;
     var ids = {}; lasso.picked.forEach(function(s){ ids[s.id] = 1; });
     if (lasso.picked.length){
       S.undo.push(tagOp({ t:"del", ss: S.strokes.map(function(s,i){ return {i:i, s:s}; })
@@ -15205,6 +15207,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
     loadOpenNbs();
     loadCfg();
+    ink.hideLists = cfg.collapseOnWrite !== false;
     buildInkTools(); buildTextPalettes();
     buildPresets(); buildFavBar(); wireSettings(); wireBarFolds(); paintEdge();
     setMode(ink.mode);
