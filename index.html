@@ -320,6 +320,7 @@
   .lassostyle .ghost.on{background:rgba(255,255,255,.18)}
   .lassostyle .swatchrow{display:flex; gap:6px; flex-wrap:wrap}
   .lassostyle .lab{font-size:11px; opacity:.7; margin-right:2px}
+  #lassoCount{font-size:11px; opacity:.8; padding:0 6px; white-space:nowrap}
 
   .tagrow{display:flex; gap:6px; flex-wrap:wrap; padding:7px 14px; border-bottom:1px solid var(--rule)}
   .tagrow[hidden]{display:none}
@@ -2378,6 +2379,7 @@
         <tr><td>Delete</td><td>remove a lasso selection</td></tr>
         <tr><td>Ctrl+C / X / V</td><td>copy / cut / paste a lasso</td></tr>
         <tr><td>Hold a left arrow</td><td>pin that list open while you write</td></tr>
+        <tr><td>Hold Box / Free</td><td>catch a piece, or only what is fully inside</td></tr>
         <tr><td>Two / three fingers</td><td>tap to undo / redo</td></tr>
         <tr><td>Pen side button</td><td>hold, then touch: eraser on; same again: last pen</td></tr>
         <tr><td>Long press</td><td>the spot menu: mark, link, paste, attach</td></tr>
@@ -2497,7 +2499,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b91";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b92";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
