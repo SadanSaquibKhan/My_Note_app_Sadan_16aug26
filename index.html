@@ -297,15 +297,29 @@
   .lassobar{
     position:fixed; z-index:80; left:50%; bottom:auto; top:30%;
     transform:translateX(-50%);
-    background:var(--panel); color:var(--ink);
-    border:1px solid var(--ink); border-radius:22px;
-    box-shadow:0 10px 28px var(--shadow);
-    padding:6px 8px; gap:4px; flex-wrap:nowrap;
-    max-width:min(96vw, 560px);
+    background:#2c2c2e; color:#fff;
+    border:none; border-radius:22px;
+    box-shadow:0 10px 28px rgba(0,0,0,.35);
+    padding:6px 10px; gap:2px; flex-wrap:nowrap;
+    max-width:min(96vw, 620px);
   }
-  .lassobar .danger:hover{border-color:var(--warn); color:var(--warn)}
-  .lassomore{display:flex; gap:4px; flex-wrap:nowrap; padding-left:4px; border-left:1px solid var(--rule)}
+  .lassobar .ghost{color:#fff; border-color:transparent; background:transparent}
+  .lassobar .ghost:hover{background:rgba(255,255,255,.12)}
+  .lassobar .danger{color:#ffb4b4}
+  .lassobar .danger:hover{border-color:transparent; color:#ffd0d0; background:rgba(255,80,80,.18)}
+  .lassomore{display:flex; gap:4px; flex-wrap:nowrap; padding-left:4px; border-left:1px solid rgba(255,255,255,.2)}
   .lassomore[hidden]{display:none}
+  .lassostyle{
+    position:fixed; z-index:81; display:flex; flex-wrap:wrap; align-items:center; gap:8px;
+    background:#2c2c2e; color:#fff; border-radius:16px;
+    box-shadow:0 10px 28px rgba(0,0,0,.35);
+    padding:10px 12px; max-width:min(94vw, 380px);
+  }
+  .lassostyle[hidden]{display:none}
+  .lassostyle .ghost{color:#fff; border-color:rgba(255,255,255,.25)}
+  .lassostyle .ghost.on{background:rgba(255,255,255,.18)}
+  .lassostyle .swatchrow{display:flex; gap:6px; flex-wrap:wrap}
+  .lassostyle .lab{font-size:11px; opacity:.7; margin-right:2px}
 
   .tagrow{display:flex; gap:6px; flex-wrap:wrap; padding:7px 14px; border-bottom:1px solid var(--rule)}
   .tagrow[hidden]{display:none}
@@ -1753,20 +1767,34 @@
       </div>
       <div class="lassobar" id="lassoBar" hidden>
         <span id="lassoCount" hidden></span>
-        <button class="ghost" id="lassoCopy" title="Copy this writing">Copy</button>
-        <button class="ghost" id="lassoCut" title="Cut this writing">Cut</button>
+        <button class="ghost" id="lassoCut" title="Cut">Cut</button>
+        <button class="ghost" id="lassoCopy" title="Copy">Copy</button>
+        <button class="ghost" id="lassoPaste" title="Paste">Paste</button>
         <button class="ghost danger" id="lassoDelete">Delete</button>
-        <button class="ghost" id="lassoStyle" title="Colour and thickness">Style</button>
+        <button class="ghost" id="lassoStyle" title="Colour, thickness, or text style">Change style</button>
         <button class="ghost" id="lassoMoreBtn" title="More" aria-label="More">&#8942;</button>
         <span class="lassomore" id="lassoMore" hidden>
-          <button class="ghost" id="lassoSmaller">&minus;</button>
-          <button class="ghost" id="lassoBigger">+</button>
-          <button class="ghost" id="lassoThinner" title="Thinner">&#8722;w</button>
-          <button class="ghost" id="lassoThicker" title="Thicker">+w</button>
-          <button class="ghost" id="lassoColour">Recolour</button>
+          <button class="ghost" id="lassoToText" title="Handwriting to typed words">Convert to text</button>
+          <button class="ghost" id="lassoSmaller" title="Smaller">&minus;</button>
+          <button class="ghost" id="lassoBigger" title="Bigger">+</button>
           <button class="ghost" id="lassoPromote" title="Copy into the clean note">To note</button>
           <button class="ghost" id="lassoDone">Done</button>
         </span>
+      </div>
+      <div class="lassostyle" id="lassoStylePop" hidden>
+        <div id="lassoInkStyle">
+          <span class="lab">Ink</span>
+          <span class="swatchrow" id="lassoSwatches"></span>
+          <button class="ghost" id="lassoThinner" title="Thinner">Thinner</button>
+          <button class="ghost" id="lassoThicker" title="Thicker">Thicker</button>
+        </div>
+        <div id="lassoTextStyle" hidden>
+          <span class="lab">Text</span>
+          <button class="ghost" id="lassoBold" title="Bold"><b>B</b></button>
+          <button class="ghost" id="lassoItalic" title="Italic"><i>I</i></button>
+          <button class="ghost" id="lassoUnder" title="Underline"><u>U</u></button>
+          <button class="ghost" id="lassoHl" title="Highlight">Highlight</button>
+        </div>
       </div>
       <div class="findbar" id="audioBar" hidden>
         <span class="pracmark">RECORDINGS</span>
@@ -2035,6 +2063,11 @@
           <label class="check"><input type="checkbox" id="setMarkdown"> Inline markdown for bold, italic and code</label>
           <label class="check"><input type="checkbox" id="setSmart"> Smart quotes</label>
           <label class="check"><input type="checkbox" id="setLeft"> Left-handed layout</label>
+          <label for="setLassoContain" style="display:block;margin-top:10px">Lasso: when it only covers part of something</label>
+          <select id="setLassoContain">
+            <option value="partial">Still select it</option>
+            <option value="full">Only if it is completely inside</option>
+          </select>
         </div>
       </details>
 
@@ -2453,7 +2486,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b55";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b56";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -2877,12 +2910,12 @@ var MarginCore = (function(){
     return inside;
   }
   /* a stroke is caught if most of it is inside — grabbing a whole word should
-     not need the loop to be perfect */
-  function strokeInPoly(stroke, poly){
+     not need the loop to be perfect. full=true means every point must be in. */
+  function strokeInPoly(stroke, poly, full){
     var p = stroke.pts, n = p.length / 3, hit = 0;
     if (!n) return false;
     for (var i = 0; i < n; i++) if (pointInPoly(p[i*3], p[i*3+1], poly)) hit++;
-    return hit / n >= 0.6;
+    return full ? (hit === n) : (hit / n >= 0.6);
   }
   function polyBounds(poly){
     if (!poly || poly.length < 4) return null;
@@ -6330,11 +6363,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       ink.active = name;
       var p = S.toPage(e);
       if (ink.tool === "lasso"){
-        if (lasso.picked.length && lasso.poly && C.pointInPoly(p.x, p.y, lasso.poly)){
-          S.drawing = { moving:true, last:p };     /* drag what is already caught */
-          return;
+        if ((lasso.picked.length || (lasso.pickedEls && lasso.pickedEls.length)) && lasso.poly){
+          var h = lassoHitHandle(p.x, p.y);
+          if (h){
+            lassoBeginScale(S, h, p);
+            return;
+          }
+          if (C.pointInPoly(p.x, p.y, lasso.poly)){
+            S.drawing = { moving:true, last:p };     /* drag what is already caught */
+            hideLassoStyle();
+            return;
+          }
         }
-        lasso.surface = S; lasso.picked = [];
+        lasso.surface = S; lasso.picked = []; lasso.pickedEls = [];
         /* A box selection is still a polygon, just one with four corners.
            Keeping the same shape downstream means strokeInPoly, polyBounds,
            the move, the scale and the drawing code all carry on unchanged. */
@@ -6344,6 +6385,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           : [p.x, p.y];
         S.drawing = { lassoing:true };
         $("lassoBar").hidden = true;
+        hideLassoStyle();
         return;
       }
       if (ink.tool === "eraser"){
@@ -6371,6 +6413,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           evs.forEach(function(ev){ var q2 = S.toPage(ev); lasso.poly.push(q2.x, q2.y); });
         }
         S.redraw();
+        return;
+      }
+      if (S.drawing.scaling){
+        lassoScaleTo(S.toPage(e));
         return;
       }
       if (S.drawing.moving){
@@ -6418,7 +6464,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (!d) return;
       S.drawing = null;
       if (d.lassoing){ lassoFinish(S, lasso.poly); return; }
-      if (d.moving){ S.queueSave(); return; }
+      if (d.moving || d.scaling){ S.queueSave(); markDirty(); return; }
       if (d.erasing){
         if (d.removed.length){ S.undo.push(tagOp({ t:"del", ss:d.removed })); S.redo = []; clearTextRedo(); S.queueSave(); }
         paintInkTools();
@@ -6617,14 +6663,35 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   function drawLasso(ctx, poly){
     if (!poly || poly.length < 4) return;
+    var selected = (lasso.picked && lasso.picked.length) ||
+                   (lasso.pickedEls && lasso.pickedEls.length);
     ctx.save();
-    ctx.setLineDash([6, 5]);
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = inkHex("blue");
-    ctx.beginPath();
-    ctx.moveTo(poly[0], poly[1]);
-    for (var i = 2; i < poly.length; i += 2) ctx.lineTo(poly[i], poly[i+1]);
-    ctx.closePath(); ctx.stroke();
+    if (selected){
+      /* After a catch: a clean box with eight handles, like Samsung Notes.
+         The freehand path is snapped to this box so dragging a corner
+         resizes what you see. */
+      var b = C.polyBounds(poly);
+      if (!b){ ctx.restore(); return; }
+      ctx.setLineDash([]);
+      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = "#3b82f6";
+      ctx.strokeRect(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY);
+      lassoHandlePts(b).forEach(function(h){
+        ctx.fillStyle = "#fff";
+        ctx.strokeStyle = "#3b82f6";
+        ctx.lineWidth = 1.2;
+        ctx.fillRect(h.x - 5, h.y - 5, 10, 10);
+        ctx.strokeRect(h.x - 5, h.y - 5, 10, 10);
+      });
+    } else {
+      ctx.setLineDash([6, 5]);
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = inkHex("blue");
+      ctx.beginPath();
+      ctx.moveTo(poly[0], poly[1]);
+      for (var i = 2; i < poly.length; i += 2) ctx.lineTo(poly[i], poly[i+1]);
+      ctx.closePath(); ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -7765,6 +7832,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     railMin: true,     /* notebooks column starts collapsed */
     secMin: false,     /* sections column starts open */
     listMin: false,    /* pages column starts open */
+    lassoContain: "partial", /* partial: a piece inside is enough; full: wholly inside */
     jumpBar: true,     /* the floating shortcuts bar (home / open / places) */
     jumpMin: false,
     jumpPos: null,
@@ -7945,6 +8013,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setMarkdown").checked = cfg.markdown !== false;
     $("setSmart").checked = cfg.smartQuotes !== false;
     $("setLeft").checked = cfg.leftHand === true;
+    if ($("setLassoContain")) $("setLassoContain").value = cfg.lassoContain === "full" ? "full" : "partial";
     $("setTheme").value = cfg.theme || "system";
     $("setPressure").value = cfg.pressure || "normal";
     if (C.setPressure) C.setPressure(cfg.pressure || "normal");
@@ -8007,6 +8076,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       saveCfg();
     });
     bindCheck("setHover", "hoverDot");
+    if ($("setLassoContain")) $("setLassoContain").addEventListener("change", function(){
+      cfg.lassoContain = this.value === "full" ? "full" : "partial";
+      saveCfg();
+    });
     bindCheck("setAutoScroll", "autoScroll");
     bindCheck("setPinch", "pinchZoom");
     bindCheck("setPageFlow", "pageFlow");
@@ -8317,7 +8390,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     pencil:  "A softer, slightly transparent line, like a real pencil.",
     marker:  "A broad see-through stroke for highlighting over writing.",
     eraser:  "Rubs out whole strokes you drag across. The ring under the nib shows its reach.",
-    lasso:   "Draw round some writing to pick it up, then move, resize, recolour, copy or delete it.",
+    lasso:   "Draw a box around writing, pictures or words, then move, resize, restyle, copy or delete them.",
     lassobox:"Switches the lasso between drawing round a thing and dragging a box over it.",
     ruler:   "Keeps the next stroke straight, for underlines and axes.",
     img:     "Puts a picture from the tablet into this page.",
@@ -8960,12 +9033,77 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   /* ---- lasso ---- */
-  var lasso = { poly: null, picked: [], surface: null, dragging: false, last: null };
+  var lasso = { poly: null, picked: [], pickedEls: [], surface: null, dragging: false, last: null };
 
+  function hideLassoStyle(){
+    if ($("lassoStylePop")) $("lassoStylePop").hidden = true;
+  }
+  function lassoFull(){ return cfg.lassoContain === "full"; }
+  function lassoHas(){
+    return (lasso.picked && lasso.picked.length) || (lasso.pickedEls && lasso.pickedEls.length);
+  }
+  function lassoHost(){
+    return (lasso.surface && lasso.surface.name === "practice") ? $("pracText") : $("body");
+  }
+  function pageToClient(S, x, y){
+    var r = S.scroller.getBoundingClientRect();
+    var z = zoom() || 1;
+    var padv = (S.name === "note" && typeof prevPad === "function") ? prevPad() : 0;
+    return {
+      clientX: x * z - S.scroller.scrollLeft + r.left,
+      clientY: y * z - S.scroller.scrollTop + padv + r.top
+    };
+  }
+  function elPageBox(el, S){
+    S = S || lasso.surface || noteSurface;
+    var er = el.getBoundingClientRect();
+    var sr = S.scroller.getBoundingClientRect();
+    var z = zoom() || 1;
+    var padv = (S.name === "note" && typeof prevPad === "function") ? prevPad() : 0;
+    return {
+      minX: (er.left - sr.left + S.scroller.scrollLeft) / z,
+      minY: (er.top - sr.top + S.scroller.scrollTop - padv) / z,
+      maxX: (er.right - sr.left + S.scroller.scrollLeft) / z,
+      maxY: (er.bottom - sr.top + S.scroller.scrollTop - padv) / z
+    };
+  }
+  function boxHitsLasso(b, poly, full){
+    if (!b || !poly) return false;
+    var corners = [[b.minX, b.minY], [b.maxX, b.minY], [b.maxX, b.maxY], [b.minX, b.maxY]];
+    var hit = 0;
+    for (var i = 0; i < 4; i++) if (C.pointInPoly(corners[i][0], corners[i][1], poly)) hit++;
+    if (full) return hit === 4;
+    if (hit) return true;
+    var lb = C.polyBounds(poly);
+    if (!lb) return false;
+    return !(lb.maxX < b.minX || lb.minX > b.maxX || lb.maxY < b.minY || lb.minY > b.maxY);
+  }
+  function lassoHandlePts(b){
+    var mx = (b.minX + b.maxX) / 2, my = (b.minY + b.maxY) / 2;
+    return [
+      { k:"nw", x:b.minX, y:b.minY }, { k:"n", x:mx, y:b.minY }, { k:"ne", x:b.maxX, y:b.minY },
+      { k:"e", x:b.maxX, y:my }, { k:"se", x:b.maxX, y:b.maxY }, { k:"s", x:mx, y:b.maxY },
+      { k:"sw", x:b.minX, y:b.maxY }, { k:"w", x:b.minX, y:my }
+    ];
+  }
+  function lassoHitHandle(px, py){
+    if (!lasso.poly) return null;
+    var b = C.polyBounds(lasso.poly);
+    if (!b) return null;
+    var z = zoom() || 1;
+    var pad = 16 / z;
+    var hs = lassoHandlePts(b);
+    for (var i = 0; i < hs.length; i++){
+      if (Math.abs(px - hs[i].x) <= pad && Math.abs(py - hs[i].y) <= pad) return hs[i].k;
+    }
+    return null;
+  }
   function lassoClear(){
-    lasso.poly = null; lasso.picked = []; lasso.surface = null;
+    lasso.poly = null; lasso.picked = []; lasso.pickedEls = []; lasso.surface = null;
+    lasso.scaleOrig = null;
     $("lassoBar").hidden = true;
     if ($("lassoMore")) $("lassoMore").hidden = true;
+    hideLassoStyle();
     redrawAll();
   }
   function placeLassoPop(){
@@ -8975,44 +9113,226 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     bar.style.transform = "none";
     var x = lasso.cx || (vw / 2);
     var y = lasso.cy || (vh * 0.35);
+    if (lasso.poly && lasso.surface){
+      var b = C.polyBounds(lasso.poly);
+      if (b){
+        var c = pageToClient(lasso.surface, (b.minX + b.maxX) / 2, b.minY);
+        x = c.clientX; y = c.clientY;
+      }
+    }
     var w = bar.offsetWidth || 280, h = bar.offsetHeight || 48;
     bar.style.left = Math.max(8, Math.min(x - w / 2, vw - w - 8)) + "px";
     bar.style.top = Math.max(8, Math.min(y - h - 16, vh - h - 8)) + "px";
+    placeLassoStyle();
+  }
+  function placeLassoStyle(){
+    var pop = $("lassoStylePop");
+    var bar = $("lassoBar");
+    if (!pop || pop.hidden || !bar || bar.hidden) return;
+    var br = bar.getBoundingClientRect();
+    var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+    var w = pop.offsetWidth || 280, h = pop.offsetHeight || 80;
+    var x = br.left + (br.width - w) / 2;
+    var y = br.bottom + 8;
+    if (y + h > vh - 8) y = br.top - h - 8;
+    pop.style.left = Math.max(8, Math.min(x, vw - w - 8)) + "px";
+    pop.style.top = Math.max(8, y) + "px";
+  }
+  function lassoPickEls(S, poly){
+    var host = (S.name === "practice") ? $("pracText") : $("body");
+    if (!host) return [];
+    var sel = [];
+    var nodes = host.querySelectorAll("p, h1, h2, h3, li, pre, blockquote, .callout, figure.imgblock, span.math");
+    Array.prototype.forEach.call(nodes, function(el){
+      if (!el.textContent && !(el.classList && el.classList.contains("imgblock"))) return;
+      if (el.closest && el.closest("figure.imgblock") && !el.classList.contains("imgblock")) return;
+      var box = elPageBox(el, S);
+      if (boxHitsLasso(box, poly, lassoFull())) sel.push(el);
+    });
+    return sel.filter(function(el){
+      return !sel.some(function(o){ return o !== el && o.contains(el); });
+    });
+  }
+  function lassoSnapBox(){
+    var xs = [], ys = [];
+    (lasso.picked || []).forEach(function(s){
+      for (var i = 0; i + 1 < s.pts.length; i += 3){ xs.push(s.pts[i]); ys.push(s.pts[i+1]); }
+    });
+    (lasso.pickedEls || []).forEach(function(el){
+      var b = elPageBox(el, lasso.surface);
+      xs.push(b.minX, b.maxX); ys.push(b.minY, b.maxY);
+    });
+    if (!xs.length){
+      var pb = C.polyBounds(lasso.poly);
+      if (!pb) return;
+      xs = [pb.minX, pb.maxX]; ys = [pb.minY, pb.maxY];
+    }
+    var x0 = Math.min.apply(null, xs), y0 = Math.min.apply(null, ys);
+    var x1 = Math.max.apply(null, xs), y1 = Math.max.apply(null, ys);
+    lasso.poly = [x0, y0, x1, y0, x1, y1, x0, y1];
   }
   function lassoFinish(S, poly){
     lasso.poly = poly; lasso.surface = S;
-    lasso.picked = S.strokes.filter(function(s){ return C.strokeInPoly(s, poly); });
-    $("lassoBar").hidden = !lasso.picked.length;
+    var full = lassoFull();
+    lasso.picked = S.strokes.filter(function(s){ return C.strokeInPoly(s, poly, full); });
+    lasso.pickedEls = lassoPickEls(S, poly);
+    var any = lassoHas();
+    $("lassoBar").hidden = !any;
     if ($("lassoMore")) $("lassoMore").hidden = true;
+    hideLassoStyle();
     $("lassoCount").textContent = lasso.picked.length + (lasso.picked.length === 1 ? " stroke" : " strokes");
+    if (any) lassoSnapBox();
     S.redraw();
-    if (lasso.picked.length) placeLassoPop();
+    if (any) placeLassoPop();
   }
   function dropBounds(list){ dropBoundsOf(list); }
+  function lassoMoveFig(fig, dx, dy){
+    var S = lasso.surface || noteSurface;
+    var host = (S.name === "practice" ? $("pracText") : $("body"));
+    var hw = (host && host.getBoundingClientRect().width) || 600;
+    if (fig.getAttribute("data-free") !== "1"){
+      var box = elPageBox(fig, S);
+      fig.setAttribute("data-free", "1");
+      fig.setAttribute("data-x", ((box.minX / hw) * 100).toFixed(2));
+      fig.setAttribute("data-y", Math.round(box.minY));
+    }
+    var nx = Number(fig.getAttribute("data-x")) + (dx / hw) * 100;
+    var ny = Number(fig.getAttribute("data-y")) + dy;
+    fig.setAttribute("data-x", nx.toFixed(2));
+    fig.setAttribute("data-y", Math.round(ny));
+    applyImagePlace(fig);
+  }
+  function lassoMoveEl(el, dx, dy){
+    if (el.classList && el.classList.contains("imgblock")){ lassoMoveFig(el, dx, dy); return; }
+    var x = Number(el.getAttribute("data-lasso-x") || 0) + dx;
+    var y = Number(el.getAttribute("data-lasso-y") || 0) + dy;
+    el.setAttribute("data-lasso-x", x);
+    el.setAttribute("data-lasso-y", y);
+    el.style.position = "relative";
+    el.style.left = x + "px";
+    el.style.top = y + "px";
+  }
   function lassoMove(dx, dy){
-    if (!lasso.picked.length) return;
+    if (!lassoHas()) return;
     var S = lasso.surface;
-    var ids = {};
-    lasso.picked.forEach(function(s){ ids[s.id] = 1; });
-    var moved = C.translateStrokes(lasso.picked, dx, dy);
-    S.strokes = S.strokes.map(function(s){
-      if (!ids[s.id]) return s;
-      return moved.shift();
-    });
-    lasso.picked = S.strokes.filter(function(s){ return ids[s.id]; });
-    dropBounds(S.strokes);
+    if (lasso.picked.length && S){
+      var ids = {};
+      lasso.picked.forEach(function(s){ ids[s.id] = 1; });
+      var moved = C.translateStrokes(lasso.picked, dx, dy);
+      S.strokes = S.strokes.map(function(s){
+        if (!ids[s.id]) return s;
+        return moved.shift();
+      });
+      lasso.picked = S.strokes.filter(function(s){ return ids[s.id]; });
+      dropBounds(S.strokes);
+    }
+    (lasso.pickedEls || []).forEach(function(el){ lassoMoveEl(el, dx, dy); });
     if (lasso.poly){
       for (var i = 0; i < lasso.poly.length; i += 2){ lasso.poly[i] += dx; lasso.poly[i+1] += dy; }
     }
+    if (S) S.redraw();
+    placeLassoPop();
+  }
+  function lassoBeginScale(S, handle, p){
+    hideLassoStyle();
+    var b = C.polyBounds(lasso.poly);
+    lasso.scaleOrig = {
+      handle: handle,
+      b: { minX:b.minX, minY:b.minY, maxX:b.maxX, maxY:b.maxY },
+      strokes: JSON.parse(JSON.stringify(lasso.picked)),
+      els: (lasso.pickedEls || []).map(function(el){
+        var box = elPageBox(el, S);
+        return {
+          el: el,
+          box: box,
+          pct: Number(el.getAttribute("data-pct") || 70),
+          fs: parseFloat((el.style && el.style.fontSize) || window.getComputedStyle(el).fontSize) || 16
+        };
+      })
+    };
+    S.drawing = { scaling:true, last:p };
+  }
+  function lassoBoxFromHandle(ob, handle, p){
+    var b = { minX:ob.minX, minY:ob.minY, maxX:ob.maxX, maxY:ob.maxY };
+    if (handle.indexOf("n") >= 0) b.minY = p.y;
+    if (handle.indexOf("s") >= 0) b.maxY = p.y;
+    if (handle.indexOf("w") >= 0) b.minX = p.x;
+    if (handle.indexOf("e") >= 0) b.maxX = p.x;
+    if (b.maxX - b.minX < 16){
+      if (handle.indexOf("w") >= 0) b.minX = b.maxX - 16; else b.maxX = b.minX + 16;
+    }
+    if (b.maxY - b.minY < 16){
+      if (handle.indexOf("n") >= 0) b.minY = b.maxY - 16; else b.maxY = b.minY + 16;
+    }
+    return b;
+  }
+  function lassoMapPt(x, y, ob, nb){
+    var sx = (nb.maxX - nb.minX) / Math.max(1, ob.maxX - ob.minX);
+    var sy = (nb.maxY - nb.minY) / Math.max(1, ob.maxY - ob.minY);
+    return { x: nb.minX + (x - ob.minX) * sx, y: nb.minY + (y - ob.minY) * sy, sx:sx, sy:sy };
+  }
+  function lassoScaleTo(p){
+    var o = lasso.scaleOrig, S = lasso.surface;
+    if (!o || !S) return;
+    var nb = lassoBoxFromHandle(o.b, o.handle, p);
+    var ids = {};
+    (o.strokes || []).forEach(function(s){ ids[s.id] = 1; });
+    var mapped = (o.strokes || []).map(function(s){
+      var pts = s.pts.slice();
+      var last = null;
+      for (var i = 0; i + 1 < pts.length; i += 3){
+        last = lassoMapPt(pts[i], pts[i+1], o.b, nb);
+        pts[i] = last.x; pts[i+1] = last.y;
+      }
+      var c = {}; Object.keys(s).forEach(function(k){ c[k] = s[k]; });
+      c.pts = pts;
+      if (last) c.width = Math.max(0.55, s.width * (last.sx + last.sy) / 2);
+      return c;
+    });
+    S.strokes = S.strokes.map(function(s){ return ids[s.id] ? mapped.shift() : s; });
+    lasso.picked = S.strokes.filter(function(s){ return ids[s.id]; });
+    (o.els || []).forEach(function(rec){
+      var a = lassoMapPt(rec.box.minX, rec.box.minY, o.b, nb);
+      var c = lassoMapPt(rec.box.maxX, rec.box.maxY, o.b, nb);
+      var el = rec.el;
+      if (el.classList && el.classList.contains("imgblock")){
+        var host = lassoHost();
+        var hw = (host && host.getBoundingClientRect().width) || 600;
+        el.setAttribute("data-free", "1");
+        el.setAttribute("data-x", ((a.x / hw) * 100).toFixed(2));
+        el.setAttribute("data-y", Math.round(a.y));
+        var nw = Math.max(12, ((c.x - a.x) / hw) * 100);
+        el.setAttribute("data-pct", Math.round(nw));
+        el.style.width = nw + "%";
+        applyImagePlace(el);
+      } else {
+        el.style.position = "relative";
+        el.setAttribute("data-lasso-x", a.x - rec.box.minX);
+        el.setAttribute("data-lasso-y", a.y - rec.box.minY);
+        el.style.left = (a.x - rec.box.minX) + "px";
+        el.style.top = (a.y - rec.box.minY) + "px";
+        var f = (a.sx + a.sy) / 2;
+        el.style.fontSize = Math.max(8, rec.fs * f) + "px";
+      }
+    });
+    lasso.poly = [nb.minX, nb.minY, nb.maxX, nb.minY, nb.maxX, nb.maxY, nb.minX, nb.maxY];
+    dropBounds(S.strokes);
     S.redraw();
+    placeLassoPop();
   }
   $("lassoDelete").addEventListener("click", function(){
     var S = lasso.surface; if (!S) return;
     var ids = {}; lasso.picked.forEach(function(s){ ids[s.id] = 1; });
-    S.undo.push(tagOp({ t:"del", ss: S.strokes.map(function(s,i){ return {i:i, s:s}; })
-                                        .filter(function(x){ return ids[x.s.id]; }) }));
-    S.redo = []; clearTextRedo();
-    S.strokes = S.strokes.filter(function(s){ return !ids[s.id]; });
+    if (lasso.picked.length){
+      S.undo.push(tagOp({ t:"del", ss: S.strokes.map(function(s,i){ return {i:i, s:s}; })
+                                          .filter(function(x){ return ids[x.s.id]; }) }));
+      S.redo = []; clearTextRedo();
+      S.strokes = S.strokes.filter(function(s){ return !ids[s.id]; });
+    }
+    (lasso.pickedEls || []).forEach(function(el){
+      if (el.parentNode) el.parentNode.removeChild(el);
+    });
+    if (lasso.pickedEls && lasso.pickedEls.length) markDirty();
     lassoClear(); S.queueSave(); paintInkTools();
   });
   /* ---- copy and paste handwriting ----
@@ -9023,95 +9343,193 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      page, closing the app and coming back tomorrow. */
   var inkClip = [];
 
+  var elClip = [];
   function copyPickedInk(){
-    if (!lasso.picked.length) return 0;
+    var n = 0;
     var b = C.polyBounds(lasso.poly) || { minX: 0, minY: 0 };
-    var copy = JSON.parse(JSON.stringify(lasso.picked));
-    var norm = C.translateStrokes(copy, -b.minX, -b.minY);
-    inkClip = norm;
-    C.setMeta("inkClip", norm);
-    return norm.length;
+    if (lasso.picked.length){
+      var copy = JSON.parse(JSON.stringify(lasso.picked));
+      var norm = C.translateStrokes(copy, -b.minX, -b.minY);
+      inkClip = norm;
+      C.setMeta("inkClip", norm);
+      n += norm.length;
+    } else {
+      inkClip = [];
+    }
+    elClip = (lasso.pickedEls || []).map(function(el){
+      return { html: el.outerHTML, box: elPageBox(el, lasso.surface) };
+    });
+    n += elClip.length;
+    return n;
   }
   function pasteInkAt(x, y){
-    if (!inkClip.length){ hint("Nothing copied yet."); return; }
+    if (!inkClip.length && !elClip.length){ hint("Nothing copied yet."); return; }
     var S = ink.surfaces[ink.active] || noteSurface;
-    var fresh = JSON.parse(JSON.stringify(inkClip));
-    fresh = C.translateStrokes(fresh, x, y);
-    /* new ids, or undo, erase and the lasso would all confuse the copy with
-       the original it came from */
     var added = [];
-    fresh.forEach(function(s){
-      s.id = C.newId("s");
-      s.t = Date.now();
-      S.strokes.push(s);
-      added.push(s);
+    if (inkClip.length){
+      var fresh = JSON.parse(JSON.stringify(inkClip));
+      fresh = C.translateStrokes(fresh, x, y);
+      /* new ids, or undo, erase and the lasso would all confuse the copy with
+         the original it came from */
+      fresh.forEach(function(s){
+        s.id = C.newId("s");
+        s.t = Date.now();
+        S.strokes.push(s);
+        added.push(s);
+      });
+      S.undo.push(tagOp({ t: "add", ss: added.map(function(s, k){
+        return { i: S.strokes.length - added.length + k, s: s };
+      }) }));
+      S.redo = []; clearTextRedo();
+    }
+    var addedEls = [];
+    var host = (S.name === "practice") ? $("pracText") : $("body");
+    (elClip || []).forEach(function(rec){
+      var wrap = document.createElement("div");
+      wrap.innerHTML = rec.html;
+      var el = wrap.firstElementChild;
+      if (!el || !host) return;
+      if (el.classList && el.classList.contains("imgblock")){
+        var hw = host.getBoundingClientRect().width || 600;
+        var dx = x - (rec.box ? rec.box.minX : 0);
+        var dy = y - (rec.box ? rec.box.minY : 0);
+        var nx = Number(el.getAttribute("data-x"));
+        var ny = Number(el.getAttribute("data-y"));
+        if (!isFinite(nx) || !isFinite(ny)){
+          nx = (x / hw) * 100; ny = y;
+        } else {
+          nx += (dx / hw) * 100; ny += dy;
+        }
+        el.setAttribute("data-free", "1");
+        el.setAttribute("data-x", nx.toFixed(2));
+        el.setAttribute("data-y", Math.round(ny));
+        applyImagePlace(el);
+      }
+      host.appendChild(el);
+      addedEls.push(el);
     });
-    S.undo.push(tagOp({ t: "add", ss: added.map(function(s, k){
-      return { i: S.strokes.length - added.length + k, s: s };
-    }) }));
-    S.redo = []; clearTextRedo();
+    if (addedEls.length) markDirty();
     S.redraw(); S.queueSave(); paintInkTools();
     lasso.surface = S;
     lasso.picked = added;
-    var xs = [], ys = [];
-    added.forEach(function(s){
-      for (var i = 0; i + 1 < s.pts.length; i += 3){ xs.push(s.pts[i]); ys.push(s.pts[i+1]); }
-    });
-    if (xs.length){
-      var x0 = Math.min.apply(null, xs), y0 = Math.min.apply(null, ys);
-      var x1 = Math.max.apply(null, xs), y1 = Math.max.apply(null, ys);
-      lasso.poly = [x0, y0, x1, y0, x1, y1, x0, y1];
-    }
-    $("lassoBar").hidden = false;
+    lasso.pickedEls = addedEls;
+    if (lassoHas()) lassoSnapBox();
+    $("lassoBar").hidden = !lassoHas();
     if ($("lassoMore")) $("lassoMore").hidden = true;
+    hideLassoStyle();
     placeLassoPop();
-    hint(added.length + (added.length === 1 ? " stroke pasted." : " strokes pasted."));
+    hint((added.length + addedEls.length) + " pasted — still selected.");
+  }
+  function pasteLassoHere(){
+    var S = ink.surfaces[ink.active] || noteSurface;
+    var sc = S.scroller.getBoundingClientRect();
+    var mid = S.toPage({ clientX: sc.left + sc.width / 2, clientY: sc.top + sc.height / 2 });
+    if (lasso.poly){
+      var b = C.polyBounds(lasso.poly);
+      if (b){ mid = { x: b.maxX + 24, y: b.minY }; }
+    }
+    pasteInkAt(mid.x, mid.y);
   }
   $("lassoCopy").addEventListener("click", function(){
     var n = copyPickedInk();
     if (!n) return;
-    hint(n + (n === 1 ? " stroke copied." : " strokes copied.") +
-         " Long-press where you want it and choose Paste writing.");
+    hint("Copied. Paste keeps it selected.");
   });
   $("lassoCut").addEventListener("click", function(){
     var n = copyPickedInk();
     if (!n) return;
     $("lassoDelete").click();
-    hint(n + (n === 1 ? " stroke cut." : " strokes cut."));
+    hint("Cut. Paste keeps it selected.");
+  });
+  if ($("lassoPaste")) $("lassoPaste").addEventListener("click", function(){
+    pasteLassoHere();
   });
 
-  $("lassoColour").addEventListener("click", function(){
-    var S = lasso.surface; if (!S) return;
-    var ids = {}; lasso.picked.forEach(function(s){ ids[s.id] = 1; });
-    S.strokes.forEach(function(s){ if (ids[s.id]) s.colour = ink.colour; });
-    S.redraw(); S.queueSave();
-  });
   $("lassoBigger").addEventListener("click", function(){ lassoScale(1.15); });
   $("lassoSmaller").addEventListener("click", function(){ lassoScale(1/1.15); });
   function lassoScale(f){
-    var S = lasso.surface; if (!S || !lasso.picked.length) return;
+    var S = lasso.surface; if (!S || !lassoHas()) return;
     var b = C.polyBounds(lasso.poly);
-    var cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
-    var ids = {}; lasso.picked.forEach(function(s){ ids[s.id] = 1; });
-    var scaled = C.scaleStrokes(lasso.picked, cx, cy, f);
-    S.strokes = S.strokes.map(function(s){ return ids[s.id] ? scaled.shift() : s; });
-    dropBounds(S.strokes);
-    lasso.picked = S.strokes.filter(function(s){ return ids[s.id]; });
-    S.redraw(); S.queueSave();
+    if (!b) return;
+    lassoBeginScale(S, "se", { x: b.maxX, y: b.maxY });
+    lassoScaleTo({
+      x: b.minX + (b.maxX - b.minX) * f,
+      y: b.minY + (b.maxY - b.minY) * f
+    });
+    lasso.scaleOrig = null;
+    S.queueSave();
   }
   $("lassoDone").addEventListener("click", lassoClear);
   if ($("lassoMoreBtn")) $("lassoMoreBtn").addEventListener("click", function(){
     var m = $("lassoMore");
     if (!m) return;
     m.hidden = !m.hidden;
+    hideLassoStyle();
     placeLassoPop();
   });
+  if ($("lassoToText")) $("lassoToText").addEventListener("click", function(){
+    hint("Turning handwriting into typed words is not built yet.");
+  });
+  function paintLassoSwatches(){
+    var host = $("lassoSwatches");
+    if (!host) return;
+    host.textContent = "";
+    C.INK_COLOURS.forEach(function(c){
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "swatchbtn sm";
+      b.style.background = inkHex(c);
+      b.title = c;
+      b.addEventListener("click", function(){ lassoRecolour(c); });
+      host.appendChild(b);
+    });
+  }
+  function lassoRecolour(c){
+    var S = lasso.surface; if (!S) return;
+    var ids = {}; lasso.picked.forEach(function(s){ ids[s.id] = 1; });
+    S.strokes.forEach(function(s){ if (ids[s.id]) s.colour = c; });
+    (lasso.pickedEls || []).forEach(function(el){
+      if (el.classList && el.classList.contains("imgblock")) return;
+      el.style.color = inkHex(c);
+    });
+    S.redraw(); S.queueSave(); markDirty();
+  }
+  function lassoFmtText(how){
+    var els = (lasso.pickedEls || []).filter(function(el){
+      return !(el.classList && el.classList.contains("imgblock"));
+    });
+    if (!els.length){ hint("No typed words in this selection."); return; }
+    els.forEach(function(el){
+      if (how === "bold") el.style.fontWeight = (el.style.fontWeight === "700" || el.style.fontWeight === "bold") ? "" : "700";
+      else if (how === "italic") el.style.fontStyle = el.style.fontStyle === "italic" ? "" : "italic";
+      else if (how === "under") el.style.textDecoration = /underline/.test(el.style.textDecoration || "") ? "" : "underline";
+      else if (how === "hl"){
+        var on = el.style.backgroundColor && el.style.backgroundColor !== "transparent";
+        el.style.backgroundColor = on ? "" : "#fff3bf";
+      }
+    });
+    markDirty(); flush();
+  }
   if ($("lassoStyle")) $("lassoStyle").addEventListener("click", function(){
-    var m = $("lassoMore");
-    if (m) m.hidden = false;
+    var pop = $("lassoStylePop");
+    if (!pop) return;
+    if ($("lassoMore")) $("lassoMore").hidden = true;
+    paintLassoSwatches();
+    var hasText = (lasso.pickedEls || []).some(function(el){
+      return !(el.classList && el.classList.contains("imgblock"));
+    });
+    if (!lasso.picked.length && !hasText){
+      hint("Style is for handwriting and typed words.");
+      return;
+    }
+    if ($("lassoInkStyle")) $("lassoInkStyle").hidden = !lasso.picked.length;
+    if ($("lassoTextStyle")) $("lassoTextStyle").hidden = !hasText;
+    pop.hidden = !pop.hidden;
     placeLassoPop();
-    if ($("lassoColour")) $("lassoColour").click();
   });
+  if ($("lassoBold")) $("lassoBold").addEventListener("click", function(){ lassoFmtText("bold"); });
+  if ($("lassoItalic")) $("lassoItalic").addEventListener("click", function(){ lassoFmtText("italic"); });
+  if ($("lassoUnder")) $("lassoUnder").addEventListener("click", function(){ lassoFmtText("under"); });
+  if ($("lassoHl")) $("lassoHl").addEventListener("click", function(){ lassoFmtText("hl"); });
 
   /* ---- maths ---- */
   var mathTarget = null;
