@@ -794,6 +794,14 @@
      side so the two do not sit on top of each other */
   .jumpbar{z-index:76}
   .jumpdot{font-size:16px}
+  .jumpnb{
+    font-weight:700; font-family:var(--sans, inherit); color:#1a1a1a !important;
+    border-color:rgba(0,0,0,.28) !important; text-shadow:0 0 3px #fff;
+  }
+  .jumpnb[aria-current="true"]{
+    box-shadow:0 0 0 2px var(--panel), 0 0 0 4px var(--ink);
+  }
+  .jumpnb[hidden]{display:none !important}
   .jumppop{min-width:220px; max-width:min(340px, 86vw); max-height:min(70vh, 520px); overflow:auto}
   .jumppop .jumph{font-family:var(--mono); font-size:10px; letter-spacing:.14em;
     text-transform:uppercase; color:var(--ink-2); padding:8px 10px 4px}
@@ -2500,6 +2508,9 @@
   <button type="button" class="favgrip" id="jumpGrip" aria-label="Move the shortcuts bar" title="Drag to move" data-help="Drag this to move the shortcuts bar anywhere on the screen.">&#8942;&#8942;</button>
   <button type="button" class="favmini" id="jumpMini" aria-label="Minimise the shortcuts bar" title="Minimise" data-help="Shrinks the bar to a single button. Drag that button to move it; tap it to bring the bar back.">&#8722;</button>
   <button type="button" id="jumpHome" aria-label="Home" title="Home — open another notebook, keep this one open" data-help="Goes to the notebook list. This notebook stays open, so you can open another beside it.">⌂</button>
+  <button type="button" class="jumpnb" id="jumpNb0" hidden aria-label="Open notebook 1"></button>
+  <button type="button" class="jumpnb" id="jumpNb1" hidden aria-label="Open notebook 2"></button>
+  <button type="button" class="jumpnb" id="jumpNb2" hidden aria-label="Open notebook 3"></button>
   <button type="button" id="jumpOpen" aria-label="Open notebooks" title="Notebooks open now" data-help="Shows every notebook you have open, so you can jump between them.">▤</button>
   <button type="button" id="jumpPlaces" aria-label="Sections and bookmarks" title="Sections and bookmarks" data-help="Shows this notebook's sections and every bookmarked page, so you can jump without opening the side list.">⚑</button>
 </div>
@@ -2556,7 +2567,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b113";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b114";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5856,14 +5867,49 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      the place record, so switching tabs restores the page, scroll and zoom
      without this code having to know anything about them. */
   var openNbs = [];
+  var recentNbs = [];
+  var JUMP_FALLBACK = ["#6ea8fe", "#f5c16c", "#7dcea0"];
 
   function loadOpenNbs(){
     return C.getMeta("openNotebooks", null).then(function(l){
       openNbs = Array.isArray(l) ? l.slice() : [];
+      return C.getMeta("recentNotebooks", null);
+    }).then(function(r){
+      recentNbs = Array.isArray(r) ? r.slice() : [];
       paintTabs();
     });
   }
   function saveOpenNbs(){ return C.setMeta("openNotebooks", openNbs); }
+  function saveRecentNbs(){ return C.setMeta("recentNotebooks", recentNbs); }
+  function touchRecentNb(nbId){
+    if (!nbId) return;
+    recentNbs = [nbId].concat(recentNbs.filter(function(id){ return id !== nbId; })).slice(0, 8);
+    saveRecentNbs();
+  }
+  /* The three notebooks you have been jumping between, current first.
+     The rest stay reachable from the Open list. */
+  function recentOpenThree(){
+    var have = {};
+    (openNbs || []).forEach(function(id){ have[id] = true; });
+    var out = [];
+    function add(id){
+      if (!id || !have[id] || out.indexOf(id) >= 0) return;
+      if (typeof nbById === "function" && !nbById(id)) return;
+      out.push(id);
+    }
+    (recentNbs || []).forEach(add);
+    (openNbs || []).forEach(add);
+    return out.slice(0, 3);
+  }
+  function nbLetter(nb){
+    var n = ((nb && nb.name) || "?").replace(/^\s+/, "");
+    return (n.charAt(0) || "?").toUpperCase();
+  }
+  function jumpNbColour(nb, slot){
+    var key = nb && nb.colour;
+    if (key && key !== "slate" && SWATCH[key]) return SWATCH[key];
+    return JUMP_FALLBACK[slot] || "#94a3b8";
+  }
 
   function openNotebookTab(nbId){
     if (!nbId) return;
@@ -5871,13 +5917,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       openNbs.push(nbId);
       saveOpenNbs();
     }
+    touchRecentNb(nbId);
     paintTabs();
   }
   function closeNotebookTab(nbId){
     var i = openNbs.indexOf(nbId);
     if (i < 0) return;
     openNbs.splice(i, 1);
+    recentNbs = recentNbs.filter(function(id){ return id !== nbId; });
     saveOpenNbs();
+    saveRecentNbs();
     /* closing the one you are looking at moves you to its neighbour, and to
        the home list only when nothing is left open */
     if (state.nbId === nbId){
@@ -5931,6 +5980,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       strip.appendChild(tab);
     });
     paintOpenList();
+    if (typeof paintJumpNbs === "function") paintJumpNbs();
   }
   function paintOpenList(){
     var host = $("nbOpenList");
@@ -9402,7 +9452,30 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   function jumpBarWanted(){
     if (cfg.jumpBar === false) return false;
-    return !!state.nbId;
+    return !!state.nbId || (openNbs && openNbs.length > 0);
+  }
+  function paintJumpNbs(){
+    var ids = recentOpenThree();
+    for (var i = 0; i < 3; i++){
+      var b = $("jumpNb" + i);
+      if (!b) continue;
+      var id = ids[i];
+      var nb = id ? nbById(id) : null;
+      if (!nb){
+        b.hidden = true;
+        b.removeAttribute("data-nb");
+        b.textContent = "";
+        continue;
+      }
+      b.hidden = false;
+      b.dataset.nb = id;
+      b.textContent = nbLetter(nb);
+      b.style.background = jumpNbColour(nb, i);
+      b.setAttribute("aria-label", nb.name);
+      b.title = nb.name;
+      b.setAttribute("data-help", "Switch to " + nb.name + ".");
+      b.setAttribute("aria-current", id === state.nbId ? "true" : "false");
+    }
   }
   function placeJumpBar(){
     var el = $("jumpBar");
@@ -9424,6 +9497,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       dot.style.top = Math.max(4, Math.min(p.y, vh - 52)) + "px";
     }
     if (!host.hidden) placeJumpBar();
+    paintJumpNbs();
   }
   function closeJumpPop(){ if ($("jumpPop")) $("jumpPop").hidden = true; }
   function openJumpPop(btn, kind){
@@ -9515,6 +9589,21 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     setFocus(false);
     go({});
     hint("This notebook stays open. Tap another to have both.");
+  });
+  function jumpToRecentNb(i){
+    var b = $("jumpNb" + i);
+    var id = b && b.dataset && b.dataset.nb;
+    if (!id || id === state.nbId) return;
+    closeJumpPop();
+    flush();
+    go({ nbId: id });
+  }
+  ["jumpNb0","jumpNb1","jumpNb2"].forEach(function(id, i){
+    if (!$(id)) return;
+    $(id).addEventListener("click", function(e){
+      e.preventDefault(); e.stopPropagation();
+      jumpToRecentNb(i);
+    });
   });
   if ($("jumpOpen")) $("jumpOpen").addEventListener("click", function(e){
     e.preventDefault(); e.stopPropagation();
