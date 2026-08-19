@@ -2597,7 +2597,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b121";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b122";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -14161,10 +14161,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     handover.busy = true;
     document.body.classList.add("swapping");
     handover.until = Date.now() + 400;    /* no second swap straight after */
-    if (typeof glide === "object" && glide && glide.raf){
-      handover.glide = { vx: glide.vx, vy: glide.vy };
-      stopGlide();
-    }
+    /* A long fling used to keep going after the swap and dump you at the
+       top of the page you had just entered. The join is a stop. */
+    if (typeof stopGlide === "function") stopGlide();
+    handover.glide = null;
     var keepAt = anchorTop - pr.top;      /* where that page's top sits now */
     var nbId = state.nbId, id = target.id;
 
@@ -14319,13 +14319,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         redrawAll();
         document.body.classList.remove("swapping");
         handover.busy = false;
-        if (handover.glide && typeof startGlide === "function" &&
-            typeof noteSurface !== "undefined" && noteSurface){
-          var g = handover.glide; handover.glide = null;
-          startGlide(noteSurface, g.vx, g.vy);
-        } else {
-          handover.glide = null;
-        }
+        handover.glide = null;
         if (handover.queued && handover.queued.id &&
             handover.queued.id !== state.noteId){
           var q = handover.queued; handover.queued = null;
