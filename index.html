@@ -314,6 +314,20 @@
     padding:6px 10px; gap:2px; flex-wrap:nowrap;
     max-width:min(96vw, 620px);
   }
+  #lassoBar{
+    padding:4px 6px; gap:0; max-width:min(96vw, 360px);
+    touch-action:none;
+  }
+  #lassoBar .lassoico{
+    width:36px; min-width:36px; height:36px; padding:0; min-height:36px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:16px; line-height:1;
+  }
+  #lassoGrip{
+    width:18px; min-width:18px; cursor:move; opacity:.55;
+    display:flex; align-items:center; justify-content:center;
+    letter-spacing:-2px; font-size:12px;
+  }
   .lassobar .ghost{color:#fff; border-color:transparent; background:transparent}
   .lassobar .ghost:hover{background:rgba(255,255,255,.12)}
   .lassobar .danger{color:#ffb4b4}
@@ -1785,13 +1799,14 @@
         <button class="ghost" id="findClose">Close</button>
       </div>
       <div class="lassobar" id="lassoBar" hidden>
-        <span id="lassoCount"></span>
-        <button class="ghost" id="lassoCut" title="Cut">Cut</button>
-        <button class="ghost" id="lassoCopy" title="Copy">Copy</button>
-        <button class="ghost" id="lassoPaste" title="Paste">Paste</button>
-        <button class="ghost danger" id="lassoDelete">Delete</button>
-        <button class="ghost" id="lassoStyle" title="Colour, thickness, or text style">Change style</button>
-        <button class="ghost" id="lassoMoreBtn" title="More" aria-label="More">&#8942;</button>
+        <span id="lassoGrip" title="Drag the bar" aria-label="Move the bar">::</span>
+        <span id="lassoCount" hidden></span>
+        <button class="ghost lassoico" id="lassoCut" title="Cut">&#9986;</button>
+        <button class="ghost lassoico" id="lassoCopy" title="Copy">&#9112;</button>
+        <button class="ghost lassoico" id="lassoPaste" title="Paste">&#128203;</button>
+        <button class="ghost lassoico danger" id="lassoDelete" title="Delete">&#10005;</button>
+        <button class="ghost lassoico" id="lassoStyle" title="Style">Aa</button>
+        <button class="ghost lassoico" id="lassoMoreBtn" title="More" aria-label="More">&#8942;</button>
         <span class="lassomore" id="lassoMore" hidden>
           <button class="ghost" id="lassoToText" title="Handwriting to typed words">Convert to text</button>
           <button class="ghost" id="lassoSmaller" title="Smaller">&minus;</button>
@@ -2521,7 +2536,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b109";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b110";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -6919,8 +6934,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* ---- who is allowed to draw ---- */
   function mayDraw(e){
-    /* a live lasso catch can be moved or dropped with a finger or the pen */
-    if (ink.tool === "lasso" && typeof lassoHas === "function" && lassoHas()) return true;
+    /* a live lasso catch: the pen can move or drop it. A finger only
+       moves if it lands on the catch — otherwise it must still scroll. */
+    if (ink.tool === "lasso" && typeof lassoHas === "function" && lassoHas()){
+      if (e.pointerType === "touch"){
+        var S0 = (typeof lasso === "object" && lasso.surface) || (typeof noteSurface !== "undefined" && noteSurface);
+        if (!S0 || !S0.toPage || !lasso.poly) return false;
+        var pt = S0.toPage(e);
+        if (typeof lassoHitHandle === "function" && lassoHitHandle(pt.x, pt.y)) return true;
+        if (typeof C.pointInPoly === "function" && C.pointInPoly(pt.x, pt.y, lasso.poly)) return true;
+        return false;
+      }
+      return true;
+    }
     if (ink.mode === "type") return false;
     var t = e.pointerType || "mouse";
     if (ink.mode === "auto") return t === "pen";       /* pen writes, finger works the text */
@@ -8077,6 +8103,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     defaultZoom: 1,
     pageFlow: true,    /* scrolling past the end carries on to the next page */
     tapGrow: true,     /* double-tap near the foot to add half a sheet */
+    lassoPopOff: null, /* {dx, dy} of the lasso bar from the catch */
     eraserSize: 22,    /* how wide the eraser bites, in page units */
     tapErase: true,       /* double-tap the nib to toggle the eraser */
     penButtonErase: true, /* press the side button: toggle eraser */
@@ -9410,11 +9437,68 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         x = c.clientX; y = c.clientY;
       }
     }
-    var w = bar.offsetWidth || 280, h = bar.offsetHeight || 48;
+    var w = bar.offsetWidth || 220, h = bar.offsetHeight || 44;
+    var off = cfg.lassoPopOff || { dx: 0, dy: 0 };
+    x = x + (off.dx || 0);
+    y = y + (off.dy || 0);
     bar.style.left = Math.max(8, Math.min(x - w / 2, vw - w - 8)) + "px";
     bar.style.top = Math.max(8, Math.min(y - h - 16, vh - h - 8)) + "px";
+    bar.style.transform = "none";
     placeLassoStyle();
   }
+  (function wireLassoBarDrag(){
+    var grip = $("lassoGrip"), bar = $("lassoBar");
+    if (!grip || !bar) return;
+    var drag = null;
+    grip.addEventListener("pointerdown", function(e){
+      e.preventDefault(); e.stopPropagation();
+      var r = bar.getBoundingClientRect();
+      drag = { x0: e.clientX, y0: e.clientY, l0: r.left, t0: r.top };
+      try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    grip.addEventListener("pointermove", function(e){
+      if (!drag) return;
+      var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+      var w = bar.offsetWidth || 220, h = bar.offsetHeight || 44;
+      var nx = Math.max(8, Math.min(drag.l0 + (e.clientX - drag.x0), vw - w - 8));
+      var ny = Math.max(8, Math.min(drag.t0 + (e.clientY - drag.y0), vh - h - 8));
+      bar.style.left = nx + "px";
+      bar.style.top = ny + "px";
+    });
+    function end(){
+      if (!drag) return;
+      drag = null;
+      var r = bar.getBoundingClientRect();
+      var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+      var x = vw / 2, y = vh * 0.35;
+      if (lasso.poly && lasso.surface){
+        var b = C.polyBounds(lasso.poly);
+        if (b){
+          var c = pageToClient(lasso.surface, (b.minX + b.maxX) / 2, b.minY);
+          x = c.clientX; y = c.clientY;
+        }
+      }
+      var w = bar.offsetWidth || 220, h = bar.offsetHeight || 44;
+      cfg.lassoPopOff = {
+        dx: r.left - Math.max(8, Math.min(x - w / 2, vw - w - 8)),
+        dy: r.top - Math.max(8, Math.min(y - h - 16, vh - h - 8))
+      };
+      saveCfg();
+    }
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+  })();
+  document.addEventListener("pointerdown", function(e){
+    if (typeof lassoHas !== "function" || !lassoHas()) return;
+    if (e.target && e.target.closest &&
+        e.target.closest("#lassoBar, #lassoStylePop, #lassoMore")) return;
+    var S = lasso.surface || (typeof noteSurface !== "undefined" ? noteSurface : null);
+    if (S && S.toPage && lasso.poly){
+      var p = S.toPage(e);
+      if (lassoHitHandle(p.x, p.y) || C.pointInPoly(p.x, p.y, lasso.poly)) return;
+    }
+    lassoClear();
+  }, true);
   function placeLassoStyle(){
     var pop = $("lassoStylePop");
     var bar = $("lassoBar");
@@ -9509,6 +9593,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     applyImagePlace(fig);
   }
   function lassoMoveEl(el, dx, dy){
+    if (el.classList && el.classList.contains("imgblock") && typeof isLocked === "function" && isLocked(el)) return;
     if (el.classList && el.classList.contains("imgblock")){ lassoMoveFig(el, dx, dy); return; }
     var x = Number(el.getAttribute("data-lasso-x") || 0) + dx;
     var y = Number(el.getAttribute("data-lasso-y") || 0) + dy;
@@ -9601,6 +9686,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var a = lassoMapPt(rec.box.minX, rec.box.minY, o.b, nb);
       var c = lassoMapPt(rec.box.maxX, rec.box.maxY, o.b, nb);
       var el = rec.el;
+      if (el.classList && el.classList.contains("imgblock") &&
+          typeof isLocked === "function" && isLocked(el)) return;
       if (el.classList && el.classList.contains("imgblock")){
         var host = lassoHost();
         var hw = (host && host.getBoundingClientRect().width) || 600;
