@@ -2597,7 +2597,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b125";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b126";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5697,11 +5697,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (chipLand != null && state.note &&
         (!chipLand.id || chipLand.id === state.note.id)){
       var land = (chipLand.frac || 0); chipLand = null;
-      var ph = (typeof pageHeightOf === "function") ? pageHeightOf(state.note.id) : 1500;
-      /* page heights are sheet pixels; the scroller is screen pixels with the
-         zoom already baked in, so the two only agree at 100% */
+      /* Read the same way the chip reads it while you are dragging: 0 is the
+         head of the page at the top of the screen, 1 is its FOOT at the bottom.
+         This used to scroll a whole page further down for 1, which left the
+         page entirely above the screen and the reader sitting inside the next
+         page's band — past the line where scrolling hands over, so the page
+         turned itself again the moment the chip was released. */
       var pz = (typeof pageZoom === "function") ? pageZoom() : 1;
-      if (typeof restoreScroll === "function") restoreScroll(land * ph * pz, 0);
+      var ph = (typeof pageHeightOf === "function") ? pageHeightOf(state.note.id) : 1500;
+      var p0 = $("paper");
+      var span = Math.max(0, ph * pz - (p0 ? p0.clientHeight : 0));
+      if (typeof restoreScroll === "function") restoreScroll(land * span, 0);
       if (typeof paintNavChips === "function") paintNavChips();
     } else if (chipLand != null && !swapping() && !chipDrag){
       /* named a page that never arrived — the drag moved on past it. Once
@@ -7080,6 +7086,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   /* ---- who is allowed to draw ---- */
+  /* The pen, whatever it is currently calling itself. While the side button is
+     held Chrome reports pointerType "eraser", and a pen with its eraser end
+     down reports the same — both are still the pen, and everything that gates
+     drawing, hovering and palm rejection has to say so. */
+  function isPenType(e){
+    return !!e && (e.pointerType === "pen" || e.pointerType === "eraser");
+  }
   function mayDraw(e){
     /* a live lasso catch: the pen can move or drop it. A finger only
        moves if it lands on the catch — otherwise it must still scroll. */
@@ -7095,7 +7108,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return true;
     }
     if (ink.mode === "type") return false;
-    var t = e.pointerType || "mouse";
+    var t = isPenType(e) ? "pen" : (e.pointerType || "mouse");
     if (ink.mode === "auto") return t === "pen";       /* pen writes, finger works the text */
     if (ink.input === "pen") return t === "pen";
     if (ink.input === "penmouse") return t === "pen" || t === "mouse";
@@ -7191,7 +7204,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       /* catch a coasting page: without this the pen could lay a stroke while
          the paper was still sliding underneath it */
       stopGlide();
-      if (e.pointerType === "pen"){ penDetected(e); applyPenButton(e); armPenHold(S, e); }
+      if (isPenType(e)){ penDetected(e); applyPenButton(e); armPenHold(S, e); }
       else { handOverToTyping(e); if (S.name === "note") armHold(e); }
       if (touchGesture(S, e, "down")) return;
       if (fingerPanDown(S, e)){
@@ -7206,7 +7219,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }, true);
 
     sc.addEventListener("pointermove", function(e){
-      if (e.pointerType === "pen"){
+      if (isPenType(e)){
         penDetected(e);
         applyPenButton(e);
         movePenHold(e);
@@ -7215,7 +7228,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           nb.style.left = e.clientX + "px"; nb.style.top = e.clientY + "px";
         }
       }
-      if (e.pointerType !== "pen") moveHold(e);
+      if (!isPenType(e)) moveHold(e);
       /* "Held still at the end of the stroke" used to restart its timer on
          every single pointermove. A stylus resting on glass never stops
          sending them — jitter of a fraction of a pixel, hundreds of times a
@@ -7246,9 +7259,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       clearPenHold();
       touchGesture(S, e, "up");
       fingerPanUp(e);
-      if (e && e.pointerType === "pen"){
-        /* lifting the nib is not a button event. The eraser stays if it is on. */
-      }
+      /* lifting the nib is not a button event: the eraser stays if it is on */
       if (!S.drawing) return;
       if (sc.releasePointerCapture && e.pointerId != null){
         try { sc.releasePointerCapture(e.pointerId); } catch (err) {}
@@ -7261,7 +7272,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
     /* a hovering S Pen announces itself before it touches down */
     sc.addEventListener("pointerover", function(e){
-      if (e.pointerType === "pen"){ penDetected(e); applyPenButton(e); }
+      if (isPenType(e)){ penDetected(e); applyPenButton(e); }
     }, true);
   }
 
@@ -12571,6 +12582,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return true;
   }
   function eraserOff(){
+    /* Whoever turns the eraser off ends the hold gesture too. Leaving that flag
+       set meant the next time the nib came off the glass it ran the hold's own
+       "put the pen back", cancelling an eraser that the button had latched —
+       a lift switching tools, which is the one thing it must never do. */
+    springErase.on = false; springErase.was = null;
     btnSpring.on = false; btnSpring.was = null;
     if (ink.tool !== "eraser") return false;
     ink.tool = eraserReturn || "pen";
@@ -13835,12 +13851,36 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       placeChip(bookEl, listProgress(book));
     }
   }
-  function landOnPage(frac){
+  /* Which page is really on the screen, as opposed to which one the app has
+     decided it is on. They disagree for a few hundred milliseconds after a page
+     is asked for: state.noteId changes at once, but #body is only rebuilt when
+     the record comes back from storage. Anything that scrolls has to go by the
+     one that is mounted, or it scrolls the page you can still see using the
+     measurements of the page you cannot. */
+  function visualNoteId(){
+    var b = $("body");
+    return (b && b.dataset && b.dataset.noteId) || null;
+  }
+  /* Where in the scroller a fraction of a page sits.
+     The fraction is read the way a scrollbar reads: 0 puts the head of the page
+     at the top of the screen, 1 puts its FOOT at the bottom — not one whole
+     page further down, which is what it used to mean. That old reading pushed
+     the page entirely above the screen and left you sitting inside the next
+     page's band, past the line where scrolling hands over, so the moment you
+     let go of the chip the page turned itself again. Letting go at the end of a
+     page now shows you the end of that page. */
+  function pageScrollFor(nid, frac){
     var p = $("paper");
-    if (!p || !state.note) return;
-    var h = pageSpan(state.note.id);
+    if (!p || !nid) return 0;
     var pad = (typeof prevPad === "function") ? prevPad() : 0;
-    p.scrollTop = pad + Math.max(0, Math.min(1, frac)) * h * pageZoom();
+    var span = Math.max(0, pageSpan(nid) * pageZoom() - p.clientHeight);
+    return pad + Math.max(0, Math.min(1, frac)) * span;
+  }
+  function landOnPage(frac, id){
+    var p = $("paper");
+    var nid = id || visualNoteId() || (state.note && state.note.id);
+    if (!p || !nid) return;
+    p.scrollTop = pageScrollFor(nid, frac);
   }
   /* A chip is a seek, not a scroll: where the chip sits IS where you are,
      the way a scrollbar works. It used to try something cleverer for a
@@ -13868,17 +13908,57 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      screen sits still while the chip travels and then lurches at the end.
      That lurch is what you saw. */
   var CHIP_SEEK_MS = 130;
+  /* How far past a join the chip has to travel before the page underneath is
+     allowed to change. The join between two pages is a single point in the
+     track: one pixel to one side is "the foot of this page", one pixel to the
+     other is "the head of the next". A finger resting on that point wobbles
+     across it many times a second, and every crossing used to ask for a whole
+     page load — which is the up, down, up, down at the join. About four per
+     cent of the track, roughly a quarter of an inch, is enough that a hand
+     cannot shiver across it but a deliberate drag passes straight through. */
+  var CHIP_STICK = 0.04;
+  /* A page the chip has asked for that has not arrived yet. Nothing else may
+     be asked for until it does, or a drag can have three page loads in the air
+     at once, each landing on top of the last. */
+  function chipLoading(){
+    return !!(chipDrag && chipDrag.pendingId && chipDrag.pendingId !== visualNoteId());
+  }
+  /* Where the chip is pointing, made sticky around the page already on screen. */
+  function placeForDrag(list, prog, stickId){
+    var place = progressToPlace(list, prog);
+    if (!place || !stickId || !place.note || place.note.id === stickId) return place;
+    var tot = listVirtual(list), acc = 0, lo = -1, hi = -1, stick = null;
+    for (var i = 0; i < list.length; i++){
+      var h = pageSpan(list[i].id);
+      if (list[i].id === stickId){ lo = acc / tot; hi = (acc + h) / tot; stick = list[i]; break; }
+      acc += h;
+    }
+    if (!stick || lo < 0) return place;
+    if (prog > lo - CHIP_STICK && prog < hi + CHIP_STICK){
+      var span = Math.max(1e-6, hi - lo);
+      return { note: stick, frac: Math.max(0, Math.min(1, (prog - lo) / span)) };
+    }
+    return place;
+  }
   function chipSeek(force){
     if (!chipDrag || !chipDrag.want || !chipDrag.want.note) return;
     var place = chipDrag.want;
-    /* inside the page you are already on this is a plain scroll, so it can
-       follow every single move */
-    if (place.note.id === state.noteId){ landOnPage(place.frac); return; }
+    var vis = visualNoteId();
+    /* Inside the page that is actually on the screen this is a plain scroll and
+       can follow every single move. Judged by what is mounted, never by
+       state.noteId: while a page is on its way those two disagree, and
+       scrolling on the strength of the new one moves the old page by the new
+       page's measurements. */
+    if (vis && place.note.id === vis){ landOnPage(place.frac, vis); return; }
     if (!force){
-      if (typeof swapping === "function" && swapping()) return;  /* one at a time */
+      if (chipLoading()) return;                                 /* one at a time */
+      if (typeof swapping === "function" && swapping()) return;
       if (Date.now() - (chipDrag.lastSeek || 0) < CHIP_SEEK_MS) return;
     }
+    /* already asked for and still coming: do not ask again */
+    if (chipDrag.pendingId === place.note.id && chipLoading()) return;
     chipDrag.lastSeek = Date.now();
+    chipDrag.pendingId = place.note.id;
     if (typeof swapping === "function" && swapping()){
       handover.queued = { id: place.note.id, frac: place.frac };
       return;
@@ -13895,7 +13975,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var list = kind === "sec" ? sectionPageList() : pageOrder();
       chipDrag = { kind: kind, list: list, id: e.pointerId,
                    x: e.clientX, y: e.clientY, moved: false,
-                   want: null, prog: null, lastSeek: 0 };
+                   want: null, prog: null, lastSeek: 0, pendingId: null };
       pageTagDrag = chipDrag;
       try { el.setPointerCapture(e.pointerId); } catch (err) {}
       el.classList.add("on");
@@ -13909,7 +13989,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (!tr) return;
       var prog = (e.clientY - tr.top) / tr.h;
       prog = Math.max(0, Math.min(1, prog));
-      var place = progressToPlace(chipDrag.list, prog);
+      /* sticky around the page on screen, so a hand resting on a join cannot
+         shiver the app back and forth across it */
+      var place = placeForDrag(chipDrag.list, prog,
+                              chipDrag.pendingId || visualNoteId());
       if (!place) return;
       chipDrag.prog = prog;
       chipDrag.want = place;
