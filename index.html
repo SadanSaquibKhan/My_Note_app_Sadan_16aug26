@@ -1195,7 +1195,9 @@
   .swatchbtn.sm{width:24px; height:24px}
 
   .pagewrap{position:relative; flex:1; min-height:0; display:flex}
-  .inklayer{position:absolute; inset:0; width:100%; height:100%; pointer-events:none}
+  /* above pictures so a stroke on a photo is visible; pointer-events stay
+     off so a finger can still tap the picture to select it */
+  .inklayer{position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:6}
   body.penning .sheet{user-select:none; -webkit-user-select:none}
   /* stops Android's long-press callout appearing over pictures and links
      while Margin's own spot menu is opening */
@@ -2536,7 +2538,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b110";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b111";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -11254,7 +11256,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var fig = figOf(e.target);
     if (!fig) return;
     if (fig.getAttribute("data-pdfpage") === "1") return;
-    if (e.pointerType === "pen") return;   /* the pen writes on the picture */
+    if (e.pointerType === "pen") return;   /* the paper handler writes on the picture */
 
     /* Finger on an unselected picture: do not capture. Wait to see whether
        this is a scroll (mostly vertical) or a tap. */
