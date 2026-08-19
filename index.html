@@ -2556,7 +2556,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b112";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b113";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -8964,16 +8964,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     el.style.left = p.x + "px";
     el.style.top = p.y + "px";
   }
-  /* Where the bar belongs: on a page you are writing or typing on, with the
-     lists beside it folded away. In the notebooks list there is nothing on it
-     to press, and with the page list open every one of these is already on a
-     bar you can see — so it is only in the way. It and the note footer are
-     opposites: one is for the page alone, the other for the page among its
-     neighbours, and exactly one of them is on at a time. */
+  /* Where the bar belongs: on a page you are writing or typing on. Folded
+     lists are the usual case. A locked list is also writing — the user
+     pinned pages or sections so they stay in view — and the pens must
+     still be reachable. An unlocked open list is browsing, and the tools
+     are already on the bars, so the floating one stays out of the way. */
   function favBarWanted(){
     if (!cfg.favBar) return false;
     if (!state.note || state.view !== "note") return false;
-    return panelsHidden();
+    if (typeof panelsHidden === "function" ? panelsHidden() : true) return true;
+    return !!(cfg.lockList || cfg.lockSec || cfg.lockRail);
   }
   function buildFavBar(){
     var host = $("favBar"), dot = $("favDot");
