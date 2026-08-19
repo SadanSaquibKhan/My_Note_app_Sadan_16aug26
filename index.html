@@ -2516,7 +2516,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b106";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b107";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -3286,6 +3286,26 @@ var MarginCore = (function(){
     if (!best) return fallback;
     return seriesName(best.stem, best.max + 1, best.pad);
   }
+  /* The number a section wears in page titles. The first section used to
+     be stored as "sec0" while pages were S1 — that is the mismatch.
+     sec0 is section 1. sec1 (the next old-style name) is section 2.
+     A name like Sec3 is section 3. */
+  function sectionNumber(sec, index){
+    if (!sec) return (index || 0) + 1;
+    var name = String(sec.name || "");
+    if (sec.isDefault || /^sec0$/.test(name)) return 1;
+    var old = /^sec(\d+)$/.exec(name);
+    if (old) return parseInt(old[1], 10) + 1;
+    var m = /(\d+)/.exec(name);
+    if (m) return parseInt(m[1], 10);
+    return (index == null ? 0 : index) + 1;
+  }
+  function sectionDisplayName(sec, index){
+    if (!sec) return "";
+    var name = String(sec.name || "");
+    if (sec.isDefault || /^sec\d+$/i.test(name)) return "Sec" + sectionNumber(sec, index);
+    return name || ("Sec" + sectionNumber(sec, index));
+  }
   /* S1P1 — section number, then page number inside that section.
      Anything after the number (e.g. _topic) is kept when we retitle. */
   function splitSecPage(title){
@@ -3300,7 +3320,7 @@ var MarginCore = (function(){
     var grouped = notesBySection(notes, sections);
     var plan = [];
     grouped.forEach(function(g, si){
-      var sNum = si + 1;
+      var sNum = sectionNumber(g.section, si);
       (g.notes || []).forEach(function(n, pi){
         var old = splitSecPage(n.title);
         if (!old && (n.title || "").trim()) return;
@@ -3397,8 +3417,10 @@ var MarginCore = (function(){
         createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
       });
     }).then(function(nb){
-      return createSection(nb.id, "sec0", "slate", { isDefault:true, order:0 })
-        .then(function(){ return nb; });
+      return createSection(nb.id, "Sec1", "slate", { isDefault:true, order:0 })
+        .then(function(sec){
+          return createNote(nb.id, "S1P1", sec.id).then(function(){ return nb; });
+        });
     });
   }
   function allNotebooks(opts){
@@ -3532,11 +3554,11 @@ var MarginCore = (function(){
     return sectionsIn(notebookId).then(function(list){
       var def = null;
       list.forEach(function(s){
-        if (s.isDefault || s.name === "sec0") def = s;
+        if (s.isDefault || s.name === "sec0" || s.name === "Sec1") def = s;
       });
       var ready = def
         ? Promise.resolve(def)
-        : createSection(notebookId, "sec0", "slate", { isDefault:true, order:0 });
+        : createSection(notebookId, "Sec1", "slate", { isDefault:true, order:0 });
       return ready.then(function(sec){
         return notesIn(notebookId).then(function(notes){
           var jobs = [];
@@ -3554,14 +3576,18 @@ var MarginCore = (function(){
   }
   function suggestSectionName(notebookId){
     return sectionsIn(notebookId).then(function(list){
-      var names = list.map(function(s){ return s.name; });
-      return nextSeriesName(names, "sec1");
+      var max = 1;
+      list.forEach(function(s, i){
+        var n = sectionNumber(s, i);
+        if (n > max) max = n;
+      });
+      return "Sec" + (max + 1);
     });
   }
   function defaultSectionOf(sections){
     var def = null;
     (sections || []).forEach(function(s){
-      if (s.isDefault || s.name === "sec0") def = s;
+      if (s.isDefault || s.name === "sec0" || s.name === "Sec1") def = s;
     });
     return def || (sections && sections[0]) || null;
   }
@@ -3689,7 +3715,7 @@ var MarginCore = (function(){
     return Promise.all([pagesInOrder(nbId), sectionsIn(nbId)]).then(function(r){
       var list = r[0], secs = r[1] || [];
       var sNum = 1;
-      secs.forEach(function(s, i){ if (s.id === sectionId) sNum = i + 1; });
+      secs.forEach(function(s, i){ if (s.id === sectionId) sNum = sectionNumber(s, i); });
       var here = list.filter(function(n){ return (n.sectionId || null) === (sectionId || null); });
       var maxP = 0;
       here.forEach(function(n){
@@ -4750,6 +4776,7 @@ var MarginCore = (function(){
     defaultSectionOf:defaultSectionOf,
     splitSeries:splitSeries, seriesName:seriesName, nextSeriesName:nextSeriesName,
     splitSecPage:splitSecPage, secPageName:secPageName, planSecPageNames:planSecPageNames,
+    sectionNumber:sectionNumber, sectionDisplayName:sectionDisplayName,
     renumberPlan:renumberPlan, sortPages:sortPages, suggestNotebookName:suggestNotebookName,
     suggestPageTitle:suggestPageTitle, insertPageAfter:insertPageAfter,
     INK_TOOLS:INK_TOOLS, INK_COLOURS:INK_COLOURS, INK_WIDTHS:INK_WIDTHS,
@@ -5153,7 +5180,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       sw.style.background = SWATCH[s.colour] || SWATCH.slate;
       var m = document.createElement("span"); m.className = "rowmain";
       var t = document.createElement("span"); t.className = "rowtitle";
-      t.textContent = s.name + ((s.isDefault || s.name === "sec0") ? "" : "");
+      t.textContent = (typeof C.sectionDisplayName === "function")
+        ? C.sectionDisplayName(s, list.indexOf(s))
+        : s.name;
       m.appendChild(t);
       var c = document.createElement("span"); c.className = "count";
       c.textContent = nHere;
@@ -6052,7 +6081,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!state.nbId) return;
     var p = secEditing
       ? C.updateSection(secEditing.id, { name:name, colour:secColour })
-      : C.createSection(state.nbId, name, secColour);
+      : C.createSection(state.nbId, name, secColour).then(function(s){
+          return C.suggestPageTitle(state.nbId, s.id).then(function(title){
+            return C.createNote(state.nbId, title, s.id).then(function(){ return s; });
+          });
+        });
     p.then(function(s){
       $("secDlg").close();
       if (s && s.id) state.sectionId = s.id;
