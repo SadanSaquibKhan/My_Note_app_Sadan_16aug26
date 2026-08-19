@@ -2518,7 +2518,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b101";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b102";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -6506,6 +6506,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
             hideLassoStyle();
             return;
           }
+          /* a tap or stroke away from the catch drops it. A new box is
+             a separate gesture, not this one. */
+          lassoClear();
+          return;
         }
         lasso.surface = S; lasso.picked = []; lasso.pickedEls = [];
         /* A box selection is still a polygon, just one with four corners.
@@ -6843,8 +6847,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         ctx.fillStyle = "#fff";
         ctx.strokeStyle = "#3b82f6";
         ctx.lineWidth = 1.2;
-        ctx.fillRect(h.x - 5, h.y - 5, 10, 10);
-        ctx.strokeRect(h.x - 5, h.y - 5, 10, 10);
+        ctx.fillRect(h.x - 7, h.y - 7, 14, 14);
+        ctx.strokeRect(h.x - 7, h.y - 7, 14, 14);
       });
     } else {
       ctx.setLineDash([6, 5]);
@@ -6868,6 +6872,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* ---- who is allowed to draw ---- */
   function mayDraw(e){
+    /* a live lasso catch can be moved or dropped with a finger or the pen */
+    if (ink.tool === "lasso" && typeof lassoHas === "function" && lassoHas()) return true;
     if (ink.mode === "type") return false;
     var t = e.pointerType || "mouse";
     if (ink.mode === "auto") return t === "pen";       /* pen writes, finger works the text */
@@ -6902,11 +6908,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          keyboard wondering why the nib does nothing. */
       if (ink.mode === "type"){
         setMode("auto");
-        var back = (ink.tool === "eraser" || ink.tool === "lasso")
-          ? (tapErase.was || "pen") : ink.tool;
-        ink.tool = back;
-        if (typeof restoreTool === "function") restoreTool(back);
-        hint("Writing again with the " + back + ".");
+        /* keep a live lasso catch — dropping it here made drag-to-move
+           start a new pen stroke instead */
+        if (!(ink.tool === "lasso" && typeof lassoHas === "function" && lassoHas())){
+          var back = (ink.tool === "eraser" || ink.tool === "lasso")
+            ? (tapErase.was || "pen") : ink.tool;
+          ink.tool = back;
+          if (typeof restoreTool === "function") restoreTool(back);
+          hint("Writing again with the " + back + ".");
+        }
       }
       updateTouchAction();
       paintModeChip();
@@ -9315,7 +9325,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var b = C.polyBounds(lasso.poly);
     if (!b) return null;
     var z = zoom() || 1;
-    var pad = 16 / z;
+    var pad = 28 / z;
     var hs = lassoHandlePts(b);
     for (var i = 0; i < hs.length; i++){
       if (Math.abs(px - hs[i].x) <= pad && Math.abs(py - hs[i].y) <= pad) return hs[i].k;
@@ -11890,20 +11900,25 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!state.note) return;
     var m = $("holdMenu");
     m.innerHTML = "";
-    var items = [
+    var canLassoPaste = (typeof inkClip !== "undefined" && inkClip.length) ||
+                        (typeof elClip !== "undefined" && elClip.length);
+    var items = [];
+    if (canLassoPaste){
+      items.push(["Paste", function(){ pasteInkHere(x, y); }]);
+    }
+    items = items.concat([
       ["Mark this spot", markSpot],
       ["Work this out here…", pracHere],
-      ["Paste writing here", pasteInkHere, !inkClip.length],
       ["Copy a link to this spot", copySpotLink],
       ["Paste the last link here", pasteLink],
       ["Link to another note\u2026", function(){ $("linkBtn").click(); }],
-      ["Paste", pasteClipboard],
+      ["Paste from the keyboard", pasteClipboard],
       ["Insert a picture", function(){ $("imgFile").click(); }],
       ["Take a photo", function(){ $("camFile").click(); }],
       ["Attach a PDF or file", function(){ $("anyFile").click(); }],
       ["Bring a PDF in as pages…", function(){ $("pdfFile").click(); }],
       ["Start a recording", function(){ $("recBtn").click(); }]
-    ];
+    ]);
     items.forEach(function(it){
       var b = document.createElement("button");
       b.type = "button"; b.className = "holditem";
