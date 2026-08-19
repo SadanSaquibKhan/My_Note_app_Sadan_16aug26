@@ -2606,7 +2606,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b133";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b134";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -14138,6 +14138,31 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     return place;
   }
+  function revealChipJoin(list, prog, vis, frac){
+    var p = $("paper");
+    if (!p || !vis || prog == null){ landOnPage(frac, vis); return; }
+    var tot = listVirtual(list);
+    if (!tot){ landOnPage(frac, vis); return; }
+    var acc = 0, lo = -1, hi = -1;
+    for (var i = 0; i < list.length; i++){
+      var h = pageSpan(list[i].id);
+      if (list[i].id === vis){ lo = acc / tot; hi = (acc + h) / tot; break; }
+      acc += h;
+    }
+    if (lo < 0){ landOnPage(frac, vis); return; }
+    var peekPx = Math.round(p.clientHeight * 0.38);
+    if (prog > hi && prog <= hi + CHIP_STICK){
+      var t = (prog - hi) / Math.max(1e-6, CHIP_STICK);
+      p.scrollTop = pageScrollFor(vis, 1) + t * peekPx;
+      return;
+    }
+    if (prog < lo && prog >= lo - CHIP_STICK){
+      var t = (lo - prog) / Math.max(1e-6, CHIP_STICK);
+      p.scrollTop = Math.max(0, pageScrollFor(vis, 0) - t * peekPx);
+      return;
+    }
+    landOnPage(frac, vis);
+  }
   function chipSeek(force){
     if (!chipDrag || !chipDrag.want || !chipDrag.want.note) return;
     var place = chipDrag.want;
@@ -14147,7 +14172,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        state.noteId: while a page is on its way those two disagree, and
        scrolling on the strength of the new one moves the old page by the new
        page's measurements. */
-    if (vis && place.note.id === vis){ landOnPage(place.frac, vis); return; }
+    if (vis && place.note.id === vis){
+      /* Inside the sticky band past a join, keep this page but scroll it
+         into the neighbouring preview so the boundary is on screen. A
+         chip drag that only ever landOnPage(0 or 1) holds still at the
+         foot or head and then jump-loads the next page — the join is
+         never seen. Finger-scrolling already shows that join; this is
+         the same overscroll, driven by the chip. */
+      revealChipJoin(chipDrag.list, chipDrag.prog, vis, place.frac);
+      return;
+    }
     if (!force){
       if (chipLoading()) return;                                 /* one at a time */
       if (typeof swapping === "function" && swapping()) return;
