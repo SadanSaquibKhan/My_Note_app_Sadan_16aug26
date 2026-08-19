@@ -2597,7 +2597,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b119";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b120";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -6671,29 +6671,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          or rubbing out, not a second press. */
       var p = S.toPage(e);
       if (ink.tool === "lasso"){
-        if (Date.now() < (lasso.coolUntil || 0)) return;
         if (lassoHas() && lasso.poly){
           var h = lassoHitHandle(p.x, p.y);
           if (h){
             lassoBeginScale(S, h, p);
             return;
           }
-          if (C.pointInPoly(p.x, p.y, lasso.poly)){
+          if (lassoInCatch(p.x, p.y)){
             S.drawing = { moving:true, last:p };     /* drag what is already caught */
             hideLassoStyle();
             return;
           }
-          /* Outside the catch: a tap will drop it, a real drag starts a
-             new box. Do not clear here — that ate the next move and left
-             a dotted ghost that could not be dismissed. */
-          lasso.origin = p;
-          lasso.draft = (ink.lassoShape === "rect")
-            ? [p.x, p.y, p.x, p.y, p.x, p.y, p.x, p.y]
-            : [p.x, p.y];
-          S.drawing = { lassoing:true, replacing:true };
+          if (Date.now() < (lasso.coolUntil || 0)) return;
+          /* Outside the catch: wait to see if this is a tap (drop) or a
+             real drag (new box). Starting a box on the first pixel ate
+             the drag you meant for the catch. */
+          S.drawing = { maybeReplace:true, start:p, cx:e.clientX, cy:e.clientY };
           hideLassoStyle();
           return;
         }
+        if (Date.now() < (lasso.coolUntil || 0)) return;
         lasso.surface = S; lasso.picked = []; lasso.pickedEls = [];
         lasso.draft = null;
         /* A box selection is still a polygon, just one with four corners.
@@ -6724,6 +6721,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (!S.drawing) return;
       var evs = (e.getCoalescedEvents ? e.getCoalescedEvents() : null);
       if (!evs || !evs.length) evs = [e];
+      if (S.drawing.maybeReplace){
+        if (Math.abs(e.clientX - S.drawing.cx) < 10 &&
+            Math.abs(e.clientY - S.drawing.cy) < 10) return;
+        lasso.origin = S.drawing.start;
+        var o = lasso.origin, q0 = S.toPage(e);
+        lasso.draft = (ink.lassoShape === "rect")
+          ? [o.x, o.y, q0.x, o.y, q0.x, q0.y, o.x, q0.y]
+          : [o.x, o.y, q0.x, q0.y];
+        S.drawing = { lassoing:true, replacing:true };
+      }
       if (S.drawing.lassoing){
         lasso.cx = e.clientX; lasso.cy = e.clientY;
         var dest = S.drawing.replacing ? "draft" : "poly";
@@ -6785,6 +6792,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var d = S.drawing;
       if (!d) return;
       S.drawing = null;
+      if (d.maybeReplace){
+        lassoClear();
+        return;
+      }
       if (d.lassoing){
         var poly = d.replacing ? lasso.draft : lasso.poly;
         lasso.draft = null;
@@ -7069,7 +7080,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         if (!S0 || !S0.toPage || !lasso.poly) return false;
         var pt = S0.toPage(e);
         if (typeof lassoHitHandle === "function" && lassoHitHandle(pt.x, pt.y)) return true;
-        if (typeof C.pointInPoly === "function" && C.pointInPoly(pt.x, pt.y, lasso.poly)) return true;
+        if (typeof lassoInCatch === "function" && lassoInCatch(pt.x, pt.y)) return true;
         return false;
       }
       return true;
@@ -9790,12 +9801,23 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var b = C.polyBounds(lasso.poly);
     if (!b) return null;
     var z = zoom() || 1;
-    var pad = 28 / z;
+    /* at least 36 screen pixels — a corner on glass is easy to miss */
+    var pad = Math.max(36 / z, 22);
     var hs = lassoHandlePts(b);
     for (var i = 0; i < hs.length; i++){
       if (Math.abs(px - hs[i].x) <= pad && Math.abs(py - hs[i].y) <= pad) return hs[i].k;
     }
     return null;
+  }
+  function lassoInCatch(px, py){
+    if (!lasso.poly) return false;
+    if (C.pointInPoly(px, py, lasso.poly)) return true;
+    var b = C.polyBounds(lasso.poly);
+    if (!b) return false;
+    var z = zoom() || 1;
+    var pad = 16 / z;
+    return px >= b.minX - pad && px <= b.maxX + pad &&
+           py >= b.minY - pad && py <= b.maxY + pad;
   }
   function lassoClear(){
     lasso.poly = null; lasso.draft = null;
@@ -9888,7 +9910,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var S = lasso.surface || (typeof noteSurface !== "undefined" ? noteSurface : null);
     if (S && S.toPage && lasso.poly){
       var p = S.toPage(e);
-      if (lassoHitHandle(p.x, p.y) || C.pointInPoly(p.x, p.y, lasso.poly)) return;
+      if (lassoHitHandle(p.x, p.y) || lassoInCatch(p.x, p.y)) return;
     }
     lassoAway.on = true; lassoAway.x = e.clientX; lassoAway.y = e.clientY;
   }, true);
@@ -10276,6 +10298,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       y: b.minY + (b.maxY - b.minY) * f
     });
     lasso.scaleOrig = null;
+    S.drawing = null;   /* do not leave the catch stuck in resize */
     S.queueSave();
   }
   $("lassoDone").addEventListener("click", lassoClear);
