@@ -319,6 +319,10 @@
     padding:4px 6px; gap:0; max-width:min(96vw, 360px);
     touch-action:none;
   }
+  /* while the catch is being dragged or resized the bar must not steal the
+     corner the pen is aiming at — that is "nothing moves until I press minus" */
+  .lassobar.busy{pointer-events:none}
+  .lassobar.busy #lassoGrip{pointer-events:auto}
   #lassoBar .lassoico{
     width:36px; min-width:36px; height:36px; padding:0; min-height:36px;
     display:flex; align-items:center; justify-content:center;
@@ -1259,8 +1263,10 @@
     position:fixed; left:0; right:0; bottom:0; z-index:40;
     display:flex; flex-direction:column; height:52vh; background:var(--panel);
     border-top:2px solid var(--live); box-shadow:0 -14px 40px var(--shadow);
-    transition:height .2s ease;
+    transform:translateY(0);
+    transition:height .22s ease, transform .28s ease;
   }
+  .pracsheet.off{transform:translateY(110%); pointer-events:none}
   .pracsheet[hidden]{display:none}
   body[data-prac="full"] .pracsheet{height:calc(100vh - 46px)}
   .prachead{
@@ -1366,7 +1372,8 @@
   /* the hint is for a page you have settled on, not for a page flashing past
      while you scroll through. Showing it at the join is the empty-page flicker. */
   body.swapping #body:empty::before,
-  body.chipdrag #body:empty::before{content:none !important}
+  body.chipdrag #body:empty::before,
+  body.fly #body:empty::before{content:none !important}
   #body p{margin:0 0 var(--lead)}
   #body h1,#body h2,#body h3{font-family:var(--display); margin:var(--lead) 0 0; line-height:var(--lead)}
   #body h1{font-size:24px; font-variation-settings:"wght" 700,"wdth" 80}
@@ -2623,7 +2630,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b136";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b137";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -6794,10 +6801,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         if (lassoHas() && lasso.poly){
           var h = lassoHitHandle(p.x, p.y);
           if (h){
+            lassoBarBusy(true);
             lassoBeginScale(S, h, p);
             return;
           }
           if (lassoInCatch(p.x, p.y)){
+            lassoBarBusy(true);
             S.drawing = { moving:true, last:p };     /* drag what is already caught */
             hideLassoStyle();
             return;
@@ -6842,8 +6851,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var evs = (e.getCoalescedEvents ? e.getCoalescedEvents() : null);
       if (!evs || !evs.length) evs = [e];
       if (S.drawing.maybeReplace){
-        if (Math.abs(e.clientX - S.drawing.cx) < 10 &&
-            Math.abs(e.clientY - S.drawing.cy) < 10) return;
+        /* same slop as tap-away: a 12px jitter on glass is still a tap */
+        if (Math.abs(e.clientX - S.drawing.cx) < 16 &&
+            Math.abs(e.clientY - S.drawing.cy) < 16) return;
         lasso.origin = S.drawing.start;
         var o = lasso.origin, q0 = S.toPage(e);
         lasso.draft = (ink.lassoShape === "rect")
@@ -6912,8 +6922,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var d = S.drawing;
       if (!d) return;
       S.drawing = null;
+      lassoBarBusy(false);
       if (d.maybeReplace){
-        lassoClear();
+        /* a still lift outside is dismissed by the tap-away listener.
+           Clearing here as well destroyed a live catch when toPage missed
+           the box on the way down and begin armed a replacement. */
         return;
       }
       if (d.lassoing){
@@ -7402,6 +7415,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function stopGlide(){
     if (glide.raf) cancelAnimationFrame(glide.raf);
     glide.raf = 0; glide.S = null;
+    if (!(typeof pan === "object" && pan && pan.on))
+      document.body.classList.remove("fly");
   }
   /* pixels per millisecond, lightly smoothed so one jittery final sample
      cannot decide the whole fling */
@@ -7439,6 +7454,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        going". The join is where the throw stops. */
     if (typeof pan === "object" && pan && pan.noGlide) return;
     if (Math.sqrt(vx*vx + vy*vy) < 0.06) return;   /* a slow lift means stop, not throw */
+    document.body.classList.add("fly");
     glide.S = S; glide.vx = vx * boost; glide.vy = vy * boost; glide.last = nowMs();
     (function step(){
       glide.raf = requestAnimationFrame(function(){
@@ -7937,7 +7953,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       prac.idx = Math.max(0, Math.min(list.length - 1, page == null ? 0 : page));
       prac.rec = list[prac.idx];
       prac.open = true;
-      $("pracSheet").hidden = false;
+      var sheet = $("pracSheet");
+      sheet.hidden = false;
+      sheet.classList.add("off");
+      requestAnimationFrame(function(){
+        requestAnimationFrame(function(){ sheet.classList.remove("off"); });
+      });
       setSnap(prac.snap === "full" ? "full" : "half");
       $("pracText").innerHTML = prac.rec.html || "";
       pracSurface.strokes = prac.rec.strokes || [];
@@ -7960,11 +7981,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       prac.open = false;
       ink.active = "note";
       document.body.dataset.prac = "";
-      $("pracSheet").hidden = true;
+      var sheet = $("pracSheet");
+      if (sheet){
+        sheet.classList.add("off");
+        setTimeout(function(){
+          sheet.hidden = true;
+          sheet.classList.remove("off");
+        }, 280);
+      }
       paintPracBadge();
       if (typeof paintWorkPins === "function") paintWorkPins();
       paintInkTools();
-      setTimeout(function(){ noteSurface.redraw(); }, 210);
+      setTimeout(function(){ noteSurface.redraw(); }, 280);
     });
   }
 
@@ -9894,6 +9922,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var lasso = { poly: null, draft: null, picked: [], pickedEls: [], surface: null,
                 dragging: false, last: null, coolUntil: 0 };
 
+  /* The catch hit-tests used to call zoom() — a name that only existed
+     inside makeSurface. In this file that is a ReferenceError, so grabbing
+     a typed block or a corner threw and the press fell through as "do
+     nothing" (or started a new box). The minus button still worked because
+     it never called zoom(). One helper, used everywhere the catch is
+     measured: practice is not zoomed with the page. */
+  function zoom(){
+    return zoomOf(lasso && lasso.surface);
+  }
+  function zoomOf(S){
+    if (S && S.name === "practice") return 1;
+    return (state && state.zoom) || 1;
+  }
+  function lassoBarBusy(on){
+    var bar = $("lassoBar");
+    if (bar) bar.classList.toggle("busy", !!on);
+  }
+
   function hideLassoStyle(){
     if ($("lassoStylePop")) $("lassoStylePop").hidden = true;
   }
@@ -9906,7 +9952,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   function pageToClient(S, x, y){
     var r = S.scroller.getBoundingClientRect();
-    var z = zoom() || 1;
+    var z = zoomOf(S) || 1;
     var padv = (S.name === "note" && typeof prevPad === "function") ? prevPad() : 0;
     return {
       clientX: x * z - S.scroller.scrollLeft + r.left,
@@ -9917,7 +9963,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     S = S || lasso.surface || noteSurface;
     var er = el.getBoundingClientRect();
     var sr = S.scroller.getBoundingClientRect();
-    var z = zoom() || 1;
+    var z = zoomOf(S) || 1;
     var padv = (S.name === "note" && typeof prevPad === "function") ? prevPad() : 0;
     return {
       minX: (er.left - sr.left + S.scroller.scrollLeft) / z,
@@ -9949,7 +9995,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!lasso.poly) return null;
     var b = C.polyBounds(lasso.poly);
     if (!b) return null;
-    var z = zoom() || 1;
+    var z = zoomOf(lasso.surface) || 1;
     /* at least 36 screen pixels — a corner on glass is easy to miss */
     var pad = Math.max(36 / z, 22);
     var hs = lassoHandlePts(b);
@@ -9963,7 +10009,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
               py >= b.minY - pad && py <= b.maxY + pad);
   }
   function lassoInCatch(px, py){
-    var z = zoom() || 1;
+    var z = zoomOf(lasso.surface) || 1;
     var pad = 16 / z;
     /* the outline you can see */
     if (lasso.poly){
@@ -9987,9 +10033,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return false;
   }
   function lassoClear(){
-    lasso.poly = null; lasso.draft = null;
+    lasso.poly = null; lasso.draft = null; lasso.drawn = null;
     lasso.picked = []; lasso.pickedEls = []; lasso.surface = null;
     lasso.scaleOrig = null;
+    lassoBarBusy(false);
     $("lassoBar").hidden = true;
     if ($("lassoMore")) $("lassoMore").hidden = true;
     hideLassoStyle();
@@ -10013,21 +10060,58 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     var w = bar.offsetWidth || 220, h = bar.offsetHeight || 44;
     var off = cfg.lassoPopOff || { dx: 0, dy: 0 };
-    x = x + (off.dx || 0);
-    y = y + (off.dy || 0);
-    /* Clear of the corner handles, which reach about 36 screen pixels out from
-       the outline. The bar used to sit 16px above the top edge — right on top
-       of the north handles — so a tap meant for a corner landed on the bar and
-       nothing moved, and the only things that did work were the bar's own
-       buttons. That is why pressing the minus button appeared to "unlock"
-       resizing: it shrank the box out from under the bar.
-       Below the catch by preference, above it when there is no room. */
-    var GAP = 46;
-    var top = y + (lasso.boxH || 0) + GAP;
-    if (top + h > vh - 8) top = y - h - GAP;
-    if (top < 8) top = Math.min(vh - h - 8, Math.max(8, y + (lasso.boxH || 0) + GAP));
-    bar.style.left = Math.max(8, Math.min(x - w / 2, vw - w - 8)) + "px";
-    bar.style.top = Math.max(8, Math.min(top, vh - h - 8)) + "px";
+    /* Clear of the eight handles (36 screen px out from the outline). The
+       bar used to sit on the north corners, so a tap meant for a handle
+       landed on the bar and nothing moved — minus then "unlocked" resize
+       only because it shrank the box out from under the pill.
+       Prefer the right of the catch, then left, then below, then above. */
+    var GAP = 48;
+    var boxTop = y, boxBot = y + (lasso.boxH || 0);
+    var minX = x - 40, maxX = x + 40;
+    if (lasso.poly && lasso.surface){
+      var bb = C.polyBounds(lasso.poly);
+      if (bb){
+        var nw = pageToClient(lasso.surface, bb.minX, bb.minY);
+        var se = pageToClient(lasso.surface, bb.maxX, bb.maxY);
+        minX = Math.min(nw.clientX, se.clientX);
+        maxX = Math.max(nw.clientX, se.clientX);
+        boxTop = Math.min(nw.clientY, se.clientY);
+        boxBot = Math.max(nw.clientY, se.clientY);
+      }
+    }
+    function padHits(l, t){
+      var hs = [
+        [minX, boxTop], [maxX, boxTop], [minX, boxBot], [maxX, boxBot],
+        [(minX + maxX) / 2, boxTop], [(minX + maxX) / 2, boxBot],
+        [minX, (boxTop + boxBot) / 2], [maxX, (boxTop + boxBot) / 2]
+      ];
+      for (var i = 0; i < hs.length; i++){
+        var hx = hs[i][0], hy = hs[i][1];
+        if (hx >= l - 36 && hx <= l + w + 36 && hy >= t - 36 && hy <= t + h + 36)
+          return true;
+      }
+      return false;
+    }
+    var spots = [
+      { l: maxX + 16, t: boxTop },
+      { l: minX - w - 16, t: boxTop },
+      { l: x - w / 2, t: boxBot + GAP },
+      { l: x - w / 2, t: boxTop - h - GAP }
+    ];
+    var pick = null;
+    for (var si = 0; si < spots.length; si++){
+      var sl = Math.max(8, Math.min(spots[si].l, vw - w - 8));
+      var st = Math.max(8, Math.min(spots[si].t, vh - h - 8));
+      if (!padHits(sl, st)){ pick = { l: sl, t: st }; break; }
+    }
+    if (!pick){
+      pick = {
+        l: Math.max(8, Math.min(x - w / 2, vw - w - 8)),
+        t: Math.max(8, Math.min(boxBot + GAP, vh - h - 8))
+      };
+    }
+    bar.style.left = (pick.l + (off.dx || 0)) + "px";
+    bar.style.top = (pick.t + (off.dy || 0)) + "px";
     bar.style.transform = "none";
     placeLassoStyle();
   }
@@ -10064,10 +10148,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         }
       }
       var w = bar.offsetWidth || 220, h = bar.offsetHeight || 44;
-      cfg.lassoPopOff = {
-        dx: r.left - Math.max(8, Math.min(x - w / 2, vw - w - 8)),
-        dy: r.top - Math.max(8, Math.min(y - h - 16, vh - h - 8))
-      };
+      /* remember the drag against the same default placeLassoPop would
+         pick (right of the catch), not the old "16px above the top" spot */
+      var defL = Math.max(8, Math.min(x + 16, vw - w - 8));
+      var defT = Math.max(8, Math.min(y, vh - h - 8));
+      cfg.lassoPopOff = { dx: r.left - defL, dy: r.top - defT };
       saveCfg();
     }
     grip.addEventListener("pointerup", end);
@@ -10079,7 +10164,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var lassoAway = { on: false, x: 0, y: 0 };
   function lassoOnChrome(el){
     return !!(el && el.closest && el.closest(
-      "#lassoBar, #lassoStylePop, #lassoMore, #favBar, #jumpBar, #inkTools, #fmtBar, #favDot, #jumpDot"
+      "#lassoBar, #lassoStylePop, #lassoMore, #favBar, #jumpBar, #inkTools, #fmtBar, #favDot, #jumpDot, #imgBar, #docBar, #secChip, #bookChip, #holdMenu"
     ));
   }
   document.addEventListener("pointerdown", function(e){
@@ -10271,6 +10356,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (lasso.poly){
       for (var i = 0; i < lasso.poly.length; i += 2){ lasso.poly[i] += dx; lasso.poly[i+1] += dy; }
     }
+    /* the box you drew has to travel with the snap, or the old words stay
+       a ghost hit-zone and a tap on the new place misses */
+    if (lasso.drawn && lasso.drawn !== lasso.poly){
+      for (var j = 0; j < lasso.drawn.length; j += 2){ lasso.drawn[j] += dx; lasso.drawn[j+1] += dy; }
+    }
     if (S) S.redraw();
     placeLassoPop();
   }
@@ -10280,6 +10370,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     lasso.scaleOrig = {
       handle: handle,
       b: { minX:b.minX, minY:b.minY, maxX:b.maxX, maxY:b.maxY },
+      drawn: lasso.drawn ? lasso.drawn.slice() : null,
       strokes: JSON.parse(JSON.stringify(lasso.picked)),
       els: (lasso.pickedEls || []).map(function(el){
         var box = elPageBox(el, S);
@@ -10358,15 +10449,25 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         applyImagePlace(el);
       } else {
         el.style.position = "relative";
-        el.setAttribute("data-lasso-x", (rec.ox || 0) + (a.x - rec.box.minX));
-        el.setAttribute("data-lasso-y", (rec.oy || 0) + (a.y - rec.box.minY));
-        el.style.left = (a.x - rec.box.minX) + "px";
-        el.style.top = (a.y - rec.box.minY) + "px";
+        var nx = (rec.ox || 0) + (a.x - rec.box.minX);
+        var ny = (rec.oy || 0) + (a.y - rec.box.minY);
+        el.setAttribute("data-lasso-x", nx);
+        el.setAttribute("data-lasso-y", ny);
+        el.style.left = nx + "px";
+        el.style.top = ny + "px";
         var f = (a.sx + a.sy) / 2;
         el.style.fontSize = Math.max(8, rec.fs * f) + "px";
       }
     });
     lasso.poly = [nb.minX, nb.minY, nb.maxX, nb.minY, nb.maxX, nb.maxY, nb.minX, nb.maxY];
+    if (o.drawn){
+      var nd = [];
+      for (var di = 0; di + 1 < o.drawn.length; di += 2){
+        var mp = lassoMapPt(o.drawn[di], o.drawn[di + 1], o.b, nb);
+        nd.push(mp.x, mp.y);
+      }
+      lasso.drawn = nd;
+    }
     dropBounds(S.strokes);
     S.redraw();
     placeLassoPop();
@@ -11254,6 +11355,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function typeAt(clientX, clientY){
     var b = $("body");
     if (!b) return;
+    var hit = document.elementFromPoint && document.elementFromPoint(clientX, clientY);
+    if (hit && hit.closest && (hit.closest("figure.imgblock") || hit.closest("span.pracpin")))
+      return;
     setTypingEnabled(true);
     var guard = 0;
     while (b.getBoundingClientRect().bottom < clientY - 4 && guard++ < 500){
@@ -11283,6 +11387,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function handOverToTyping(e){
     if (typeof isPenType === "function" ? isPenType(e) : e.pointerType === "pen") return;
     if (ink.mode === "write") return;
+    if (e && e.target && e.target.closest &&
+        (e.target.closest("figure.imgblock") || e.target.closest("span.pracpin")))
+      return;
     /* a finger on a live catch is moving it, not asking for the keyboard */
     if (ink.tool === "lasso" && typeof lassoHas === "function" && lassoHas()){
       var S0 = (typeof lasso === "object" && lasso.surface) ||
@@ -11614,6 +11721,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     pickedImage = { fig: fig, asset: asset };
     fig.classList.add("on");
     addGrips(fig);
+    /* a picture tap is not typing. Making the page editable here is what
+       raises the Android keyboard and dumps the caret at the first line. */
+    if (typeof setTypingEnabled === "function") setTypingEnabled(false);
+    var b = $("body");
+    if (b && document.activeElement === b) b.blur();
+    var pt = $("pracText");
+    if (pt && document.activeElement === pt) pt.blur();
     $("imgBar").hidden = false;
     imgBarOff = { dx: 0, dy: 0 };
     paintImgBar();
@@ -14222,8 +14336,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return;
     }
     chipLand = { id: place.note.id, frac: place.frac };
-    if (typeof openPage === "function") openPage(place.note);
-    else go({ nbId: state.nbId, noteId: place.note.id });
+    if (typeof openPage === "function") openPage(place.note, true);
+    else go({ nbId: state.nbId, noteId: place.note.id }, true);
   }
   /* How often the page underneath may change while you drag. Turning the
      page is a real page load, so it cannot happen on every pointermove —
@@ -14231,15 +14345,55 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      screen sits still while the chip travels and then lurches at the end.
      That lurch is what you saw. */
   var CHIP_SEEK_MS = 130;
-  /* How far past a join the chip has to travel before the page underneath is
-     allowed to change. The join between two pages is a single point in the
-     track: one pixel to one side is "the foot of this page", one pixel to the
-     other is "the head of the next". A finger resting on that point wobbles
-     across it many times a second, and every crossing used to ask for a whole
-     page load — which is the up, down, up, down at the join. About four per
-     cent of the track, roughly a quarter of an inch, is enough that a hand
-     cannot shiver across it but a deliberate drag passes straight through. */
-  var CHIP_STICK = 0.04;
+  /* Stick is a fraction of THIS page's share of the track, not of the whole
+     notebook. Four per cent of a twenty-page book was almost a whole page, so
+     the chip sat still and then jumped. Twenty-two per cent of the current
+     page is a short drag past the join — enough to pull the neighbour onto
+     the screen, not enough that a resting hand can shiver across it. */
+  var CHIP_STICK = 0.22;
+  function pageBand(list, id){
+    var tot = listVirtual(list), acc = 0;
+    if (!tot) return null;
+    for (var i = 0; i < list.length; i++){
+      var h = pageSpan(list[i].id);
+      if (list[i].id === id) return { lo: acc / tot, hi: (acc + h) / tot, i: i };
+      acc += h;
+    }
+    return null;
+  }
+  function pageStick(lo, hi){
+    return Math.max(0.012, (hi - lo) * CHIP_STICK);
+  }
+  function pageFracNow(nid){
+    var p = $("paper");
+    if (!p || !nid) return 0;
+    var pad = (typeof prevPad === "function") ? prevPad() : 0;
+    var span = Math.max(1, pageSpan(nid) * pageZoom() - p.clientHeight);
+    return Math.max(0, Math.min(1, (p.scrollTop - pad) / span));
+  }
+  function listIndexOf(list, id){
+    for (var i = 0; i < (list || []).length; i++) if (list[i].id === id) return i;
+    return -1;
+  }
+  /* The same 40% / 60% lines finger-scrolling uses. A chip must not remount
+     a neighbour until that neighbour's preview has actually crossed them —
+     otherwise the join is never seen, then the new page lands at its head. */
+  function chipPeekReady(dir){
+    var p = $("paper");
+    if (!p) return false;
+    var pr = p.getBoundingClientRect();
+    if (dir > 0){
+      var nextEl = $("nextPeek"), nextPage = $("nextPeekPage");
+      if (!nextEl || nextEl.hidden || !nextPage) return false;
+      var nb = nextPage.getBoundingClientRect();
+      return nb.height > 40 && nb.top < pr.top + pr.height * 0.40;
+    }
+    var prevEl = $("prevPeek"), prevPage = $("prevPeekPage");
+    if (!prevEl || prevEl.hidden || prevEl.classList.contains("thin") || !prevPage)
+      return false;
+    var pb = prevPage.getBoundingClientRect();
+    return pb.height > 40 && pb.bottom > pr.top + pr.height * 0.60;
+  }
   /* A page the chip has asked for that has not arrived yet. Nothing else may
      be asked for until it does, or a drag can have three page loads in the air
      at once, each landing on top of the last. */
@@ -14250,62 +14404,125 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function placeForDrag(list, prog, stickId){
     var place = progressToPlace(list, prog);
     if (!place || !stickId || !place.note || place.note.id === stickId) return place;
-    var tot = listVirtual(list), acc = 0, lo = -1, hi = -1, stick = null;
-    for (var i = 0; i < list.length; i++){
-      var h = pageSpan(list[i].id);
-      if (list[i].id === stickId){ lo = acc / tot; hi = (acc + h) / tot; stick = list[i]; break; }
-      acc += h;
-    }
-    if (!stick || lo < 0) return place;
-    if (prog > lo - CHIP_STICK && prog < hi + CHIP_STICK){
-      var span = Math.max(1e-6, hi - lo);
-      return { note: stick, frac: Math.max(0, Math.min(1, (prog - lo) / span)) };
+    var band = pageBand(list, stickId);
+    if (!band) return place;
+    var stick = pageStick(band.lo, band.hi);
+    if (prog > band.lo - stick && prog < band.hi + stick){
+      var span = Math.max(1e-6, band.hi - band.lo);
+      return { note: list[band.i], frac: Math.max(0, Math.min(1, (prog - band.lo) / span)) };
     }
     return place;
+  }
+  /* Pull the neighbour's preview onto the screen the way a finger does.
+     0.62 of the viewport is just past the 40%/60% handover lines. */
+  function driveChipPeek(vis, dir, t){
+    var p = $("paper");
+    if (!p || !vis) return;
+    var peekPx = Math.round(p.clientHeight * 0.62);
+    t = Math.max(0, Math.min(1, t));
+    if (dir > 0) p.scrollTop = pageScrollFor(vis, 1) + t * peekPx;
+    else p.scrollTop = Math.max(0, pageScrollFor(vis, 0) - t * peekPx);
   }
   function revealChipJoin(list, prog, vis, frac){
     var p = $("paper");
     if (!p || !vis || prog == null){ landOnPage(frac, vis); return; }
-    var tot = listVirtual(list);
-    if (!tot){ landOnPage(frac, vis); return; }
-    var acc = 0, lo = -1, hi = -1;
-    for (var i = 0; i < list.length; i++){
-      var h = pageSpan(list[i].id);
-      if (list[i].id === vis){ lo = acc / tot; hi = (acc + h) / tot; break; }
-      acc += h;
-    }
-    if (lo < 0){ landOnPage(frac, vis); return; }
-    var peekPx = Math.round(p.clientHeight * 0.38);
-    if (prog > hi && prog <= hi + CHIP_STICK){
-      var t = (prog - hi) / Math.max(1e-6, CHIP_STICK);
-      p.scrollTop = pageScrollFor(vis, 1) + t * peekPx;
+    var band = pageBand(list, vis);
+    if (!band){ landOnPage(frac, vis); return; }
+    var stick = pageStick(band.lo, band.hi);
+    if (prog > band.hi){
+      driveChipPeek(vis, 1, (prog - band.hi) / Math.max(1e-6, stick));
       return;
     }
-    if (prog < lo && prog >= lo - CHIP_STICK){
-      var t = (lo - prog) / Math.max(1e-6, CHIP_STICK);
-      p.scrollTop = Math.max(0, pageScrollFor(vis, 0) - t * peekPx);
+    if (prog < band.lo){
+      driveChipPeek(vis, -1, (band.lo - prog) / Math.max(1e-6, stick));
       return;
+    }
+    /* Just after a neighbour swap the chip sits at frac 0 (or 1). Mapping
+       that to "head at the top of the screen" yanks the join you were
+       looking at off the screen — the sudden jump. Hold still until the
+       chip has travelled further into the new page. */
+    if (Date.now() < (handover.until || 0)){
+      var cur = pageFracNow(vis);
+      if (Math.abs((frac || 0) - cur) < 0.20) return;
     }
     landOnPage(frac, vis);
+  }
+  function armChipHandover(newId){
+    var p = $("paper");
+    if (!p || !newId) return false;
+    var pr = p.getBoundingClientRect();
+    var dir = 0, anchorTop = 0, srcBody = null;
+    var nextPage = $("nextPeekPage"), prevPage = $("prevPeekPage");
+    var nextWrap = $("nextPeek"), prevWrap = $("prevPeek");
+    if (nextWrap && !nextWrap.hidden && nextPage){
+      var nb = nextPage.getBoundingClientRect();
+      if (nb.height > 20 && nb.top < pr.top + pr.height * 0.40){
+        dir = 1; anchorTop = nb.top; srcBody = $("nextPeekBody");
+      }
+    }
+    if (!dir && prevWrap && !prevWrap.hidden && !prevWrap.classList.contains("thin") && prevPage){
+      var pb = prevPage.getBoundingClientRect();
+      if (pb.height > 20 && pb.bottom > pr.top + pr.height * 0.60){
+        dir = -1; anchorTop = pb.top; srcBody = $("prevPeekBody");
+      }
+    }
+    if (!dir) return false;
+    var aIdx = -1, aOff = 0;
+    var kids = srcBody ? srcBody.children : null;
+    for (var ki = 0; kids && ki < kids.length; ki++){
+      var kr = kids[ki].getBoundingClientRect();
+      if (kr.bottom > pr.top){ aIdx = ki; aOff = kr.top - pr.top; break; }
+    }
+    handover.busy = true;
+    document.body.classList.add("swapping");
+    handover.until = Date.now() + 400;
+    handover.pending = { id: newId, keepAt: anchorTop - pr.top, aIdx: aIdx, aOff: aOff, dir: dir };
+    var band = $("prevPeek");
+    if (band && !band.hidden){
+      band.style.height = prevPad() + "px";
+      band.style.overflow = "hidden";
+      if (dir > 0 && $("prevPeekBody")) $("prevPeekBody").innerHTML = "";
+    }
+    clearTimeout(handover.guard);
+    handover.guard = setTimeout(function(){
+      if (!handover.pending) return;
+      handover.pending = null; handover.busy = false;
+      document.body.classList.remove("swapping");
+      if (band){ band.style.height = ""; band.style.overflow = ""; }
+    }, 2500);
+    try { flush(); } catch (e) {}
+    return true;
   }
   function chipSeek(force){
     if (!chipDrag || !chipDrag.want || !chipDrag.want.note) return;
     var place = chipDrag.want;
     var vis = visualNoteId();
+    var list = chipDrag.list;
     /* Inside the page that is actually on the screen this is a plain scroll and
        can follow every single move. Judged by what is mounted, never by
        state.noteId: while a page is on its way those two disagree, and
        scrolling on the strength of the new one moves the old page by the new
        page's measurements. */
     if (vis && place.note.id === vis){
-      /* Inside the sticky band past a join, keep this page but scroll it
-         into the neighbouring preview so the boundary is on screen. A
-         chip drag that only ever landOnPage(0 or 1) holds still at the
-         foot or head and then jump-loads the next page — the join is
-         never seen. Finger-scrolling already shows that join; this is
-         the same overscroll, driven by the chip. */
-      revealChipJoin(chipDrag.list, chipDrag.prog, vis, place.frac);
+      revealChipJoin(list, chipDrag.prog, vis, place.frac);
       return;
+    }
+    var vi = listIndexOf(list, vis), wi = listIndexOf(list, place.note.id);
+    var neighbor = (vi >= 0 && wi >= 0 && Math.abs(wi - vi) === 1);
+    if (neighbor){
+      var dir = wi > vi ? 1 : -1;
+      var band = pageBand(list, vis);
+      var stick = band ? pageStick(band.lo, band.hi) : 0.04;
+      var t = 1;
+      if (band && dir > 0 && chipDrag.prog != null)
+        t = (chipDrag.prog - band.hi) / Math.max(1e-6, stick);
+      if (band && dir < 0 && chipDrag.prog != null)
+        t = (band.lo - chipDrag.prog) / Math.max(1e-6, stick);
+      driveChipPeek(vis, dir, t);
+      /* Do not remount until the preview has crossed the same line a finger
+         uses. Letting go mid-join leaves the join on screen rather than
+         jump-loading the neighbour at its heading. */
+      if (!chipPeekReady(dir)) return;
     }
     if (!force){
       if (chipLoading()) return;                                 /* one at a time */
@@ -14320,9 +14537,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       handover.queued = { id: place.note.id, frac: place.frac };
       return;
     }
-    chipLand = { id: place.note.id, frac: place.frac };
-    if (typeof openPage === "function") openPage(place.note);
-    else go({ nbId: state.nbId, noteId: place.note.id });
+    /* If the neighbour preview is already on screen from driveChipPeek,
+       hand the swap to the same re-anchor the finger uses. A raw restore
+       of chipLand after a remount is the sudden jump at the join. */
+    if (neighbor && typeof armChipHandover === "function" && armChipHandover(place.note.id)){
+      chipLand = null;
+    } else if (neighbor){
+      /* peek not ready enough to re-anchor — do not jump-load */
+      chipDrag.pendingId = vis;
+      return;
+    } else {
+      chipLand = { id: place.note.id, frac: place.frac };
+    }
+    if (typeof openPage === "function") openPage(place.note, true);
+    else go({ nbId: state.nbId, noteId: place.note.id }, true);
   }
   function wireNavChip(id, kind){
     var el = $(id);
@@ -14353,8 +14581,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       prog = Math.max(0, Math.min(1, prog));
       /* sticky around the page on screen, so a hand resting on a join cannot
          shiver the app back and forth across it */
-      var place = placeForDrag(chipDrag.list, prog,
-                              chipDrag.pendingId || visualNoteId());
+      var place = placeForDrag(chipDrag.list, prog, visualNoteId());
       if (!place) return;
       chipDrag.prog = prog;
       chipDrag.want = place;
@@ -14715,8 +14942,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        scroll-driven swap fire as well puts two things in charge of that at
        the same moment, and they argue across the join — the bounce. */
     if (chipDrag) return;
-    var coasting = !!(typeof glide === "object" && glide && glide.raf);
-    if (!coasting && Date.now() < (handover.until || 0)) return;
+    /* A carried-over fling used to skip this wait, so the next peek could
+       satisfy the line on the first frame of the new page and turn again.
+       The join is one turn. The leftover speed continues after settle. */
+    if (Date.now() < (handover.until || 0)) return;
     var p = $("paper");
     if (!p) return;
     var pr = p.getBoundingClientRect();
@@ -14746,7 +14975,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
     handover.busy = true;
     document.body.classList.add("swapping");
-    handover.until = Date.now() + 400;    /* no second swap straight after */
+    handover.until = Date.now() +
+      ((typeof pan === "object" && pan && pan.on) ? 160 : 400);
     /* Keep the speed, lose the old animation frame. Spending the leftover
        throw on the new page used to dump you at its heading, because the
        scroll had not been re-anchored yet. We stop the frame here, carry
@@ -14824,8 +15054,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        milliseconds is time the fling spends carrying you past the join before
        the page underneath has changed, which is the lurch. */
     try { flush(); } catch (e) {}
-    if (typeof openPage === "function") openPage(target);
-    else go({ nbId: nbId, noteId: id });
+    if (typeof openPage === "function") openPage(target, true);
+    else go({ nbId: nbId, noteId: id }, true);
   }
 
   /* called from paintDoc once the swapped-to page is mounted and its bands
@@ -14838,6 +15068,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     handover.pending = null;
     clearTimeout(handover.guard);
     var p = $("paper"), band = $("prevPeek");
+    /* rebase NOW, not only on the next frame: a pointermove in this gap
+       still has the old pan.top and throws the page hundreds of pixels */
+    if (typeof pan === "object" && pan && pan.on && p){
+      pan.top = p.scrollTop;
+      pan.left = p.scrollLeft;
+      if (pan.py != null) pan.y = pan.py;
+      if (pan.px != null) pan.x = pan.px;
+    }
     requestAnimationFrame(function(){
       if (band){ band.style.height = ""; band.style.overflow = ""; }
       if (!p){ handover.busy = false; return; }
@@ -14959,8 +15197,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
             handover.queued.id !== state.noteId){
           var q = handover.queued; handover.queued = null;
           chipLand = { id: q.id, frac: q.frac };
-          if (typeof openPage === "function") openPage(q.id);
-          else go({ nbId: state.nbId, noteId: q.id });
+          if (typeof openPage === "function") openPage(q.id, true);
+          else go({ nbId: state.nbId, noteId: q.id }, true);
         } else {
           handover.queued = null;
         }
@@ -15058,11 +15296,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
     return null;
   }
-  function openPage(n){
+  function openPage(n, replace){
     if (!n) return;
     if (typeof n === "string") n = pageById(n);
     if (!n) return;
-    go({ nbId: state.nbId || n.notebookId, noteId: n.id });
+    /* A scroll or chip join must remount on this turn, not wait for the
+       hashchange. Waiting left the finger on a page that had already gone,
+       which is the lurch at the boundary. replace also keeps one fling
+       from stuffing the back-stack with every page it crossed. */
+    go({ nbId: state.nbId || n.notebookId, noteId: n.id }, !!replace);
   }
   function currentPageId(){
     return state.noteId;
@@ -16837,6 +17079,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return false;
     }
     if (Object.keys(gest.pts).length > 1) return false;  /* two fingers: pinch */
+    document.body.classList.add("fly");
     pan.id = e.pointerId; pan.on = true;
     pan.x = e.clientX; pan.y = e.clientY;
     pan.top = S.scroller.scrollTop; pan.left = S.scroller.scrollLeft;
@@ -16848,6 +17091,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   function fingerPanMove(S, e){
     if (!pan.on || e.pointerId !== pan.id) return false;
+    /* while a page is remounting the stored pan.top describes a scroller
+       that is gone. Applying it is the 900px throw at the join. Hold the
+       finger still against wherever the page is now; the next move after
+       finishHandover rebases and carries on. */
+    if (typeof handover === "object" && handover && (handover.busy || handover.pending)){
+      pan.top = S.scroller.scrollTop;
+      pan.left = S.scroller.scrollLeft;
+      pan.y = e.clientY; pan.x = e.clientX;
+      pan.py = e.clientY; pan.px = e.clientX;
+      return true;
+    }
     trackVel(pan, e.clientX, e.clientY);
     S.scroller.scrollTop = pan.top - (e.clientY - pan.y);
     S.scroller.scrollLeft = pan.left - (e.clientX - pan.x);
