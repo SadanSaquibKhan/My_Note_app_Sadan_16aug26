@@ -549,6 +549,7 @@
   .prevpeek-body span.anchor, .nextpeek-body span.anchor{display:inline-block; color:var(--live); font-size:.85em; padding:0 2px; vertical-align:super; cursor:default;}
   .prevpeek-body span.anchor.flash, .nextpeek-body span.anchor.flash{background:var(--live-soft); border-radius:2px}
   .prevpeek-body span.pracpin::before, .nextpeek-body span.pracpin::before{content:"\25E7"}
+  .prevpeek-body span.pracpin::after, .nextpeek-body span.pracpin::after{content:attr(data-name)}
   .prevpeek-body span.anchor.autoanchor.flash, .nextpeek-body span.anchor.autoanchor.flash{background:var(--live-soft)}
   .prevpeek-body span.pracpin:hover, .nextpeek-body span.pracpin:hover{background:var(--live-soft); border-radius:2px}
   .prevpeek-body .lit, .nextpeek-body .lit{background:var(--live-soft); border-radius:3px}
@@ -1154,11 +1155,17 @@
      see nothing — the rough working stays out of the clean note, which is the
      whole point of the practice space. */
   #body span.pracpin{
-    display:inline-block; width:1.1em; text-align:center; cursor:pointer;
-    color:var(--live); font-size:.95em; vertical-align:baseline;
+    display:inline-flex; align-items:center; gap:6px;
+    min-height:28px; padding:3px 10px 3px 8px; margin:0 4px;
+    border:2px solid var(--live); border-radius:16px;
+    background:var(--live-soft); color:var(--live);
+    font-family:var(--mono); font-size:12px; letter-spacing:.04em;
+    cursor:pointer; vertical-align:middle;
     user-select:none; -webkit-user-select:none;
   }
-  #body span.pracpin::before{content:"\25E7"}
+  #body span.pracpin::before{content:"\25E7"; font-size:14px}
+  #body span.pracpin::after{content:attr(data-name)}
+  #body span.pracpin.on{background:var(--live); color:var(--panel)}
   /* an anchor Margin dropped itself, so a way back can be exact: no glyph,
      but still a real box for the jump to scroll to */
   #body span.anchor.autoanchor{font-size:0; padding:0; color:transparent}
@@ -1266,9 +1273,18 @@
   .pracmark{font-family:var(--mono); font-size:9.5px; letter-spacing:.2em; color:var(--live); flex:none}
   .pracwhere{font-size:12px; color:var(--ink-2); max-width:34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .pracpage{font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--ink-2); flex:none}
-  .paper.prac{background:var(--ground)}
-  .sheet.prac{max-width:none; padding:0 20px 40vh; zoom:1}
-  #pracText{min-height:80vh; outline:none; font-size:15px; line-height:26px; padding-top:10px; color:var(--ink-2)}
+  .paper.prac{background:var(--ground); overflow-y:auto; -webkit-overflow-scrolling:touch}
+  .sheet.prac{
+    max-width:var(--page-w); margin:0 auto;
+    padding:0 clamp(16px,4vw,44px) 24px; zoom:var(--z,1);
+  }
+  #pracText{
+    min-height:var(--page-h); outline:none; font-size:16px; line-height:var(--lead);
+    padding-top:calc(var(--lead) - 5px); padding-bottom:20vh;
+    word-wrap:break-word; color:var(--ink);
+  }
+  #pracText p{margin:0 0 var(--lead)}
+  #pracText h1,#pracText h2,#pracText h3{font-family:var(--display); margin:var(--lead) 0 0; line-height:var(--lead)}
   #pracText:empty::before{content:attr(data-placeholder); color:var(--ink-2); opacity:.75}
 
   body[data-focus="1"] .rail, body[data-focus="1"] .list, body[data-focus="1"] .sec{display:none}
@@ -2607,7 +2623,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b135";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b136";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5061,6 +5077,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       el.textContent = "";
       el.classList.remove("on");
     });
+    Array.prototype.forEach.call(clone.querySelectorAll("span.pracpin"), function(el){
+      el.classList.remove("on");
+    });
     return clone.innerHTML;
   }
 
@@ -5070,20 +5089,6 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof flushPractice === "function" && prac.open) flushPractice();
     if (!state.dirty || !state.note || state.saving) return Promise.resolve();
     state.saving = true;
-    if (state.workId && state.workRec){
-      var wid = state.workId;
-      return C.savePractice(wid, { html: serializeBody() }).then(function(saved){
-        state.saving = false;
-        if (state.workId === wid) state.workRec = saved;
-        markSaved();
-        paintFoot();
-        broadcastChange();
-        return refreshLists();
-      }).catch(function(e){
-        state.saving = false;
-        say("Could not save: " + (e && e.message ? e.message : e));
-      });
-    }
     var id = state.note.id;
     var patch = {
       title: $("noteTitle").value,
@@ -5672,23 +5677,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return;
     }
     blank.style.display = "none"; live.hidden = false;
-    var liveId = currentPageId();
-    var liveHtml = (state.workRec && state.workId) ? (state.workRec.html || "") : (state.note.html || "");
-    var liveTitle = (state.workRec && state.workId)
-      ? ((typeof C.workingName === "function")
-          ? C.workingName(state.note, (function(){
-              var ws = (state.workByNote[state.note.id] || []);
-              for (var wi = 0; wi < ws.length; wi++) if (ws[wi].id === state.workId) return wi;
-              return 0;
-            })())
-          : "working")
-      : (state.note.title || "");
-    $("noteTitle").value = liveTitle;
-    $("noteTitle").readOnly = !!state.workId;
-    document.body.classList.toggle("working", !!state.workId);
+    $("noteTitle").value = state.note.title || "";
+    $("noteTitle").readOnly = false;
+    document.body.classList.remove("working");
     /* only touch innerHTML when the note actually changed — rewriting it
        mid-typing would kill the caret and the Samsung keyboard's state */
-    if ($("body").dataset.noteId !== liveId){
+    if ($("body").dataset.noteId !== state.note.id){
       /* the catch was drawn over the page that is leaving; its elements are
          about to be thrown away, and acting on it afterwards would move the
          new page's blocks instead */
@@ -5698,12 +5692,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          picture on it is holding a node that will not exist in a moment */
       parkPageUndo($("body").dataset.noteId);
       if (typeof deselectImage === "function") deselectImage();
-      $("body").innerHTML = liveHtml;
-      $("body").dataset.noteId = liveId;
+      $("body").innerHTML = state.note.html || "";
+      $("body").dataset.noteId = state.note.id;
       /* size the sheet from the last measured ink BEFORE pictures decode,
          so the first scroll into this page does not grow under you */
       if (typeof pageHeightOf === "function"){
-        $("body").style.minHeight = Math.round(pageHeightOf(liveId)) + "px";
+        $("body").style.minHeight = Math.round(pageHeightOf(state.note.id)) + "px";
       }
       ink.focusOverride = false;
       resetTextHist();
@@ -5772,6 +5766,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         });
       }
     }
+    if (typeof paintWorkPins === "function") paintWorkPins();
     paintStar();
     paintTags();
     paintPracBadge();
@@ -5938,14 +5933,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function render(){
     var r = parseHash();
     var mine = ++renderSeq;
-    var changedNote = (r.noteId !== state.noteId) ||
-                      ((r.workId || null) !== (state.workId || null));
+    var changedNote = (r.noteId !== state.noteId);
     var backedOutOfNote = (prevView === "note" && prevNbId === r.nbId);
     prevView = r.view; prevNbId = r.nbId;
     state.nbId = r.nbId;
     if (r.nbId) state.nbLast = r.nbId;
     state.noteId = r.noteId;
-    state.workId = r.workId || null;
+    state.workId = null;
     state.view = r.view;
     document.body.dataset.view = r.view;
 
@@ -5979,11 +5973,6 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       state.prac = res[6];
       state.workByNote = res[9] || {};
       state.workRec = null;
-      if (state.workId && state.noteId){
-        var wl = state.workByNote[state.noteId] || [];
-        wl.forEach(function(p){ if (p.id === state.workId) state.workRec = p; });
-        if (!state.workRec) state.workId = null;
-      }
       indexAssets();
       if (r.view === "search") runSearch();
 
@@ -6024,6 +6013,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         if (state.nbId) openNotebookTab(state.nbId); else paintTabs();
         if (state.note && state.note.sectionId) state.sectionId = state.note.sectionId;
         paintNotebooks(); paintSections(); paintTrashRow(); paintNotes(); paintDoc(); paintCrumbs(); paintRecent();
+        if (r.workId && typeof openPracticeById === "function") openPracticeById(r.workId);
         /* the layout may have changed which panes are on screen */
         if (typeof paintEdge === "function") paintEdge();
         if (typeof buildJumpBar === "function") buildJumpBar();
@@ -7323,6 +7313,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       /* catch a coasting page: without this the pen could lay a stroke while
          the paper was still sliding underneath it */
       stopGlide();
+      if (e.target && e.target.closest && e.target.closest("span.pracpin")) return;
       if (isPenType(e)){ penDetected(e); applyPenButton(e); armPenHold(S, e); }
       else { handOverToTyping(e); if (S.name === "note") armHold(e); }
       if (touchGesture(S, e, "down")) return;
@@ -7573,9 +7564,6 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var noteSurface = makeSurface("note", {
     scroller: $("paper"), canvas: $("inkLayer"),
     save: function(strokes){
-      if (state.workId){
-        return C.savePractice(state.workId, { strokes: strokes });
-      }
       var nid = state.noteId;
       if (!nid) return Promise.resolve();
       return C.getPageInk(nid, { create:true }).then(function(a){
@@ -7596,18 +7584,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       inkReady = Promise.resolve();
       return inkReady;
     }
-    if (state.workId && state.workRec){
-      noteSurface.strokes = state.workRec.strokes || [];
-      restorePageUndo("w:" + state.workId);
-      growForInk();
-      noteSurface.redraw();
-      paintInkTools();
-      inkReady = Promise.resolve();
-      return inkReady;
-    }
     var nid = state.noteId;
     inkReady = C.getPageInk(nid).then(function(a){
-      if (state.noteId !== nid || state.workId) return;
+      if (state.noteId !== nid) return;
       noteSurface.strokes = (a && a.strokes) || [];
       restorePageUndo(nid);
       growForInk();
@@ -7836,6 +7815,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     z = clampZoom(z);
     state.zoom = z;
     $("paper").style.setProperty("--z", z);
+    if ($("pracPaper")) $("pracPaper").style.setProperty("--z", z);
     $("zoomLabel").textContent = Math.round(z * 100) + "%";
     $("zoomOut").disabled = z <= zoomFloor() + 0.001;
     $("zoomIn").disabled = z >= zoomCeil() - 0.001;
@@ -7968,6 +7948,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (ink.mode === "type") setMode("auto");    /* ink-first, as intended */
       $("inkTools").hidden = false;
       paintPracHead();
+      if (typeof ensureWorkPin === "function") ensureWorkPin(prac.rec.id);
+      if (typeof paintWorkPins === "function") paintWorkPins();
       setTimeout(function(){ pracSurface.redraw(); }, 60);
       paintInkTools();
     });
@@ -7980,6 +7962,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       document.body.dataset.prac = "";
       $("pracSheet").hidden = true;
       paintPracBadge();
+      if (typeof paintWorkPins === "function") paintWorkPins();
       paintInkTools();
       setTimeout(function(){ noteSurface.redraw(); }, 210);
     });
@@ -7995,10 +7978,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   function paintPracHead(){
-    $("pracPage").textContent = "Page " + (prac.idx + 1) + " of " + prac.pages.length;
+    var name = (typeof C.workingName === "function" && state.note)
+      ? C.workingName(state.note, prac.idx) : ("w" + (prac.idx + 1));
+    $("pracPage").textContent = name + "  ·  " + (prac.idx + 1) + "/" + prac.pages.length;
     $("pracPrev").disabled = prac.idx <= 0;
     $("pracNext").disabled = prac.idx >= prac.pages.length - 1;
-    $("pracWhere").textContent = state.note ? C.displayTitle(state.note) : "";
+    $("pracWhere").textContent = name;
   }
 
   function gotoPracPage(i){
@@ -8017,27 +8002,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   $("pracBtn").addEventListener("click", function(){
     if (!state.note) return;
-    cfg.workFold = cfg.workFold || {};
-    /* already on a working sheet: fold the group and go back to the page */
-    if (state.workId){
-      cfg.workFold[state.note.id] = true;
-      saveCfg();
-      go({ nbId: state.nbId, noteId: state.note.id });
-      hint("Working pages hidden. Practice brings them back.");
-      return;
-    }
-    /* folded: unfold and open the first */
-    if (cfg.workFold[state.note.id]){
-      delete cfg.workFold[state.note.id];
-      saveCfg();
-    }
-    var list = (state.workByNote && state.workByNote[state.note.id]) || [];
-    if (list.length){
-      go({ nbId: state.nbId, noteId: state.note.id, workId: list[0].id });
-      return;
-    }
-    C.addPracticePage(state.note.id).then(function(p){
-      go({ nbId: state.nbId, noteId: state.note.id, workId: p.id });
+    if (prac.open){ closePractice(); return; }
+    openPractice(0).then(function(){
+      if (prac.rec) ensureWorkPin(prac.rec.id);
     });
   });
   $("pracClose").addEventListener("click", closePractice);
@@ -8046,7 +8013,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("pracAdd").addEventListener("click", function(){
     if (!state.note) return;
     flushPractice().then(function(){ return C.addPracticePage(state.note.id); })
-      .then(function(){ return openPractice(prac.pages.length); })
+      .then(function(p){
+        if (p && typeof ensureWorkPin === "function") ensureWorkPin(p.id);
+        return openPractice(prac.pages.length);
+      })
       .then(function(){ return C.practiceSummary(); })
       .then(function(m){ state.prac = m; paintPracBadge(); refreshLists(); });
   });
@@ -12978,36 +12948,87 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      The marker stores the practice record's own pr_ id, never its position in
      the list: pages are addressed by ordinal everywhere else, and an ordinal
      silently means something different as soon as another page is added. */
+  function workNameForId(pracId){
+    if (!state.note || !pracId) return "w";
+    var list = (state.workByNote && state.workByNote[state.note.id]) ||
+               (prac.pages || []);
+    for (var i = 0; i < list.length; i++){
+      if ((list[i].id || list[i]) === pracId)
+        return (typeof C.workingName === "function") ? C.workingName(state.note, i) : ("w" + (i + 1));
+    }
+    return (typeof C.workingName === "function") ? C.workingName(state.note, 0) : "w1";
+  }
+  function paintWorkPins(){
+    var host = $("body");
+    if (!host) return;
+    Array.prototype.forEach.call(host.querySelectorAll("span.pracpin"), function(pin){
+      var id = pin.getAttribute("data-pracid");
+      var name = workNameForId(id);
+      pin.setAttribute("data-name", name);
+      pin.setAttribute("title", name + " — tap to open or hide");
+      pin.classList.toggle("on", !!(prac.open && prac.rec && prac.rec.id === id));
+    });
+  }
+  function insertPinAt(el, x, y){
+    var r = null;
+    try {
+      if (document.caretRangeFromPoint) r = document.caretRangeFromPoint(x, y);
+      else if (document.caretPositionFromPoint){
+        var cp = document.caretPositionFromPoint(x, y);
+        if (cp){ r = document.createRange(); r.setStart(cp.offsetNode, cp.offset); r.collapse(true); }
+      }
+    } catch (err) { r = null; }
+    if (r && $("body").contains(r.startContainer)) r.insertNode(el);
+    else $("body").appendChild(el);
+  }
+  function ensureWorkPin(pracId, x, y){
+    var host = $("body");
+    if (!host || !pracId) return null;
+    var exist = host.querySelector('span.pracpin[data-pracid="' + pracId + '"]');
+    if (exist){ paintWorkPins(); return exist; }
+    var el = document.createElement("span");
+    el.className = "pracpin";
+    el.setAttribute("contenteditable", "false");
+    el.setAttribute("data-pracid", pracId);
+    if (x != null && y != null) insertPinAt(el, x, y);
+    else host.appendChild(el);
+    paintWorkPins();
+    markDirty();
+    return el;
+  }
   function openPracticeById(id){
     if (!state.note) return Promise.resolve();
-    if (cfg.workFold && cfg.workFold[state.note.id]){
-      delete cfg.workFold[state.note.id];
-      saveCfg();
-    }
-    go({ nbId: state.nbId, noteId: state.note.id, workId: id });
-    return Promise.resolve();
+    return C.practicePages(state.note.id).then(function(list){
+      var i = 0;
+      list.forEach(function(p, k){ if (p.id === id) i = k; });
+      return openPractice(i);
+    });
   }
-  function pracHere(x, y){
+  function toggleWorkFromPin(pin){
+    var id = pin && pin.getAttribute("data-pracid");
+    if (!id) return;
+    if (prac.open && prac.rec && prac.rec.id === id){ closePractice(); return; }
+    openPracticeById(id);
+  }
+  function startWorkAt(x, y){
     if (!state.note) return;
     return C.addPracticePage(state.note.id).then(function(p){
-      var el = document.createElement("span");
-      el.className = "pracpin";
-      el.setAttribute("contenteditable", "false");
-      el.setAttribute("data-pracid", p.id);
-      el.setAttribute("title", "Rough working — tap to open");
-      var r = caretAtPoint(x, y);
-      r.insertNode(el);
-      markDirty();
+      state.workByNote = state.workByNote || {};
+      var bag = state.workByNote[state.note.id] || [];
+      bag.push(p);
+      state.workByNote[state.note.id] = bag;
+      ensureWorkPin(p.id, x, y);
       return flush().then(function(){ return openPracticeById(p.id); });
     }).catch(dbFail("Could not start a working page"));
   }
-  /* tap the marker to open its working page again */
-  $("body").addEventListener("click", function(e){
+  function pracHere(x, y){ return startWorkAt(x, y); }
+  /* pen or finger on the named chip opens that sheet, or hides it if it is already up */
+  $("body").addEventListener("pointerdown", function(e){
     var pin = e.target.closest ? e.target.closest("span.pracpin") : null;
     if (!pin) return;
-    e.preventDefault();
-    openPracticeById(pin.getAttribute("data-pracid"));
-  });
+    e.preventDefault(); e.stopPropagation();
+    toggleWorkFromPin(pin);
+  }, true);
   /* long press / right click takes the marker out, leaving the working page
      itself reachable from the Practice button and All rough working */
   $("body").addEventListener("contextmenu", function(e){
@@ -13027,22 +13048,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   function markSpot(x, y){
-    var name = window.prompt("Name this spot", "");
-    if (name === null) return;
-    var id = "sp_" + C.newId("a").slice(2, 12);
-    var el = document.createElement("span");
-    el.className = "anchor";
-    el.setAttribute("id", id);
-    el.setAttribute("data-name", name || "spot");
-    el.setAttribute("contenteditable", "false");
-    el.textContent = "\u2691";
-    var r = caretAtPoint(x, y);
-    r.insertNode(el);
-    state.lastLink = { to: "nt:" + state.note.id + "#" + id,
-                       href: "#/nb/" + state.note.notebookId + "/note/" + state.note.id + "#" + id,
-                       label: name || C.displayTitle(state.note) };
-    markDirty(); flush();
-    say("Marked. Use \u201CPaste the last link here\u201D wherever you want a way back to it.");
+    /* a mark on the page is the named working chip: tap it to open that
+       sheet, tap again to put it away. The old prompt-for-a-name flag is
+       still available from Copy a link to this spot. */
+    return startWorkAt(x, y);
   }
 
   function copySpotLink(x, y){
@@ -15038,35 +15047,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      and the page numbers never disagree */
   function pageOrder(){
     var secs = state.sections || [];
-    var notes = !secs.length ? C.sortPages(state.notes) : (function(){
-      var grouped = C.notesBySection(state.notes, secs);
-      var flat = [];
-      grouped.forEach(function(g){ flat = flat.concat(g.notes); });
-      return flat;
-    })();
-    /* Each page's working sheets sit immediately after it, named S2P2w1…
-       so scrolling and the chips walk …S2P2, S2P2w1, S2P2w2, S2P3… the
-       way a printed notebook would. Folded groups stay out of the flow. */
-    var fold = (cfg && cfg.workFold) || {};
-    var by = state.workByNote || {};
+    if (!secs.length) return C.sortPages(state.notes);
+    var grouped = C.notesBySection(state.notes, secs);
     var out = [];
-    notes.forEach(function(n){
-      out.push(n);
-      if (fold[n.id]) return;
-      var ws = by[n.id] || [];
-      ws.forEach(function(p, i){
-        out.push({
-          id: "w:" + p.id,
-          working: true,
-          parentId: n.id,
-          pracId: p.id,
-          notebookId: n.notebookId,
-          sectionId: n.sectionId,
-          title: (typeof C.workingName === "function") ? C.workingName(n, i) : ("w" + (i+1)),
-          lastEdited: p.lastEdited
-        });
-      });
-    });
+    grouped.forEach(function(g){ out = out.concat(g.notes); });
     return out;
   }
   function pageById(id){
@@ -15078,11 +15062,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!n) return;
     if (typeof n === "string") n = pageById(n);
     if (!n) return;
-    if (n.working) go({ nbId: state.nbId || n.notebookId, noteId: n.parentId, workId: n.pracId });
-    else go({ nbId: state.nbId || n.notebookId, noteId: n.id });
+    go({ nbId: state.nbId || n.notebookId, noteId: n.id });
   }
   function currentPageId(){
-    return state.workId ? ("w:" + state.workId) : state.noteId;
+    return state.noteId;
   }
   function pageSrcHtml(n){
     if (!n) return "";
