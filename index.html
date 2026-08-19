@@ -1687,8 +1687,8 @@
       <div class="barrail" id="barRail" hidden></div>
       <div class="fmtbar" id="fmtBar">
         <span class="segmented">
-          <button type="button" id="textUndo" title="Undo typing (Ctrl+Z)" disabled>&#8630;</button>
-          <button type="button" id="textRedo" title="Redo typing" disabled>&#8631;</button>
+          <button type="button" id="textUndo" title="Undo — jumps to the exact spot of that change (Ctrl+Z)" disabled>&#8630;</button>
+          <button type="button" id="textRedo" title="Redo — jumps to the exact spot of that change (Ctrl+Y)" disabled>&#8631;</button>
         </span>
         <span class="segmented">
           <button type="button" id="fmtBold"><b>B</b></button>
@@ -2503,7 +2503,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b99";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b100";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5668,6 +5668,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
       function finishRender(){
         if (changedNote){
+          /* park BEFORE clearing the id. Clearing first made park see a
+             blank page, so the page you left forgot its undo stack — and
+             undo could never jump back to it. */
+          if (typeof parkPageUndo === "function")
+            parkPageUndo($("body").dataset.noteId);
           $("body").dataset.noteId = "";
           document.body.dataset.save = "idle";
           $("saveWord").textContent = "ready";
@@ -12431,8 +12436,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     paintTextUndo();
   }
   function paintTextUndo(){
-    if ($("textUndo")) $("textUndo").disabled = !textHist.past.length;
-    if ($("textRedo")) $("textRedo").disabled = !textHist.future.length;
+    var canU = textHist.past.length || (typeof anyUndo === "function" && anyUndo());
+    var canR = textHist.future.length || (typeof anyRedo === "function" && anyRedo());
+    if ($("textUndo")) $("textUndo").disabled = !canU;
+    if ($("textRedo")) $("textRedo").disabled = !canR;
   }
   function setBodyHTML(html){
     $("body").innerHTML = html;
@@ -12462,8 +12469,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     paintTextUndo(); markDirty(); flush(); paintGlobalUndo();
     if (typeof revealXY === "function") revealXY(entry.atX, entry.atY);
   }
-  $("textUndo").addEventListener("click", textUndo);
-  $("textRedo").addEventListener("click", textRedo);
+  $("textUndo").addEventListener("click", function(){
+    if (typeof globalUndo === "function") globalUndo(); else textUndo();
+  });
+  $("textRedo").addEventListener("click", function(){
+    if (typeof globalRedo === "function") globalRedo(); else textRedo();
+  });
   $("body").addEventListener("input", function(){
     clearTimeout(textHist.timer);
     textHist.timer = setTimeout(snapText, 500);
@@ -14275,15 +14286,36 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var pageUndo = {};
   var undoJump = null;
   var undoReveal = null;
+  function noteById(id){
+    if (!id) return null;
+    var lists = [state.notes, state.allNotes, state.starred, state.marks];
+    for (var i = 0; i < lists.length; i++){
+      var list = lists[i];
+      if (!list) continue;
+      for (var j = 0; j < list.length; j++){
+        var n = list[j] && (list[j].id ? list[j] : list[j].note);
+        if (n && n.id === id) return n;
+      }
+    }
+    return null;
+  }
   function parkPageUndo(id){
     if (!id || id === "undefined") return;
+    /* a typed change is only snapped after a short pause. Leaving the
+       page sooner used to park an empty stack, so undo could not find it. */
+    if (textHist && textHist.timer){
+      clearTimeout(textHist.timer);
+      textHist.timer = null;
+      if (typeof snapText === "function") snapText();
+    }
     pageUndo[id] = {
       inkUndo: (noteSurface.undo || []).slice(),
       inkRedo: (noteSurface.redo || []).slice(),
       textPast: (textHist.past || []).slice(),
       textFuture: (textHist.future || []).slice(),
       textLast: textHist.last,
-      nbId: state.nbId
+      nbId: state.nbId,
+      sectionId: state.sectionId
     };
   }
   function restorePageUndo(id){
@@ -14299,32 +14331,32 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     textHist.last = p.textLast;
   }
   function latestAcross(which){
-    var best = { v: -1, noteId: state.noteId, nbId: state.nbId, kind: null };
-    function consider(v, noteId, nbId, kind){
-      if (v > best.v) best = { v: v, noteId: noteId, nbId: nbId, kind: kind };
+    var best = { v: -1, noteId: state.noteId, nbId: state.nbId, sectionId: state.sectionId, kind: null };
+    function consider(v, noteId, nbId, kind, sectionId){
+      if (v > best.v) best = { v: v, noteId: noteId, nbId: nbId, sectionId: sectionId, kind: kind };
     }
     if (which === "undo"){
-      consider(inkTop("undo").v, state.noteId, state.nbId, "ink");
-      if (textHist.past.length) consider(textHist.past[textHist.past.length - 1].seq || 0, state.noteId, state.nbId, "text");
-      consider(bigTop("undo"), state.noteId, state.nbId, "big");
+      consider(inkTop("undo").v, state.noteId, state.nbId, "ink", state.sectionId);
+      if (textHist.past.length) consider(textHist.past[textHist.past.length - 1].seq || 0, state.noteId, state.nbId, "text", state.sectionId);
+      consider(bigTop("undo"), state.noteId, state.nbId, "big", state.sectionId);
     } else {
-      consider(inkTop("redo").v, state.noteId, state.nbId, "ink");
-      if (textHist.future.length) consider(textHist.future[textHist.future.length - 1].undoneAt || 0, state.noteId, state.nbId, "text");
-      consider(bigTop("redo"), state.noteId, state.nbId, "big");
+      consider(inkTop("redo").v, state.noteId, state.nbId, "ink", state.sectionId);
+      if (textHist.future.length) consider(textHist.future[textHist.future.length - 1].undoneAt || 0, state.noteId, state.nbId, "text", state.sectionId);
+      consider(bigTop("redo"), state.noteId, state.nbId, "big", state.sectionId);
     }
     Object.keys(pageUndo).forEach(function(id){
       if (id === state.noteId) return;
       var p = pageUndo[id];
       if (which === "undo"){
         var iu = p.inkUndo[p.inkUndo.length - 1];
-        if (iu) consider(iu.seq || 0, id, p.nbId, "ink");
+        if (iu) consider(iu.seq || 0, id, p.nbId, "ink", p.sectionId);
         var tu = p.textPast[p.textPast.length - 1];
-        if (tu) consider(tu.seq || 0, id, p.nbId, "text");
+        if (tu) consider(tu.seq || 0, id, p.nbId, "text", p.sectionId);
       } else {
         var ir = p.inkRedo[p.inkRedo.length - 1];
-        if (ir) consider(ir.undoneAt || 0, id, p.nbId, "ink");
+        if (ir) consider(ir.undoneAt || 0, id, p.nbId, "ink", p.sectionId);
         var tr = p.textFuture[p.textFuture.length - 1];
-        if (tr) consider(tr.undoneAt || 0, id, p.nbId, "text");
+        if (tr) consider(tr.undoneAt || 0, id, p.nbId, "text", p.sectionId);
       }
     });
     return best;
@@ -14452,11 +14484,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       undoJump = { noteId: best.noteId, which: "undo" };
       undoReveal = peekOpLoc(best.noteId, "undo") || {};
       var nm = "";
-      if (state.notes){
-        var nn = state.notes.filter(function(x){ return x.id === best.noteId; })[0];
-        if (nn) nm = (nn.title || C.displayTitle(nn) || "");
-      }
+      var nn = noteById(best.noteId);
+      if (nn) nm = (nn.title || C.displayTitle(nn) || "");
       hint(nm ? ("Going to the spot on " + nm + " to undo…") : "Going to the spot of that change…");
+      if (best.sectionId) state.sectionId = best.sectionId;
+      else if (nn && nn.sectionId) state.sectionId = nn.sectionId;
       go({ nbId: best.nbId || state.nbId, noteId: best.noteId });
       return;
     }
@@ -14488,11 +14520,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       undoJump = { noteId: best.noteId, which: "redo" };
       undoReveal = peekOpLoc(best.noteId, "redo") || {};
       var nm = "";
-      if (state.notes){
-        var nn = state.notes.filter(function(x){ return x.id === best.noteId; })[0];
-        if (nn) nm = (nn.title || C.displayTitle(nn) || "");
-      }
+      var nn = noteById(best.noteId);
+      if (nn) nm = (nn.title || C.displayTitle(nn) || "");
       hint(nm ? ("Going to the spot on " + nm + " to redo…") : "Going to the spot of that change…");
+      if (best.sectionId) state.sectionId = best.sectionId;
+      else if (nn && nn.sectionId) state.sectionId = nn.sectionId;
       go({ nbId: best.nbId || state.nbId, noteId: best.noteId });
       return;
     }
