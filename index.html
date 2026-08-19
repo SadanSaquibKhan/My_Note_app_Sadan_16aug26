@@ -1658,8 +1658,8 @@
       <div class="docbar">
         <input type="text" id="noteTitle" placeholder="Untitled note" autocomplete="off">
         <span class="segmented">
-          <button class="ghost" id="gUndo" title="Undo — jumps to the page of that change (Ctrl+Z)" disabled>&#8630;</button>
-          <button class="ghost" id="gRedo" title="Redo — jumps to the page of that change (Ctrl+Y)" disabled>&#8631;</button>
+          <button class="ghost" id="gUndo" title="Undo — jumps to the exact spot of that change (Ctrl+Z)" disabled>&#8630;</button>
+          <button class="ghost" id="gRedo" title="Redo — jumps to the exact spot of that change (Ctrl+Y)" disabled>&#8631;</button>
         </span>
         <button class="ghost" id="starBtn" aria-pressed="false">&#9734; Star</button>
         <button class="ghost" id="markBtn" aria-pressed="false" title="Bookmark this page and name the topic that starts here">&#9873; Bookmark</button>
@@ -2499,7 +2499,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b96";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b97";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5456,7 +5456,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          top of it is two things setting the scroll at once, which is the jump
          that was left. Opening a page any other way still lands where you
          were. */
-      if (state.nbId && !swapping()){
+      if (state.nbId && !swapping() && !undoReveal){
         var openingId = state.note.id;
         loadPlace(state.nbId).then(function(place){
           if (state.noteId !== openingId) return;      /* moved on already */
@@ -5495,6 +5495,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       ready.then(function(){
         if (!state.note || state.note.id !== want) return;
         if (w === "redo") globalRedo(); else globalUndo();
+        var loc = undoReveal;
+        undoReveal = null;
+        /* the page has just been rebuilt: wait two frames so the sheet's
+           height is real, then put the eye on the change. A second pass
+           catches growForInk stretching the page a moment later. */
+        if (loc && loc.atY != null && typeof revealXY === "function"){
+          requestAnimationFrame(function(){
+            requestAnimationFrame(function(){
+              revealXY(loc.atX, loc.atY);
+              setTimeout(function(){ revealXY(loc.atX, loc.atY); }, 80);
+            });
+          });
+        }
       });
     }
     /* a PDF page has no ruled lines under it and no page padding fighting it */
@@ -12389,11 +12402,37 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      which it does for maths, pictures and attachments. So the text layer keeps
      its own stack, separate from the ink stack. */
   var textHist = { past: [], future: [], last: null, timer: null };
+  function caretPagePos(){
+    var paper = $("paper");
+    var sel = window.getSelection();
+    if (!paper || !sel || !sel.rangeCount) return null;
+    var r = sel.getRangeAt(0).cloneRange();
+    r.collapse(true);
+    var rect = r.getBoundingClientRect();
+    if (!rect || (rect.top === 0 && rect.bottom === 0)){
+      var node = sel.anchorNode;
+      var el = node && (node.nodeType === 3 ? node.parentNode : node);
+      if (el && el.getBoundingClientRect) rect = el.getBoundingClientRect();
+    }
+    if (!rect) return null;
+    var pr = paper.getBoundingClientRect();
+    var z = state.zoom || 1;
+    var padv = (typeof prevPad === "function") ? prevPad() : 0;
+    return {
+      x: (rect.left - pr.left + paper.scrollLeft) / z,
+      y: (rect.top - pr.top + paper.scrollTop - padv) / z
+    };
+  }
   function snapText(){
     var html = serializeBody();
     if (html === textHist.last) return;
     if (textHist.last !== null){
-      textHist.past.push({ html: textHist.last, seq: nextSeq(), noteId: state.noteId, nbId: state.nbId });
+      var pos = caretPagePos();
+      textHist.past.push({
+        html: textHist.last, seq: nextSeq(),
+        noteId: state.noteId, nbId: state.nbId,
+        atX: pos ? pos.x : null, atY: pos ? pos.y : null
+      });
       if (textHist.past.length > 80) textHist.past.shift();
       textHist.future = [];
       clearInkRedoAll();               /* a fresh edit ends the shared redo line */
@@ -12417,18 +12456,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function textUndo(){
     if (!textHist.past.length) return;
     var entry = textHist.past.pop();
-    textHist.future.push({ html: textHist.last, seq: entry.seq, undoneAt: nextRedoSeq() });
+    textHist.future.push({
+      html: textHist.last, seq: entry.seq, undoneAt: nextRedoSeq(),
+      atX: entry.atX, atY: entry.atY
+    });
     textHist.last = entry.html;
     setBodyHTML(entry.html);
     paintTextUndo(); markDirty(); flush(); paintGlobalUndo();
+    if (typeof revealXY === "function") revealXY(entry.atX, entry.atY);
   }
   function textRedo(){
     if (!textHist.future.length) return;
     var entry = textHist.future.pop();
-    textHist.past.push({ html: textHist.last, seq: nextSeq() });
+    textHist.past.push({
+      html: textHist.last, seq: nextSeq(),
+      atX: entry.atX, atY: entry.atY
+    });
     textHist.last = entry.html;
     setBodyHTML(entry.html);
     paintTextUndo(); markDirty(); flush(); paintGlobalUndo();
+    if (typeof revealXY === "function") revealXY(entry.atX, entry.atY);
   }
   $("textUndo").addEventListener("click", textUndo);
   $("textRedo").addEventListener("click", textRedo);
@@ -14242,6 +14289,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   var pageUndo = {};
   var undoJump = null;
+  var undoReveal = null;
   function parkPageUndo(id){
     if (!id || id === "undefined") return;
     pageUndo[id] = {
@@ -14296,10 +14344,45 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
     return best;
   }
+  function locFromOp(op){
+    if (!op) return null;
+    if (op.atY != null && isFinite(op.atY)) return { atX: op.atX, atY: op.atY };
+    var b = opBounds(op);
+    if (b) return { atX: (b.minX + b.maxX) / 2, atY: (b.minY + b.maxY) / 2 };
+    return null;
+  }
+  function peekOpLoc(noteId, which){
+    var p = pageUndo[noteId];
+    if (!p) return null;
+    if (which === "undo"){
+      var iu = p.inkUndo[p.inkUndo.length - 1];
+      var tu = p.textPast[p.textPast.length - 1];
+      var iv = iu ? (iu.seq || 0) : -1;
+      var tv = tu ? (tu.seq || 0) : -1;
+      if (iv >= tv && iu) return locFromOp(iu);
+      if (tu) return { atX: tu.atX, atY: tu.atY };
+    } else {
+      var ir = p.inkRedo[p.inkRedo.length - 1];
+      var tr = p.textFuture[p.textFuture.length - 1];
+      var irv = ir ? (ir.undoneAt || 0) : -1;
+      var trv = tr ? (tr.undoneAt || 0) : -1;
+      if (irv >= trv && ir) return locFromOp(ir);
+      if (tr) return { atX: tr.atX, atY: tr.atY };
+    }
+    return null;
+  }
+  function revealXY(x, y){
+    if (y == null || !isFinite(y)) return;
+    revealBounds({
+      minY: y - 24, maxY: y + 24,
+      minX: (x != null && isFinite(x)) ? x : 0,
+      maxX: (x != null && isFinite(x)) ? x : 0
+    });
+  }
   function revealOp(op){
     if (!op) return;
     if (op.atY != null){
-      revealBounds({ minY: op.atY - 20, maxY: op.atY + 20, minX: op.atX || 0, maxX: op.atX || 0 });
+      revealXY(op.atX, op.atY);
     } else {
       revealBounds(opBounds(op));
       revealCaret();
@@ -14333,10 +14416,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!b) return;
     var p = $("paper"), z = state.zoom || 1;
     if (!p) return;
-    var top = b.minY * z, bottom = b.maxY * z;
+    var padv = (typeof prevPad === "function") ? prevPad() : 0;
+    var top = b.minY * z + padv, bottom = b.maxY * z + padv;
     var view = p.clientHeight;
-    if (top >= p.scrollTop + 40 && bottom <= p.scrollTop + view - 40) return;  /* already on screen */
-    p.scrollTo({ top: Math.max(0, (top + bottom) / 2 - view / 2), behavior: "smooth" });
+    /* already looking at this change: do not jump */
+    if (top >= p.scrollTop + 40 && bottom <= p.scrollTop + view - 40) return;
+    var want = Math.max(0, (top + bottom) / 2 - view / 2);
+    p.scrollTo({ top: want, behavior: "smooth" });
+    if (b.minX != null && isFinite(b.minX)){
+      var left = b.minX * z;
+      var vw = p.clientWidth;
+      if (left < p.scrollLeft + 20 || left > p.scrollLeft + vw - 20){
+        p.scrollTo({ left: Math.max(0, left - vw / 2), top: want, behavior: "smooth" });
+      }
+    }
     setTimeout(redrawAll, 260);
   }
   function revealCaret(){
@@ -14372,12 +14465,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (best.v < 0){ hint("Nothing to undo."); return; }
     if (best.noteId && best.noteId !== state.noteId && best.kind !== "big"){
       undoJump = { noteId: best.noteId, which: "undo" };
+      undoReveal = peekOpLoc(best.noteId, "undo") || {};
       var nm = "";
       if (state.notes){
         var nn = state.notes.filter(function(x){ return x.id === best.noteId; })[0];
         if (nn) nm = (nn.title || C.displayTitle(nn) || "");
       }
-      hint(nm ? ("Going to " + nm + " to undo…") : "Going to the page of that change…");
+      hint(nm ? ("Going to the spot on " + nm + " to undo…") : "Going to the spot of that change…");
       go({ nbId: best.nbId || state.nbId, noteId: best.noteId });
       return;
     }
@@ -14407,12 +14501,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (best.v < 0){ hint("Nothing to redo."); return; }
     if (best.noteId && best.noteId !== state.noteId && best.kind !== "big"){
       undoJump = { noteId: best.noteId, which: "redo" };
+      undoReveal = peekOpLoc(best.noteId, "redo") || {};
       var nm = "";
       if (state.notes){
         var nn = state.notes.filter(function(x){ return x.id === best.noteId; })[0];
         if (nn) nm = (nn.title || C.displayTitle(nn) || "");
       }
-      hint(nm ? ("Going to " + nm + " to redo…") : "Going to the page of that change…");
+      hint(nm ? ("Going to the spot on " + nm + " to redo…") : "Going to the spot of that change…");
       go({ nbId: best.nbId || state.nbId, noteId: best.noteId });
       return;
     }
