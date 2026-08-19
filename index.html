@@ -2111,11 +2111,10 @@
           eraser on and leaves it on until you hold again.</p>
           <label class="check"><input type="checkbox" id="setTapErase"> Double-tap with the pen to turn the eraser on and off (stays on)</label>
           <label class="check"><input type="checkbox" id="setPenBtnErase"> The pen&rsquo;s side button turns the eraser on and off</label>
-          <p class="hint">Hold the side button with the nib close (the small
-          circle under the tip), then touch the glass. The eraser turns on and
-          stays on when you let the button go. The same hold-then-touch brings
-          the last pen back. Hovering or lifting alone does nothing. If the
-          button never reacts, turn Air Actions off
+          <p class="hint">Press the side button to turn the eraser on. Press
+          it again to get the last pen back. It does not matter whether the
+          nib is on the glass or hovering. You do not have to hold the button
+          and then touch. If the button never reacts, turn Air Actions off
           (Settings &rarr; Advanced features &rarr; S Pen) so Chrome can see it.</p>
         </div>
         <div class="field">
@@ -2381,7 +2380,7 @@
         <tr><td>Hold a left arrow</td><td>pin that list open while you write</td></tr>
         <tr><td>Hold Box / Free</td><td>catch a piece, or only what is fully inside</td></tr>
         <tr><td>Two / three fingers</td><td>tap to undo / redo</td></tr>
-        <tr><td>Pen side button</td><td>hold, then touch: eraser on; same again: last pen</td></tr>
+        <tr><td>Pen side button</td><td>press: eraser on; press again: last pen</td></tr>
         <tr><td>Long press</td><td>the spot menu: mark, link, paste, attach</td></tr>
         <tr><td>[[</td><td>open the link picker</td></tr>
         <tr><td>-&gt; &nbsp;&lt;= &nbsp;!= &nbsp;:alpha:</td><td>expand to symbols as you type</td></tr>
@@ -2499,7 +2498,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b97";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b98";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -6399,11 +6398,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
     S.begin = function(e){
       ink.active = name;
-      /* First button (side button) already used pointerdown. This begin
-         is the landing on the paper — flip now, before a pen stroke starts. */
-      if (e && e.pointerType === "pen" && typeof barrelIsArmed === "function"){
-        if (barrelIsArmed() && Date.now() - barrel.at > 40) barrelContactToggle();
-      }
+      /* Landing on the paper must not flip the eraser. The side button
+         already toggled on the press itself — a later touch is just writing
+         or rubbing out, not a second press. */
       var p = S.toPage(e);
       if (ink.tool === "lasso"){
         if ((lasso.picked.length || (lasso.pickedEls && lasso.pickedEls.length)) && lasso.poly){
@@ -7905,7 +7902,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     pageFlow: true,    /* scrolling past the end carries on to the next page */
     eraserSize: 22,    /* how wide the eraser bites, in page units */
     tapErase: true,       /* double-tap the nib to toggle the eraser */
-    penButtonErase: true, /* hold the side button, then touch: toggle eraser */
+    penButtonErase: true, /* press the side button: toggle eraser */
     dblType: true,        /* two finger-taps open the keyboard */
     cfgRev: 0,            /* which one-time setting migrations have been done */
     holdErase: true,      /* hold the nib down to reach the eraser */
@@ -9980,7 +9977,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* ================= v7 =================
      Three things about the physical act of writing:
-       - the pen's side button: hold it in hover, then touch, to toggle eraser
+       - the pen's side button: press to toggle eraser, press again for the pen
        - the soft keyboard gets out of the way the moment the pen arrives
        - a tap puts the caret exactly where you tapped, even below the ink  */
 
@@ -10058,14 +10055,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        far    — nothing reaches the page
        hover  — the small circle; the side button can be seen here
        touch  — the nib is on the glass
-     Why the extra tap was needed (W3C Pointer Events + this S Pen):
-       pointerdown fires only for the FIRST button. Holding the side button
-       in hover is already that first button, so the nib landing does not
-       send another pointerdown. We used to wait for one, so the eraser
-       only flipped on the NEXT tap after you lifted.
-     Now: hover+button only arms. The landing is any later contact signal
-     (a new pointerdown, a tip bit, pressure, a wider contact, a touchstart,
-     or a contextmenu after the arm). Lift never flips it. */
+     The side button is a latch. One press turns the eraser on, the next
+     press brings the last pen back. Hover or nib-down does not matter —
+     the press itself is the switch. Touching the page after a press must
+     not flip it again: that extra-tap was the old "hold then touch" rule
+     and it is what you asked to drop.
+     One physical press often arrives as several events (a buttons bit,
+     a contextmenu, an auxclick). A short mute after each flip keeps those
+     as one press. Lift never flips. */
   var barrel = { armed: false, at: 0, lastToggle: 0, hx: 0, hy: 0, leaveT: 0,
                  hoverAt: 0, hoverHadBits: false, lastButtons: 0 };
   var bitLatch = { n: 0 };
@@ -10088,17 +10085,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return e.pointerType === "pen" || e.pointerType === "eraser";
     return false;
   }
-  function barrelNewBit(e){
+  function barrelBitRose(e){
     var nowB = e.buttons || 0;
     var added = nowB & ~barrel.lastButtons;
-    return added !== 0 && added !== 2 && added !== 4 && added !== 32;
+    return !!(added & (2 | 4));           /* side / middle, not the eraser end */
   }
   function barrelArm(){
-    var fresh = !barrel.armed;
     barrel.armed = true;
     barrel.at = Date.now();
     if (barrel.leaveT){ clearTimeout(barrel.leaveT); barrel.leaveT = 0; }
-    if (fresh) hint("Button held. Touch the page to erase.");
   }
   function barrelDisarm(){
     barrel.armed = false;
@@ -10127,9 +10122,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     S.redraw();
   }
-  function barrelContactToggle(){
+  function barrelPressToggle(){
     if (cfg.penButtonErase === false) return false;
-    if (Date.now() - barrel.lastToggle < 280) return false;
+    if (Date.now() - barrel.lastToggle < 350) return false;
     barrel.lastToggle = Date.now();
     barrel.armed = false;
     if (barrel.leaveT){ clearTimeout(barrel.leaveT); barrel.leaveT = 0; }
@@ -10144,45 +10139,21 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!penJustHere) return;
     if (e.clientX != null){ barrel.hx = e.clientX; barrel.hy = e.clientY; }
     var down = barrelBits(e);
-    var nib = penNibOnGlass(e);
     var typ = e.type || "";
-    var isDown = typ === "pointerdown" || typ === "mousedown";
-    var isMove = typ === "pointermove" || typ === "pointerrawupdate" ||
-                 typ === "pointerover" || typ === "pointerenter";
     penReport(e, down);
-    if (isMove){
-      barrel.hoverAt = Date.now();
-      barrel.hoverHadBits = down;
-      if (down && !nib){
-        barrelArm();
-        bitLatch.n += 1;
-      }
-      if (barrelIsArmed() && (nib || barrelNewBit(e))) barrelContactToggle();
-      barrel.lastButtons = e.buttons || 0;
-      return;
-    }
+    var rose = barrelBitRose(e);
     barrel.lastButtons = e.buttons || 0;
+    /* lift never switches the tool — the next press does */
     if (typ === "pointerup" || typ === "pointercancel") return;
-    if (isDown){
-      /* A pointerdown after the button is already held is the landing.
-         The button press itself is the first pointerdown and only arms
-         when it arrived as a hover move, not here. */
-      if (barrelIsArmed()){ barrelContactToggle(); return; }
-      if (down){
-        var hovered = (Date.now() - barrel.hoverAt) < 2500;
-        if (hovered && barrel.hoverHadBits){ barrelContactToggle(); return; }
-        if (nib){ barrelContactToggle(); return; }
-        barrelArm();
-        bitLatch.n += 1;
-      }
-      return;
+    if (rose){ barrelPressToggle(); return; }
+    if ((typ === "pointerdown" || typ === "mousedown") && eraserButtonDown(e)){
+      barrelPressToggle();
     }
-    if (nib && (down || barrelIsArmed())) barrelContactToggle();
   }
   /* Listened for on the document as well as on the drawing surface. A barrel
      press while the pen hovers over a toolbar, or over the gap beside the
      page, never reaches the scroller's handlers — and that is exactly when
-     people press it, before bringing the nib down. */
+     people press it. */
   ["pointerdown", "pointermove", "pointerup", "pointerenter", "pointerover",
    "pointerrawupdate", "gotpointercapture"].forEach(function(evt){
     document.addEventListener(evt, function(e){
@@ -10193,16 +10164,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* More doors for the same button. Samsung has been seen delivering it as
      any one of these and never as the others, depending on Air Actions,
      Chrome version, and whether the nib is on the glass or hovering.
-     None of these is a toggle on its own: hover-only signals only arm.
-     The toggle is the nib touching afterwards. */
+     Each one is a press — none of them wait for a later touch. */
   window.addEventListener("auxclick", function(e){
     if (e.button !== 1 && e.button !== 2) return;
     if (lastPointerKind !== "pen" && Date.now() - (ink.lastPenAt || 0) > 2500) return;
     if (cfg.penButtonErase === false) return;
     e.preventDefault();
-    if (barrelIsArmed()) barrelContactToggle();
-    else if (penDown && (Date.now() - penDown) < 200) barrelContactToggle();
-    else barrelArm();
+    barrelPressToggle();
   }, true);
   document.addEventListener("mouseup", function(e){
     if (e.button !== 1 && e.button !== 2 && e.button !== 5) return;
@@ -10221,7 +10189,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (lastPointerKind !== "pen" && Date.now() - (ink.lastPenAt || 0) > 2500) return;
     var k = e.key || e.code || "";
     if (k === "ContextMenu" || (k === "F10" && e.shiftKey) || k === "Unidentified"){
-      barrelArm();
+      barrelPressToggle();
     }
   }, true);
   /* And the last route it can take. Some builds deliver the barrel press as a
@@ -10231,23 +10199,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   document.addEventListener("mousedown", function(e){
     if (e.button !== 2) return;
     if (lastPointerKind !== "pen") return;
-    if (looksLikeLongPress()) return;     /* the nib resting, not the button */
+    if (looksLikeLongPress() && (penHold.timer || penHold.fired)) return;
     if (cfg.penButtonErase === false) return;
     e.preventDefault();
-    if (barrelIsArmed()) barrelContactToggle();
-    else if (penDown && (Date.now() - penDown) < 200) barrelContactToggle();
-    else barrelArm();
-  }, true);
-  /* Tip contact often arrives as a touch even when pointerdown was already
-     used up by the side button. */
-  window.addEventListener("touchstart", function(e){
-    if (!barrelIsArmed()) return;
-    if (cfg.penButtonErase === false) return;
-    var t = e.touches && e.touches[0];
-    if (!t) return;
-    if (barrel.hx && barrel.hy &&
-        (Math.abs(t.clientX - barrel.hx) > 120 || Math.abs(t.clientY - barrel.hy) > 120)) return;
-    barrelContactToggle();
+    barrelPressToggle();
   }, true);
 
   /* ---- keyboard out of the way while the pen is in use ---- */
@@ -11608,29 +11563,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       /* Two different presses arrive here as the same event:
            - a long rest of the nib → hold-to-erase (separate gesture)
            - the side button, often with no button bits at all
-         The side button is hold-in-hover then touch. Hover (or a
-         contextmenu with no nib down) only arms. Touch shortly after,
-         or a contextmenu that arrives with the nib just landing, is the
-         toggle. A contextmenu after you lift from writing is the old
-         "lift turned the eraser on" bug — it is ignored. */
+         The side button is a press, hover or on the glass. A still hold
+         of the nib is the other gesture. A contextmenu after you lift
+         from writing is the old "lift turned the eraser on" bug. */
       if (looksLikeLongPress()){
+        if (cfg.penButtonErase !== false && !penHold.timer && !penHold.fired){
+          barrelPressToggle();
+          return;
+        }
         if (cfg.holdErase !== false) holdEraseFired();
         return;
       }
       if (cfg.penButtonErase === false) return;
-      if (Date.now() - barrel.lastToggle < 280) return;
-      if (barrelIsArmed() && (Date.now() - barrel.at) > 60){
-        barrelContactToggle();
-        return;
-      }
-      if (penDown && (Date.now() - penDown) < 200){
-        barrelContactToggle();
-        return;
-      }
       if (!penDown && lastContactEnd && (Date.now() - lastContactEnd) < 180){
         return;                         /* lift after writing, not a button */
       }
-      barrelArm();                      /* hover + button, waiting for touch */
+      barrelPressToggle();
       return;
     }
     if (lastPointerKind === "touch"){ e.preventDefault(); return; }
@@ -11740,15 +11688,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       ? "Eraser on (" + why + ")."
       : "Pen again.");
   }
-  /* ---- the side button: hold in hover, then touch ----
+  /* ---- the side button: press on, press off ----
      Three states on this tablet:
        far    — nothing reaches the page
        hover  — the small circle under the nib; the button can be seen here
        touch  — the nib is on the glass; this is the only time you can write
-     Hold the button in hover, then touch: that contact toggles the eraser.
-     Let the button go: the eraser stays. The same hold-then-touch later
-     brings the last pen back. Hover alone, lift, or a cleared button bit
-     must not switch tools — those were the earlier bugs. */
+     Press the button in either hover or touch: the eraser turns on and
+     stays on when you let the button go. Press it again: the last pen
+     comes back. Hover alone, lift, or a cleared button bit must not
+     switch tools — those were the earlier bugs. */
   var btnSpring = { on: false, was: null };
   function btnEraseOn(){
     if (btnSpring.on) return;
@@ -11767,7 +11715,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         S.redraw();
       }
       paintInkTools();
-      hint("Eraser on. Hold the button and touch again for the pen.");
+      hint("Eraser on. Press the side button again for the pen.");
     }
   }
   function btnEraseOff(){
