@@ -2597,7 +2597,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b124";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b125";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -6863,11 +6863,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
             return x.id !== st.id && x.id !== tapErase.id;
           });
           tapErase.last = 0;
-          ink.tool = (ink.tool === "eraser") ? (tapErase.was || "pen") : "eraser";
-          if (ink.tool === "eraser") tapErase.was = "pen";
-          S.redraw(); S.queueSave(); paintInkTools();
-          hint(ink.tool === "eraser" ? "Eraser on. Double-tap again for the pen."
-                                     : "Pen again.");
+          /* through the same one door as every other route, so it shares the
+             memory of which pen to come back to instead of keeping a second,
+             staler one that used to put back the wrong tool */
+          eraserToggle("a double tap");
+          S.redraw(); S.queueSave();
           return;
         }
         tapErase.last = nowT; tapErase.x = st.pts[0]; tapErase.y = st.pts[1];
@@ -10777,17 +10777,35 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      middle button. All of them are taken to mean "erase for now", because a
      false positive costs one undo and a false negative makes the feature look
      broken — which is how this arrived. */
+  /* Is the SIDE BUTTON down, right now, on this event.
+     This deliberately does NOT accept pointerType "eraser" on its own any
+     more. Chrome on this tablet reports the pen as an eraser for as long as
+     the side button is held, so accepting the type meant that every time the
+     nib touched down while you were holding the button it read as a brand new
+     press and flipped the tool back. That is the long-standing "press the
+     button, then touch the screen, and it changes again" behaviour. The
+     button becoming held is caught properly below, as the moment the type
+     changes, which happens once per press instead of once per touch. */
   function eraserButtonDown(e){
     if (!e) return false;
-    if (e.pointerType === "eraser") return true;
     var b = e.buttons || 0;
-    if (b & 32) return true;      /* eraser end */
-    if (b & 2)  return true;      /* barrel */
+    if (b & 2)  return true;      /* barrel, the spec answer */
     if (b & 4)  return true;      /* middle, as some S Pen builds report it */
     var typ = e.type || "";
     if (typ === "pointerdown" || typ === "mousedown")
-      return e.button === 5 || e.button === 2 || e.button === 1;
+      return e.button === 2 || e.button === 1;
     return false;
+  }
+  /* Is the pen currently in "this end erases" mode — either because the driver
+     renamed the pointer, or because it set the eraser bit. Both are states that
+     LAST for as long as the button is held or the pen is turned over, which is
+     why neither belongs in eraserButtonDown above: asking "is it erasing now"
+     on every event made every nib-down look like another press. What matters is
+     the moment it becomes true, and that is counted once, below. */
+  function penInEraseMode(e){
+    if (!e) return false;
+    if (e.pointerType === "eraser") return true;
+    return !!((e.buttons || 0) & 32);
   }
   /* Three pen states on this tablet:
        far    — nothing reaches the page
@@ -10802,8 +10820,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      a contextmenu, an auxclick). A short mute after each flip keeps those
      as one press. Lift never flips. */
   var barrel = { armed: false, at: 0, lastToggle: 0, hx: 0, hy: 0, leaveT: 0,
-                 hoverAt: 0, hoverHadBits: false, lastButtons: 0 };
-  var bitLatch = { n: 0 };
+                 hoverAt: 0, hoverHadBits: false, lastButtons: 0, lastType: false };
+  var bitLatch = { n: 0, t: 0 };
   function barrelBits(e){
     if (eraserButtonDown(e)) return true;
     if (e && e.getCoalescedEvents){
@@ -10814,11 +10832,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     return false;
   }
+  /* Is the nib actually touching the glass.
+     The contact tip (bit 0) and a real pressure reading are the only honest
+     answers. Width and height used to count as well, and they should not: a
+     hovering pen reports a contact patch of 1x1 too, so everything asking this
+     question thought the pen was writing whenever it was merely near. That is
+     what made the eraser arrive by itself — a hover was mistaken for a long
+     press of the nib. */
   function penNibOnGlass(e){
     if (!e) return false;
     if ((e.buttons || 0) & 1) return true;
     if (typeof e.pressure === "number" && e.pressure > 0) return true;
-    if ((e.width || 0) >= 1 || (e.height || 0) >= 1) return true;
     if ((e.type === "pointerdown" || e.type === "mousedown") && e.button === 0)
       return e.pointerType === "pen" || e.pointerType === "eraser";
     return false;
@@ -10870,12 +10894,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      never this quick: you press, look at the screen, then press again. */
   var PRESS_ONE_MS = 550;
   function barrelPressToggle(){
-    if (cfg.penButtonErase === false) return false;
-    if (Date.now() - barrel.lastToggle < PRESS_ONE_MS) return false;
-    barrel.lastToggle = Date.now();
     barrel.armed = false;
     if (barrel.leaveT){ clearTimeout(barrel.leaveT); barrel.leaveT = 0; }
-    btnEraseToggle();
+    /* the one clock lives in eraserPress, shared with every other door */
+    if (!eraserPress("the pen's side button")) return false;
     btn.held = btnSpring.on;
     barrelConvertStroke();
     return true;
@@ -10897,14 +10919,35 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        the eraser back off on its own. That is the button "undoing itself"
        when a hand touched the screen or the nib came up mid-erase. */
     var prevB = barrel.lastButtons;
-    var rose = false;
+    var rose = false, typeRose = false;
     if (isPen && typ !== "pointerup" && typ !== "pointercancel"){
       rose = barrelBitRose(e);
+      /* On this tablet the clearest trace of the button is that the pen stops
+         calling itself a pen and starts calling itself an eraser, for exactly
+         as long as the button is held. The moment that changes is the press;
+         it changing back is the release, and a release never switches tools. */
+      typeRose = penInEraseMode(e) && !barrel.lastType;
       barrel.lastButtons = e.buttons || 0;
+      barrel.lastType = penInEraseMode(e);
     }
     /* lift never switches the tool — the next press does */
     if (typ === "pointerup" || typ === "pointercancel") return;
-    if (rose){ barrelPressToggle(); return; }
+    if (typeRose){ barrelPressToggle(); return; }
+    if (rose){
+      /* A bit that shows up for a single sample and is gone by the next one is
+         noise, and acting on it turns the eraser on while you are just moving
+         the pen about. With the nib on the glass a rise is deliberate, so it
+         goes straight through. Hovering, it is confirmed a moment later: if
+         the bit is still there it was a real press, and if nothing further
+         arrives at all it was still a real press, because the pen went away
+         with the button held. */
+      if (penNibOnGlass(e)){ barrelPressToggle(); return; }
+      clearTimeout(bitLatch.t);
+      bitLatch.t = setTimeout(function(){
+        if (barrel.lastButtons & (2 | 4)) barrelPressToggle();
+      }, 40);
+      return;
+    }
     if ((typ === "pointerdown" || typ === "mousedown") && eraserButtonDown(e)){
       /* This door exists for pens that report the button ONLY as a secondary
          mousedown, with no bit anywhere. But it also fires when the nib simply
@@ -10943,18 +10986,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     /* a mouseup here is the end of the same press. Do not turn the eraser
        off — you asked to leave the button and keep erasing. */
   }, true);
-  document.addEventListener("keyup", function(e){
-    if (!btnSpring.on && !btn.held) return;
-    var k = e.key || e.code || "";
-    if (k === "ContextMenu" || k === "F10" || k === "Unidentified"){
-      /* same press as keydown — do not treat the key-up as a release */
-    }
-  }, true);
+  /* There was a keyup listener here with an empty body, left from when a key
+     release was thought to end the press. A release never switches the tool,
+     so it had nothing to do and is gone rather than sitting here looking like
+     it means something. */
   document.addEventListener("keydown", function(e){
     if (cfg.penButtonErase === false) return;
     if (lastPointerKind !== "pen" && Date.now() - (ink.lastPenAt || 0) > 2500) return;
     var k = e.key || e.code || "";
-    if (k === "ContextMenu" || (k === "F10" && e.shiftKey) || k === "Unidentified"){
+    /* "Unidentified" was in here too, but Android's IME and Air Actions emit
+       it for all sorts of unrelated keys, and any one of them within a couple
+       of seconds of using the pen turned the eraser on by itself. */
+    if (k === "ContextMenu" || (k === "F10" && e.shiftKey)){
       barrelPressToggle();
     }
   }, true);
@@ -12397,11 +12440,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          The side button is a press, hover or on the glass. A still hold
          of the nib is the other gesture. A contextmenu after you lift
          from writing is the old "lift turned the eraser on" bug. */
-      if (looksLikeLongPress()){
-        if (cfg.penButtonErase !== false && !penHold.timer && !penHold.fired){
-          barrelPressToggle();
-          return;
-        }
+      /* With the nib on the glass this is never the side button. Android
+         raises a contextmenu for a slow start of a letter, and treating that
+         as the button is exactly the "eraser came on by itself while I was
+         writing" report.
+         On the glass there are only two honest readings, and penHold already
+         knows which: if it is still counting, the nib has been genuinely still
+         and this is the hold gesture. If it has stopped counting the pen has
+         MOVED more than ten pixels — that is writing, and this contextmenu is
+         Android being noisy about a slow letter. Ignore it completely. */
+      if (penDown || looksLikeLongPress()){
+        if (penHold.fired) return;                 /* the hold already ran */
+        if (!penHold.timer) return;                /* the pen moved: writing */
         if (cfg.holdErase !== false) holdEraseFired();
         return;
       }
@@ -12441,83 +12491,41 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (springErase.on || ink.tool === "eraser") return;
     springErase.on = true;
     springErase.was = ink.tool;
-    penSeen.route = "holding the nib down";
-    penSeen.everErased = true;
-    if (typeof paintPenReport === "function") paintPenReport();
-    ink.tool = "eraser";
-    /* the mark made while you held still was not writing: it is taken back out
-       and erasing starts from that same spot, so you never have to lift */
-    var S = ink.surfaces[ink.active];
-    if (S && S.drawing && S.drawing.stroke){
-      var st = S.drawing.stroke;
-      S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
-      S.drawing = { erasing: true, removed: [] };
-      if (st.pts.length >= 3 && S.eraseAt) S.eraseAt(st.pts[0], st.pts[1]);
-      S.redraw();
-    }
-    paintInkTools();
+    /* the same one door, so the tool it comes back to is the shared memory */
+    eraserOn("holding the nib down");
     hint("Erasing while you hold. Lift the pen and the " +
          (springErase.was === "pencil" ? "pencil" : "pen") + " comes back.");
   }
   function springEraseOff(){
     if (!springErase.on) return;
     springErase.on = false;
-    ink.tool = springErase.was || "pen";
     springErase.was = null;
-    paintInkTools();
+    eraserOff();
   }
-  /* the pen leaving the glass is what ends it, however it leaves */
-  ["pointerup", "pointercancel", "pointerleave"].forEach(function(evt){
+  /* The pen leaving the glass ends it — but "leaving" has to mean the pen
+     actually went away. pointerleave also fires as the pointer crosses from
+     the canvas onto the page or a toolbar, and acting on that cancelled the
+     hold half-way through a rub. */
+  ["pointerup", "pointercancel"].forEach(function(evt){
     document.addEventListener(evt, function(e){
       if (e.pointerType === "touch") return;
       springEraseOff();
     }, true);
   });
+  document.addEventListener("pointerleave", function(e){
+    if (e.pointerType === "touch") return;
+    if (e.relatedTarget) return;              /* still somewhere on the page */
+    if (penNibOnGlass(e) || penDown) return;  /* still writing */
+    springEraseOff();
+  }, true);
 
   /* one way in for every route to the eraser that is a toggle rather than a
      hold: the side button as a right-click, and the pen's double tap */
-  var lastPenToggle = 0;
+  /* This route was the SECOND clock — 250ms against the button's 550ms — and
+     one physical press getting through both doors is what cancelled itself
+     out. Every route now shares the single press gate in eraserPress. */
   function togglePenEraser(why){
-    /* One press of the button can arrive as BOTH a secondary mousedown and a
-       contextmenu. Toggling on each would cancel itself out and look exactly
-       like the button doing nothing — which is the bug this whole feature has
-       been chasing. First one through wins; the rest of the press is ignored. */
-    var t = Date.now();
-    /* Only long enough to swallow the mousedown and contextmenu pair, which
-       arrive a few milliseconds apart. Any longer and a deliberate second
-       press gets eaten, which itself looks like the button being unreliable. */
-    if (t - lastPenToggle < 250) return;
-    lastPenToggle = t;
-    penSeen.route = why;
-    penSeen.everErased = true;
-    if (typeof paintPenReport === "function") paintPenReport();
-    if (ink.tool === "eraser"){
-      ink.tool = tapErase.was || "pen";
-    } else {
-      tapErase.was = ink.tool;
-      ink.tool = "eraser";
-    }
-    /* The half-drawn stroke is abandoned — you were holding still, not
-       writing. If the nib is still down, erasing begins from that same point
-       rather than making you lift and come back, which is what you were
-       about to do anyway. */
-    var S = ink.surfaces[ink.active];
-    if (S && S.drawing && S.drawing.stroke){
-      var st = S.drawing.stroke;
-      S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
-      if (ink.tool === "eraser"){
-        S.drawing = { erasing: true, removed: [] };
-        var last = st.pts.length >= 3 ? { x: st.pts[0], y: st.pts[1] } : null;
-        if (last) S.eraseAt(last.x, last.y);
-      } else {
-        S.drawing = null;
-      }
-      S.redraw();
-    }
-    paintInkTools();
-    hint(ink.tool === "eraser"
-      ? "Eraser on (" + why + ")."
-      : "Pen again.");
+    return eraserPress(why);
   }
   /* ---- the side button: press on, press off ----
      Three states on this tablet:
@@ -12529,24 +12537,27 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      comes back. Hover alone, lift, or a cleared button bit must not
      switch tools — those were the earlier bugs. */
   var btnSpring = { on: false, was: null };
-  /* Which pen to come back to. The button remembers what you were holding
-     when it turned the eraser on, but the eraser can also be reached by
-     holding the nib still or by double-tapping it, and then it is those that
-     know. Falling through them all means the button can always put back a
-     real pen instead of the generic one. */
-  function penToComeBackTo(){
-    return btnSpring.was ||
-           (typeof tapErase === "object" && tapErase && tapErase.was) ||
-           (typeof springErase === "object" && springErase && springErase.was) ||
-           "pen";
-  }
-  function btnEraseOn(){
-    btnSpring.on = true;
-    if (ink.tool === "eraser") return;      /* already erasing, nothing to do */
-    btnSpring.was = ink.tool;
-    penSeen.route = "the pen's side button"; penSeen.everErased = true;
+  /* ---- one way in and out of the eraser ----
+     Three gestures reach the eraser: the side button, holding the nib still,
+     and double-tapping the nib. Each used to be its own little machine, with
+     its own note of which pen to come back to and its own clock for swallowing
+     the repeats of a single press. They undid each other. The button turned
+     the eraser on and remembered your marker; a double tap turned it off and
+     put back a "pen" it had remembered from some earlier time; and the two
+     clocks ran at different lengths — 550ms on the button, 250ms on the tap —
+     so one physical press could get through both doors and cancel itself out,
+     which is a press that appears to do nothing at all.
+     One memory. One clock. One way in and one way out. */
+  var eraserReturn = null;        /* the tool to put back, whoever turned it on */
+  function eraserOn(why){
+    if (ink.tool === "eraser") return false;
+    eraserReturn = ink.tool;
+    btnSpring.on = true; btnSpring.was = ink.tool;
+    penSeen.route = why; penSeen.everErased = true;
     if (typeof paintPenReport === "function") paintPenReport();
     ink.tool = "eraser";
+    /* the mark you were part-way through was not writing: take it back out and
+       start erasing from that same spot, so you never have to lift */
     var S = ink.surfaces[ink.active];
     if (S && S.drawing && S.drawing.stroke){
       var st = S.drawing.stroke;
@@ -12556,30 +12567,49 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       S.redraw();
     }
     paintInkTools();
-    hint("Eraser on. Press the side button again for the pen.");
+    hint("Eraser on. Press again for the pen.");
+    return true;
   }
-  function btnEraseOff(){
-    btnSpring.on = false;
-    if (ink.tool === "eraser"){
-      ink.tool = penToComeBackTo();
-      paintInkTools();
-      hint("Pen again.");
+  function eraserOff(){
+    btnSpring.on = false; btnSpring.was = null;
+    if (ink.tool !== "eraser") return false;
+    ink.tool = eraserReturn || "pen";
+    eraserReturn = null;
+    var S = ink.surfaces[ink.active];
+    if (S && S.drawing && S.drawing.stroke){
+      var st = S.drawing.stroke;
+      S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
+      S.drawing = null;
+      S.redraw();
     }
-    btnSpring.was = null;
+    paintInkTools();
+    hint("Pen again.");
+    return true;
   }
-  /* Measured, never remembered.
-     This used to decide which way to go from a flag that meant "the side
-     button is the thing that turned the eraser on". The tool changes
-     underneath that flag constantly — you pick a pen off the bar, or one of
-     the other two eraser gestures runs — and once the flag and the tool
-     disagreed, the next press acted on the flag and did nothing you could
-     see. That is the press that "sometimes does not work": after picking a
-     pen by hand the button needed two presses, one to clear the stale flag
-     and one to actually erase. The tool itself is the only thing that always
-     tells the truth about what the pen is doing right now. */
-  function btnEraseToggle(){
-    if (ink.tool === "eraser") btnEraseOff(); else btnEraseOn();
+  /* Measured, never remembered. Deciding which way to go from a flag meaning
+     "the button turned this on" broke the moment anything else changed the
+     tool — pick a pen off the bar and the next press did nothing you could
+     see, because it spent itself clearing the stale flag. The tool is the only
+     thing that always tells the truth about what the pen is doing now. */
+  function eraserToggle(why){
+    if (ink.tool === "eraser") eraserOff(); else eraserOn(why || "the pen");
   }
+  /* Every door calls this and only this, so one physical press — which arrives
+     as a crowd of a buttons bit, a contextmenu, a secondary mousedown and an
+     auxclick — is counted exactly once. */
+  var eraserPressAt = 0;
+  function eraserPress(why){
+    if (cfg.penButtonErase === false) return false;
+    var t = Date.now();
+    if (t - eraserPressAt < PRESS_ONE_MS) return false;
+    eraserPressAt = t;
+    eraserToggle(why);
+    return true;
+  }
+  /* kept as names the rest of the file already calls */
+  function btnEraseOn(){ eraserOn("the pen's side button"); }
+  function btnEraseOff(){ eraserOff(); }
+  function btnEraseToggle(){ eraserToggle("the pen's side button"); }
   /* the pen lifted clear of the screen — but NOT a mere nib-up, so several
      strokes can be rubbed out on one press */
   ["pointerleave", "pointerout"].forEach(function(evt){
