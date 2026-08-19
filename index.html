@@ -1669,7 +1669,7 @@
       <div class="docbar">
         <input type="text" id="noteTitle" placeholder="Untitled note" autocomplete="off">
         <span class="segmented">
-          <button class="ghost" id="gUndo" title="Undo — jumps to the exact spot of that change (Ctrl+Z)" disabled>&#8630;</button>
+          <button class="ghost" id="gUndo" title="Undo — hold to keep undoing (Ctrl+Z)" disabled>&#8630;</button>
           <button class="ghost" id="gRedo" title="Redo — jumps to the exact spot of that change (Ctrl+Y)" disabled>&#8631;</button>
         </span>
         <button class="ghost" id="starBtn" aria-pressed="false">&#9734; Star</button>
@@ -2396,6 +2396,7 @@
         <tr><td>Drag a list edge</td><td>make notebooks, sections or pages wider or narrower</td></tr>
         <tr><td>Hold Box / Free</td><td>catch a piece, or only what is fully inside</td></tr>
         <tr><td>Two / three fingers</td><td>tap to undo / redo</td></tr>
+        <tr><td>Hold Undo</td><td>keep undoing until you let go</td></tr>
         <tr><td>Pen side button</td><td>press: eraser on; press again: last pen</td></tr>
         <tr><td>Double-tap near the bottom</td><td>make the page half a sheet longer</td></tr>
         <tr><td>Long press</td><td>the spot menu: mark, link, paste, attach</td></tr>
@@ -2515,7 +2516,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b105";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b106";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -7382,7 +7383,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof buildFavBar === "function") buildFavBar();
     updateTouchAction(); paintInkTools();
   }
-  $("inkUndo").addEventListener("click", function(){ globalUndo(); });
+  holdRepeat($("inkUndo"), function(){ globalUndo(); });
   $("inkRedo").addEventListener("click", function(){ globalRedo(); });
   $("inkClear").addEventListener("click", function(){
     if (!confirm("Rub out all the writing on this page? The typed text stays.")) return;
@@ -8717,6 +8718,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         b.innerHTML = FAV_ICONS[key];
       } else {
         b.textContent = it.label;
+      }
+      if (key === "undo" && typeof holdRepeat === "function"){
+        holdRepeat(b, function(){ if (typeof globalUndo === "function") globalUndo(); });
+        host.appendChild(b);
+        return;
       }
       b.addEventListener("click", function(e){
         e.preventDefault(); e.stopPropagation();
@@ -12577,7 +12583,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     paintTextUndo(); markDirty(); flush(); paintGlobalUndo();
     if (typeof revealXY === "function") revealXY(entry.atX, entry.atY);
   }
-  $("textUndo").addEventListener("click", function(){
+  holdRepeat($("textUndo"), function(){
     if (typeof globalUndo === "function") globalUndo(); else textUndo();
   });
   $("textRedo").addEventListener("click", function(){
@@ -14682,7 +14688,35 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (r) r.disabled = !anyRedo();
     if (typeof paintTextUndo === "function") paintTextUndo();
   }
-  $("gUndo").addEventListener("click", globalUndo);
+  function holdRepeat(el, fn){
+    if (!el) return;
+    var t = 0, held = false, fromHold = false;
+    function stop(){
+      held = false;
+      clearTimeout(t); t = 0;
+    }
+    el.addEventListener("pointerdown", function(e){
+      if (e.button && e.button !== 0) return;
+      if (el.disabled) return;
+      held = true; fromHold = true;
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
+      fn();
+      t = setTimeout(function(){
+        if (!held) return;
+        t = setInterval(function(){
+          if (!held || el.disabled){ stop(); return; }
+          fn();
+        }, 280);
+      }, 400);
+    });
+    ["pointerup", "pointercancel", "lostpointercapture"].forEach(function(ev){
+      el.addEventListener(ev, stop);
+    });
+    el.addEventListener("click", function(e){
+      if (fromHold){ e.preventDefault(); e.stopImmediatePropagation(); fromHold = false; }
+    }, true);
+  }
+  holdRepeat($("gUndo"), globalUndo);
   $("gRedo").addEventListener("click", globalRedo);
 
   /* ---------- 2. per-tool colour and width ----------
