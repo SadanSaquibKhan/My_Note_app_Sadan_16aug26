@@ -132,9 +132,20 @@
   .docstack[hidden]{display:none}
   /* 0 0 meant "never shrink": on a narrow screen the two side panes alone
      demanded 570px before the page had any room at all */
-  .rail{flex:0 1 250px; min-width:0; background:var(--panel); border-right:1px solid var(--rule)}
-  .sec{flex:0 1 180px; min-width:0; background:var(--panel); border-right:1px solid var(--rule)}
-  .list{flex:0 1 280px; min-width:0; background:var(--panel); border-right:1px solid var(--rule)}
+  .rail{flex:0 1 250px; min-width:0; background:var(--panel); border-right:1px solid var(--rule); position:relative}
+  .sec{flex:0 1 180px; min-width:0; background:var(--panel); border-right:1px solid var(--rule); position:relative}
+  .list{flex:0 1 280px; min-width:0; background:var(--panel); border-right:1px solid var(--rule); position:relative}
+  .panegrip{
+    position:absolute; top:0; right:-6px; width:14px; height:100%; z-index:6;
+    cursor:col-resize; touch-action:none;
+  }
+  .panegrip::after{
+    content:""; position:absolute; top:18%; bottom:18%; left:5px; width:3px;
+    border-radius:2px; background:var(--rule); opacity:.55;
+  }
+  .panegrip:hover::after, body.panedrag .panegrip::after{background:var(--live); opacity:1}
+  body.railmin #railGrip, body.secmin #secGrip, body.listmin #listGrip{display:none}
+  body.panedrag{cursor:col-resize; user-select:none}
   .doc{flex:1}
   /* a collapsed column is a thin strip with one button to open it again */
   body[data-view="note"].railmin #railPane{display:none}
@@ -1594,6 +1605,7 @@
         <span class="count" id="trashCount">0</span>
       </button>
     </div>
+    <div class="panegrip" id="railGrip" title="Drag to make the notebook list wider or narrower"></div>
   </aside>
 
   <aside class="pane sec" id="secPane" aria-label="Sections" hidden>
@@ -1604,6 +1616,7 @@
       <button class="add" id="addSectionBtn" aria-label="New section" title="New section">+</button>
     </div>
     <div class="scroll" id="sectionList"></div>
+    <div class="panegrip" id="secGrip" title="Drag to make the section list wider or narrower"></div>
   </aside>
 
   <section class="pane list" id="listPane" aria-label="Notes">
@@ -1647,6 +1660,7 @@
       <button type="button" class="ghost" id="emptyTrash">Empty</button>
     </div>
     <div class="scroll" id="noteList"></div>
+    <div class="panegrip" id="listGrip" title="Drag to make the page list wider or narrower"></div>
   </section>
 
   <section class="pane doc" id="docPane" aria-label="Note">
@@ -2382,6 +2396,7 @@
         <tr><td>Delete</td><td>remove a lasso selection</td></tr>
         <tr><td>Ctrl+C / X / V</td><td>copy / cut / paste a lasso</td></tr>
         <tr><td>Hold a left arrow</td><td>pin that list open while you write</td></tr>
+        <tr><td>Drag a list edge</td><td>make notebooks, sections or pages wider or narrower</td></tr>
         <tr><td>Hold Box / Free</td><td>catch a piece, or only what is fully inside</td></tr>
         <tr><td>Two / three fingers</td><td>tap to undo / redo</td></tr>
         <tr><td>Pen side button</td><td>press: eraser on; press again: last pen</td></tr>
@@ -2503,7 +2518,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b100";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b101";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5050,8 +5065,75 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if ($("secPane")) $("secPane").hidden = !inBook;
     if ($("railTog")) $("railTog").textContent = (inBook && cfg.railMin !== false) ? "›" : "‹";
     if ($("secTog")) $("secTog").textContent = (inBook && cfg.secMin === true) ? "›" : "‹";
+    applyPaneWidths();
     if (typeof paintEdge === "function") paintEdge();
   }
+  /* Each list keeps the width you dragged it to. Collapse uses the thin
+     strip; opening it again puts that remembered width back, so the
+     three columns do not jump around every time you hide one. */
+  var PANE_W = { rail: 250, sec: 180, list: 280 };
+  function paneMinW(){ return 88; }
+  function paneMaxW(){ return Math.max(160, Math.min(420, Math.round(window.innerWidth * 0.38))); }
+  function paneWantW(which){
+    var stored = which === "rail" ? cfg.railW : which === "sec" ? cfg.secW : cfg.listW;
+    var n = Number(stored) || 0;
+    if (n < paneMinW()) return PANE_W[which];
+    return Math.max(paneMinW(), Math.min(paneMaxW(), n));
+  }
+  function setPaneBox(el, w, collapsed){
+    if (!el) return;
+    if (collapsed){
+      el.style.flex = ""; el.style.width = ""; el.style.maxWidth = ""; el.style.minWidth = "";
+      return;
+    }
+    var px = Math.round(w) + "px";
+    el.style.flex = "0 0 " + px;
+    el.style.width = px;
+    el.style.maxWidth = px;
+    el.style.minWidth = px;
+  }
+  function applyPaneWidths(){
+    var railOff = document.body.classList.contains("railmin");
+    var secOff = document.body.classList.contains("secmin") || ($("secPane") && $("secPane").hidden);
+    var listOff = document.body.classList.contains("listmin");
+    setPaneBox($("railPane"), paneWantW("rail"), railOff);
+    setPaneBox($("secPane"), paneWantW("sec"), secOff);
+    setPaneBox($("listPane"), paneWantW("list"), listOff);
+  }
+  var paneDrag = null;
+  function wirePaneGrip(gripId, paneId, key){
+    var grip = $(gripId), pane = $(paneId);
+    if (!grip || !pane) return;
+    grip.addEventListener("pointerdown", function(e){
+      if (e.button && e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      var start = pane.getBoundingClientRect().width;
+      paneDrag = { key: key, start: start, x0: e.clientX, id: e.pointerId };
+      document.body.classList.add("panedrag");
+      try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    grip.addEventListener("pointermove", function(e){
+      if (!paneDrag || paneDrag.key !== key) return;
+      var w = paneDrag.start + (e.clientX - paneDrag.x0);
+      w = Math.max(paneMinW(), Math.min(paneMaxW(), w));
+      cfg[key] = Math.round(w);
+      setPaneBox(pane, w, false);
+    });
+    function endDrag(){
+      if (!paneDrag || paneDrag.key !== key) return;
+      paneDrag = null;
+      document.body.classList.remove("panedrag");
+      saveCfg();
+    }
+    grip.addEventListener("pointerup", endDrag);
+    grip.addEventListener("pointercancel", endDrag);
+  }
+  wirePaneGrip("railGrip", "railPane", "railW");
+  wirePaneGrip("secGrip", "secPane", "secW");
+  wirePaneGrip("listGrip", "listPane", "listW");
+  window.addEventListener("resize", function(){
+    if (typeof applyPaneWidths === "function") applyPaneWidths();
+  });
   function paintSections(){
     var host = $("sectionList");
     if (!host) return;
@@ -7947,6 +8029,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     railMin: true,     /* notebooks column starts collapsed */
     secMin: false,     /* sections column starts open */
     listMin: false,    /* pages column starts open */
+    railW: 0,          /* remembered width of the notebooks column; 0 = default */
+    secW: 0,           /* remembered width of the sections column */
+    listW: 0,          /* remembered width of the pages column */
     lockRail: false,   /* long-press the arrow: stay open while writing */
     lockSec: false,
     lockList: false,
