@@ -2567,7 +2567,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b115";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b116";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -7059,10 +7059,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* The pen coming near is the signal to get out of its way: native scrolling
      off so a stroke never drags the page, finger input ignored so a resting
      hand does nothing, and the lists folded away for room. */
-  function penDetected(){
+  function penDetected(e){
     var was = ink.penNear;
     ink.penNear = true;
     ink.lastPenAt = Date.now();
+    if (e){ ink.lastPenX = e.clientX; ink.lastPenY = e.clientY; }
     cancelHold();
     clearTimeout(ink.penTimer);
     document.body.classList.add("pennear");
@@ -7144,7 +7145,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       /* catch a coasting page: without this the pen could lay a stroke while
          the paper was still sliding underneath it */
       stopGlide();
-      if (e.pointerType === "pen"){ penDetected(); applyPenButton(e); armPenHold(S, e); }
+      if (e.pointerType === "pen"){ penDetected(e); applyPenButton(e); armPenHold(S, e); }
       else { handOverToTyping(e); if (S.name === "note") armHold(e); }
       if (touchGesture(S, e, "down")) return;
       if (fingerPanDown(S, e)){
@@ -7160,7 +7161,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
     sc.addEventListener("pointermove", function(e){
       if (e.pointerType === "pen"){
-        penDetected();
+        penDetected(e);
         applyPenButton(e);
         movePenHold(e);
         if (cfg.hoverDot){
@@ -7214,7 +7215,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
     /* a hovering S Pen announces itself before it touches down */
     sc.addEventListener("pointerover", function(e){
-      if (e.pointerType === "pen"){ penDetected(); applyPenButton(e); }
+      if (e.pointerType === "pen"){ penDetected(e); applyPenButton(e); }
     }, true);
   }
 
@@ -15719,6 +15720,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      it in JavaScript, so there is no browser gesture left to lose a race to. */
   var pan = { id: null, x: 0, y: 0, top: 0, left: 0, on: false,
               S: null, vx: 0, vy: 0, t: 0, px: null, py: null };
+  /* A hovering S Pen must not freeze one-finger scroll. Only a finger
+     next to the nib is treated as a palm. A stale penNear flag (the
+     type-then-write hang) is ignored so a refresh is never needed. */
+  function penBlockingPalm(e){
+    if (!ink.penNear) return false;
+    var age = Date.now() - (ink.lastPenAt || 0);
+    var wait = ((typeof cfg === "object" && cfg.penAway) || 1600) + 400;
+    if (age > wait) return false;
+    if (ink.lastPenX == null || ink.lastPenY == null) return true;
+    var dx = e.clientX - ink.lastPenX, dy = e.clientY - ink.lastPenY;
+    return (dx * dx + dy * dy) < 100 * 100;
+  }
   function fingerPanDown(S, e){
     if (e.pointerType !== "touch") return false;
     if (mayDraw(e)) return false;              /* this finger is drawing */
@@ -15735,7 +15748,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        which used to block this path and left the catch undismissable. */
     if (ink.tool === "lasso" && typeof lassoHas === "function" && lassoHas()){
       /* mayDraw already said this finger is not on the catch */
-    } else if (ink.lock || ink.penNear || ink.mode === "write"){
+    } else if (ink.lock || ink.mode === "write"){
+      return false;
+    } else if (typeof penBlockingPalm === "function" ? penBlockingPalm(e) : ink.penNear){
       return false;
     }
     if (Object.keys(gest.pts).length > 1) return false;  /* two fingers: pinch */
