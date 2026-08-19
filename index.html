@@ -2597,7 +2597,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b123";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b124";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5694,14 +5694,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof watchPad === "function") watchPad();
     /* the swapped-to page is now really here, with its bands rebuilt */
     if (typeof finishHandover === "function") finishHandover();
-    if (chipLand != null && state.note){
-      var land = chipLand; chipLand = null;
+    if (chipLand != null && state.note &&
+        (!chipLand.id || chipLand.id === state.note.id)){
+      var land = (chipLand.frac || 0); chipLand = null;
       var ph = (typeof pageHeightOf === "function") ? pageHeightOf(state.note.id) : 1500;
       /* page heights are sheet pixels; the scroller is screen pixels with the
          zoom already baked in, so the two only agree at 100% */
       var pz = (typeof pageZoom === "function") ? pageZoom() : 1;
       if (typeof restoreScroll === "function") restoreScroll(land * ph * pz, 0);
       if (typeof paintNavChips === "function") paintNavChips();
+    } else if (chipLand != null && !swapping() && !chipDrag){
+      /* named a page that never arrived — the drag moved on past it. Once
+         everything has settled it is only in the way: it blocks the
+         remembered-place restore above for the rest of the session. */
+      chipLand = null;
     }
     if (typeof paintNavChips === "function") paintNavChips();
     if (undoJump && state.note && undoJump.noteId === state.note.id){
@@ -10854,9 +10860,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     S.redraw();
   }
+  /* One physical press arrives as a crowd: a buttons bit, a contextmenu, a
+     secondary mousedown, an auxclick, sometimes a ContextMenu keydown. They
+     have to count as one press, so the first one through wins and the rest of
+     the crowd is ignored. 350ms was cutting it fine — on a page this size a
+     slow frame can push the tail of that crowd past it, and a straggler
+     arriving late reads as a SECOND press and undoes the first, which is the
+     press that looks like it did nothing at all. A deliberate second press is
+     never this quick: you press, look at the screen, then press again. */
+  var PRESS_ONE_MS = 550;
   function barrelPressToggle(){
     if (cfg.penButtonErase === false) return false;
-    if (Date.now() - barrel.lastToggle < 350) return false;
+    if (Date.now() - barrel.lastToggle < PRESS_ONE_MS) return false;
     barrel.lastToggle = Date.now();
     barrel.armed = false;
     if (barrel.leaveT){ clearTimeout(barrel.leaveT); barrel.leaveT = 0; }
@@ -10873,13 +10888,32 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var down = barrelBits(e);
     var typ = e.type || "";
     penReport(e, down);
-    var rose = barrelBitRose(e);
-    barrel.lastButtons = e.buttons || 0;
+    /* The rising edge is only meaningful on the pen's OWN events, and only
+       while the pen is still on or over the glass.
+       A finger writes buttons=1 and then 0 into the very same field, and a
+       lift writes 0 as well. Either one leaves lastButtons at 0 while the
+       side button is still physically held down — so the next hover event,
+       still reporting the barrel, looked like a brand new press and flipped
+       the eraser back off on its own. That is the button "undoing itself"
+       when a hand touched the screen or the nib came up mid-erase. */
+    var prevB = barrel.lastButtons;
+    var rose = false;
+    if (isPen && typ !== "pointerup" && typ !== "pointercancel"){
+      rose = barrelBitRose(e);
+      barrel.lastButtons = e.buttons || 0;
+    }
     /* lift never switches the tool — the next press does */
     if (typ === "pointerup" || typ === "pointercancel") return;
     if (rose){ barrelPressToggle(); return; }
     if ((typ === "pointerdown" || typ === "mousedown") && eraserButtonDown(e)){
-      barrelPressToggle();
+      /* This door exists for pens that report the button ONLY as a secondary
+         mousedown, with no bit anywhere. But it also fires when the nib simply
+         lands while the button is already held — the button did not move, your
+         hand did — and that is the "press it, then touch the screen, and it
+         flips" that made the button feel like it needed a touch to work and
+         then undid itself. If we already knew the button was down, this is the
+         same press, not a new one. */
+      if (!(prevB & (2 | 4))) barrelPressToggle();
     }
   }
   /* Listened for on the document as well as on the drawing surface. A barrel
@@ -12495,33 +12529,57 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      comes back. Hover alone, lift, or a cleared button bit must not
      switch tools — those were the earlier bugs. */
   var btnSpring = { on: false, was: null };
+  /* Which pen to come back to. The button remembers what you were holding
+     when it turned the eraser on, but the eraser can also be reached by
+     holding the nib still or by double-tapping it, and then it is those that
+     know. Falling through them all means the button can always put back a
+     real pen instead of the generic one. */
+  function penToComeBackTo(){
+    return btnSpring.was ||
+           (typeof tapErase === "object" && tapErase && tapErase.was) ||
+           (typeof springErase === "object" && springErase && springErase.was) ||
+           "pen";
+  }
   function btnEraseOn(){
-    if (btnSpring.on) return;
     btnSpring.on = true;
-    if (ink.tool !== "eraser"){
-      btnSpring.was = ink.tool;
-      penSeen.route = "the pen's side button"; penSeen.everErased = true;
-      if (typeof paintPenReport === "function") paintPenReport();
-      ink.tool = "eraser";
-      var S = ink.surfaces[ink.active];
-      if (S && S.drawing && S.drawing.stroke){
-        var st = S.drawing.stroke;
-        S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
-        S.drawing = { erasing: true, removed: [] };
-        if (st.pts.length >= 3 && S.eraseAt) S.eraseAt(st.pts[0], st.pts[1]);
-        S.redraw();
-      }
-      paintInkTools();
-      hint("Eraser on. Press the side button again for the pen.");
+    if (ink.tool === "eraser") return;      /* already erasing, nothing to do */
+    btnSpring.was = ink.tool;
+    penSeen.route = "the pen's side button"; penSeen.everErased = true;
+    if (typeof paintPenReport === "function") paintPenReport();
+    ink.tool = "eraser";
+    var S = ink.surfaces[ink.active];
+    if (S && S.drawing && S.drawing.stroke){
+      var st = S.drawing.stroke;
+      S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
+      S.drawing = { erasing: true, removed: [] };
+      if (st.pts.length >= 3 && S.eraseAt) S.eraseAt(st.pts[0], st.pts[1]);
+      S.redraw();
     }
+    paintInkTools();
+    hint("Eraser on. Press the side button again for the pen.");
   }
   function btnEraseOff(){
-    if (!btnSpring.on) return;
     btnSpring.on = false;
-    if (ink.tool === "eraser"){ ink.tool = btnSpring.was || "pen"; paintInkTools(); }
+    if (ink.tool === "eraser"){
+      ink.tool = penToComeBackTo();
+      paintInkTools();
+      hint("Pen again.");
+    }
     btnSpring.was = null;
   }
-  function btnEraseToggle(){ if (btnSpring.on) btnEraseOff(); else btnEraseOn(); }
+  /* Measured, never remembered.
+     This used to decide which way to go from a flag that meant "the side
+     button is the thing that turned the eraser on". The tool changes
+     underneath that flag constantly — you pick a pen off the bar, or one of
+     the other two eraser gestures runs — and once the flag and the tool
+     disagreed, the next press acted on the flag and did nothing you could
+     see. That is the press that "sometimes does not work": after picking a
+     pen by hand the button needed two presses, one to clear the stale flag
+     and one to actually erase. The tool itself is the only thing that always
+     tells the truth about what the pen is doing right now. */
+  function btnEraseToggle(){
+    if (ink.tool === "eraser") btnEraseOff(); else btnEraseOn();
+  }
   /* the pen lifted clear of the screen — but NOT a mere nib-up, so several
      strokes can be rubbed out on one press */
   ["pointerleave", "pointerout"].forEach(function(evt){
@@ -13619,7 +13677,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      short window and stop as soon as it sticks. */
   function restoreScroll(top, left){
     var p = $("paper");
-    if (!p || (!top && !left)) return;
+    /* 0 is a real place — the top of the page — not "nothing to restore".
+       Bailing on it meant a page you arrived at by the chip, or by the up
+       and down buttons, kept whatever scroll the page before it had. Landing
+       on page 1 that way left you below its foot, which put the next page
+       past the hand-over line, and the app turned the page again on its own.
+       That is one of the weird jumps. The loop below already turns 0 into
+       prevPad(), which is exactly where the top of a page sits. */
+    if (!p) return;
     placeRestoring = true;
     var tries = 0;
     (function attempt(){
@@ -13764,7 +13829,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       handover.queued = { id: place.note.id, frac: place.frac };
       return;
     }
-    chipLand = place.frac;
+    chipLand = { id: place.note.id, frac: place.frac };
     go({ nbId: state.nbId, noteId: place.note.id });
   }
   /* How often the page underneath may change while you drag. Turning the
@@ -13788,7 +13853,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       handover.queued = { id: place.note.id, frac: place.frac };
       return;
     }
-    chipLand = place.frac;
+    chipLand = { id: place.note.id, frac: place.frac };
     go({ nbId: state.nbId, noteId: place.note.id });
   }
   function wireNavChip(id, kind){
@@ -14343,7 +14408,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         if (handover.queued && handover.queued.id &&
             handover.queued.id !== state.noteId){
           var q = handover.queued; handover.queued = null;
-          chipLand = q.frac;
+          chipLand = { id: q.id, frac: q.frac };
           go({ nbId: state.nbId, noteId: q.id });
         } else {
           handover.queued = null;
@@ -15965,7 +16030,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     var prev = neighbourPage(-1);
     if (prev){
-      chipLand = 0;
+      chipLand = { id: prev.id, frac: 0 };
       flush();
       go({ nbId: state.nbId, noteId: prev.id });
     } else {
@@ -15982,7 +16047,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     var next = neighbourPage(1);
     if (next){
-      chipLand = 0;
+      chipLand = { id: next.id, frac: 0 };
       flush();
       go({ nbId: state.nbId, noteId: next.id });
     } else {
