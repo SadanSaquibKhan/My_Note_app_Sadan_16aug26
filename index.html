@@ -605,6 +605,14 @@
     background:var(--field); overflow-x:auto;
   }
   .settings .field{margin-bottom:20px}
+  .feathead{font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-2); margin:14px 0 6px}
+  .featrow{display:block; width:100%; text-align:left; border:1px solid var(--rule); background:var(--panel); border-radius:6px; padding:10px 12px; margin:0 0 6px; cursor:pointer; -webkit-tap-highlight-color:transparent}
+  .featrow b{display:block; font-size:14px; margin-bottom:2px}
+  .featrow span{display:block; font-size:12.5px; color:var(--ink-2)}
+  .featmore{display:none; margin:8px 0 0; font-size:13px; line-height:1.45; color:var(--ink)}
+  .featrow.on{border-color:var(--live); background:var(--live-faint)}
+  .featrow.on .featmore{display:block}
+  .featintro{font-size:13px; color:var(--ink-2); margin:0 0 10px; line-height:1.45}
   .settings .check{display:flex; align-items:center; gap:8px; margin:7px 0; font-size:13.5px; color:var(--ink)}
   .settings input[type=range]{width:100%; accent-color:var(--live); margin:6px 0}
   .settings select{
@@ -2071,6 +2079,10 @@
       <!-- Grouped and collapsed. The list had grown long enough that the
            buttons at the foot were pushed off the bottom of the screen, and
            the only way out of the dialog was to reload the page. -->
+      <div class="field" style="padding:14px 14px 0">
+        <button type="button" class="btn" id="featGuideBtn">What can I do here?</button>
+        <p class="hint">A short list of every tool and gesture. Tap one for more.</p>
+      </div>
       <details class="setgroup" open>
         <summary>While writing</summary>
         <div class="field">
@@ -2330,6 +2342,12 @@
   </form>
 </dialog>
 
+<dialog id="featDlg">
+  <div class="dlg-head">What can I do<span class="grow"></span><button type="button" class="dlgx" id="featX" aria-label="Close">&times;</button></div>
+  <div class="dlg-body settings" id="featBody"></div>
+  <div class="dlg-foot"><span class="grow"></span><button type="button" class="btn" id="featClose">Close</button></div>
+</dialog>
+
 <dialog id="mathDlg">
   <form method="dialog">
     <div class="dlg-head">Maths</div>
@@ -2538,7 +2556,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b111";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b112";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -8366,6 +8384,202 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("fontSizeOut").textContent = cfg.fontSize + "px";
     $("lineHeightOut").textContent = cfg.lineHeight + "px";
   }
+
+  /* ---- what can I do here ----
+     A living list of every tool and gesture, opened from Settings. Each
+     row is a one-line brief; tap it for the longer explanation. The same
+     briefs are used when the S Pen hovers over a matching button, so the
+     two stay in step as things are added or changed. */
+  var FEATURE_GUIDE = [
+    { group: "The page", items: [
+      { id: "mode_auto", name: "Auto", brief: "Pen writes. A finger types, scrolls, or taps.",
+        more: "This is the usual way. The S Pen always draws. A finger never draws \u2014 it scrolls the page, taps buttons, and can start typing with a double tap." },
+      { id: "mode_write", name: "Write", brief: "Everything draws, including a finger.",
+        more: "Use this only when you want a finger to ink as well as the pen. Scrolling then needs two fingers or the page edge." },
+      { id: "mode_type", name: "Type", brief: "Nothing draws. The keyboard stays ready.",
+        more: "Touch the page with the S Pen to go back to writing. A finger can still scroll." },
+      { id: "drawBtn", name: "Draw", brief: "Jump straight into writing, or back out of it.",
+        more: "A short cut for Write mode. Tap again to return to Auto." },
+      { id: "lockBtn", name: "Lock", brief: "Stops pinch-zoom. Two fingers still move the page.",
+        more: "Handy when you keep zooming by accident while writing." },
+      { id: "focusBtn", name: "Focus", brief: "Hides the side lists so the page is wider.",
+        more: "The tabs on the left edge bring a list back. Hold a tab to keep that list open while you write." },
+      { id: "immerseBtn", name: "Immerse", brief: "Hides every bar. Only the page stays.",
+        more: "Tap \u201cShow the tools\u201d or the edge of the screen to come back. You land on the small bar; open the big ones only when you want them." }
+    ]},
+    { group: "Writing with the S Pen", items: [
+      { id: "tool_pen", name: "Pen", brief: "The usual ink. Pressure can change the thickness.",
+        more: "Pick a colour and a size on the pen bar, or from the favourites bar. \u201cEven\u201d keeps the line the same thickness no matter how hard you press." },
+      { id: "tool_pencil", name: "Pencil", brief: "A drier, grainy stroke.",
+        more: "Good for sketching and light notes that should sit behind the main ink." },
+      { id: "tool_marker", name: "Marker", brief: "A wide, see-through highlighter.",
+        more: "Draws over words and ink without hiding them. The eraser can be set to lift only marker." },
+      { id: "tool_eraser", name: "Eraser", brief: "Lifts ink. Choose what it lifts.",
+        more: "\u201cErase anything\u201d, \u201cMarker only\u201d, or \u201cArea erase\u201d. Three other ways also erase: the S Pen side button, a double tap of the nib, and holding the nib still." },
+      { id: "evenWidthBtn", name: "Even", brief: "Same thickness no matter how hard you press.",
+        more: "Tap again to let pressure change the line. The last feel (light / normal / firm) comes back." },
+      { id: "rulerBtn", name: "Ruler", brief: "Keeps the next stroke straight.",
+        more: "Draw as usual; the line snaps to a straight edge from start to finish." },
+      { id: null, name: "S Pen side button", brief: "Press the button on the pen to erase. Press again to go back.",
+        more: "A press flips to the eraser; another press (or lifting the pen away) puts the last tool back. It will not get stuck on." },
+      { id: null, name: "Hold the nib still", brief: "Rest the nib on one spot to erase, then write again.",
+        more: "Only a still rest counts. Writing that loops back over itself is not treated as a hold." },
+      { id: null, name: "Hover to learn", brief: "Hold the nib just above any button. A short tip appears.",
+        more: "Do not touch the glass. After a moment the name and a one-line explanation pop up. Turn this off in Settings if you do not want it." }
+    ]},
+    { group: "Selecting with lasso", items: [
+      { id: "tool_lasso", name: "Lasso", brief: "Draw around writing or pictures to move, copy, or restyle them.",
+        more: "A dotted box appears, then a solid box with handles, and a small bar of icons. Drag inside to move. Drag a handle to resize. Tap outside the box to drop the selection." },
+      { id: "lassoShapeBtn", name: "Box or free lasso", brief: "Drag a rectangle, or draw a free shape around it.",
+        more: "Box is faster for a block of lines. Free is better for a diagram tucked among other writing. Hold the button to switch \u201ccatch a piece\u201d vs \u201conly what is fully inside\u201d." },
+      { id: "lassoCut", name: "Cut / Copy / Paste", brief: "The scissors, pages, and clipboard icons on the lasso bar.",
+        more: "Paste stays selected so you can move it. A locked picture can be copied but not moved or resized." },
+      { id: "lassoDelete", name: "Delete selection", brief: "Removes what is inside the lasso.",
+        more: "Undo brings it straight back, at the same place on the same page." }
+    ]},
+    { group: "Typing", items: [
+      { id: null, name: "Double-tap to type", brief: "Two taps with a finger on the page opens the keyboard.",
+        more: "The pen\u2019s double tap is the eraser, so this uses a finger on purpose. Touch the page with the S Pen to go back to writing. A finger can still scroll." },
+      { id: "fmtBold", name: "Bold, italic, underline", brief: "The B I U buttons. You can also type **bold** or *italic*.",
+        more: "The Android keyboard sometimes inserts a special space; both that and a normal space work for shortcuts like -> becoming an arrow." },
+      { id: "fmtH1", name: "Headings", brief: "H1, H2, H3, or Body.",
+        more: "Headings also appear in Outline, so you can jump around a long page." },
+      { id: "fmtUl", name: "Lists and to-dos", brief: "Bullets, numbers, or a tick box.",
+        more: "Tap a to-do box on the page to tick it off." },
+      { id: "mathBtn", name: "Maths", brief: "Type LaTeX and it is drawn as real maths.",
+        more: "Use the TeX button. Tick \u201con its own line\u201d for a centred equation." },
+      { id: "findBtn", name: "Find and replace", brief: "Search this page, or swap a word everywhere on it.",
+        more: "Opens a thin bar under the tools. Next / previous step through matches." }
+    ]},
+    { group: "Pictures and files", items: [
+      { id: "imgBtn", name: "Image", brief: "Insert a picture. Drag it anywhere on the page.",
+        more: "Tap it to select, then crop, resize, lock, or write on it. A finger on an unselected picture scrolls the page, it does not drag the picture." },
+      { id: "imgCrop", name: "Crop", brief: "Trim a selected picture in place, on the page.",
+        more: "Eight handles. Nothing is cut until you tap Crop. Uncrop always puts the original back." },
+      { id: "imgLock", name: "Lock picture", brief: "Stops a picture moving or resizing by accident.",
+        more: "You can still write on it and still copy it with the lasso. Unlock from the picture bar." },
+      { id: "camBtn", name: "Camera", brief: "Take a photo straight into the page.",
+        more: "Uses the tablet camera. The photo lands as a normal picture you can move or crop." },
+      { id: "fileBtn", name: "Attach", brief: "Pin a PDF or any file to this page.",
+        more: "Shows as a small label you can tap to open." },
+      { id: "pdfPagesBtn", name: "PDF to pages", brief: "Bring each PDF page in as a page you can write on.",
+        more: "A large PDF becomes many note pages, in order, inside this notebook." }
+    ]},
+    { group: "Bars and lists", items: [
+      { id: "favBar", name: "Favourites bar", brief: "A floating strip of the tools you use most.",
+        more: "Drag the dotted handle to move it. The minus shrinks it to a dot. The pencil chooses what is on it. It stays on screen while you write, even if a side list is locked open." },
+      { id: "jumpBar", name: "Shortcuts bar", brief: "The other floating bar: Home, open notebooks, places.",
+        more: "Home keeps this notebook open and shows the list. Open shows every notebook already open. Places lists this notebook\u2019s sections and bookmarks." },
+      { id: "jumpHome", name: "Home", brief: "Notebook list. This notebook stays open.",
+        more: "Open another notebook beside this one, then jump between them from Open." },
+      { id: "jumpOpen", name: "Open notebooks", brief: "Jump to any notebook you already have open.",
+        more: "The shortcuts bar also keeps coloured icons for the last three, so the ones you are switching between are one tap away." },
+      { id: "jumpPlaces", name: "Places", brief: "This notebook\u2019s sections and every bookmark.",
+        more: "Jump without opening the side lists." },
+      { id: "edgeList", name: "Page list tab", brief: "The tab on the left that shows or hides pages.",
+        more: "Hold the tab to keep the page list open while you write. Same idea for the section tab and the notebook tab." },
+      { id: "starBtn", name: "Star", brief: "Marks this page as a favourite page.",
+        more: "Starred pages are easy to find again from the page list." },
+      { id: "markBtn", name: "Bookmark", brief: "Name the topic that starts on this page.",
+        more: "Bookmarks appear under Places on the shortcuts bar." },
+      { id: "pracBtn", name: "Practice", brief: "A rough-working sheet attached to this note.",
+        more: "Same ruling as the page. You can paste pictures there too. It is not the clean note." },
+      { id: "recBtn", name: "Record", brief: "Record audio pinned to what you write.",
+        more: "Play back later and the ink you made at that moment is easy to find." },
+      { id: "outlineBtn", name: "Outline", brief: "Headings and pages that link here.",
+        more: "Tap a heading to jump to it." },
+      { id: "pinBtn", name: "Pin", brief: "Keeps this page at the top of the notebook.",
+        more: "Useful for a contents page or a running list." }
+    ]},
+    { group: "Moving around", items: [
+      { id: "gUndo", name: "Undo and redo", brief: "Jumps to the exact page and spot of that change.",
+        more: "Hold Undo to keep stepping back. Works for typing and for ink. Redo goes forward the same way." },
+      { id: "secChip", name: "Section chip", brief: "The blue chip: jump to the top or bottom of this section.",
+        more: "Appears when you have scrolled. Tap to glide. It does not leave this section." },
+      { id: "bookChip", name: "Notebook chip", brief: "The grey chip: jump to the top or bottom of the whole notebook.",
+        more: "Use this when you want to leave the section you are in." },
+      { id: null, name: "Scroll between pages", brief: "Keep scrolling and the next page slides in, no jump.",
+        more: "You see the end of this page and the start of the next at the same time, both ways. Writing near the join does not change the page height any more." },
+      { id: null, name: "Make the page longer", brief: "Double-tap near the bottom to add half a page of paper.",
+        more: "Turn this on or off in Settings. The page no longer grows by itself as you write." }
+    ]},
+    { group: "Settings and data", items: [
+      { id: "setBtn", name: "Settings", brief: "Every switch for writing, bars, and the tablet.",
+        more: "Grouped so the buttons at the bottom stay reachable. Changes apply at once. Undo changes at the foot puts back what you had when you opened Settings." },
+      { id: "featGuideBtn", name: "What can I do here?", brief: "This list. Tap any row for more.",
+        more: "Kept in step with the app. When a tool is added or a gesture changes, the matching row here is updated too." },
+      { id: "dataBtn", name: "Data", brief: "Backup, restore, and export.",
+        more: "Your notes live only on this tablet. A new version of the app never touches them. Backup regularly." },
+      { id: "helpBtn", name: "Keyboard shortcuts", brief: "The ? button. Keys for undo, jump, and more.",
+        more: "Most things are meant to be used with the S Pen, but a keyboard still works if one is attached." },
+      { id: "themeBtn", name: "Dark / Light", brief: "Follows the tablet, or you pick one.",
+        more: "The full choice (system / light / dark) is in Settings." }
+    ]}
+  ];
+  var HELP_BY_ID = {};
+  function rebuildHelpIndex(){
+    HELP_BY_ID = {};
+    FEATURE_GUIDE.forEach(function(g){
+      (g.items || []).forEach(function(it){
+        if (it.id && it.brief) HELP_BY_ID[it.id] = it.brief;
+      });
+    });
+  }
+  rebuildHelpIndex();
+  function applyFeatHelp(){
+    FEATURE_GUIDE.forEach(function(g){
+      (g.items || []).forEach(function(it){
+        if (!it.id) return;
+        var el = $(it.id);
+        if (!el || !el.getAttribute) return;
+        if (!el.getAttribute("data-help")) el.setAttribute("data-help", it.brief);
+      });
+    });
+  }
+  function paintFeatGuide(){
+    var box = $("featBody");
+    if (!box) return;
+    box.innerHTML = "";
+    var intro = document.createElement("p");
+    intro.className = "featintro";
+    intro.textContent = "Tap a row to read more. Hold the S Pen just above any button on the page (do not touch) for the short version.";
+    box.appendChild(intro);
+    FEATURE_GUIDE.forEach(function(g){
+      var h = document.createElement("div");
+      h.className = "feathead";
+      h.textContent = g.group;
+      box.appendChild(h);
+      (g.items || []).forEach(function(it){
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "featrow";
+        if (it.id) b.setAttribute("data-feat", it.id);
+        var name = document.createElement("b");
+        name.textContent = it.name;
+        var brief = document.createElement("span");
+        brief.textContent = it.brief;
+        var more = document.createElement("div");
+        more.className = "featmore";
+        more.textContent = it.more || "";
+        b.appendChild(name);
+        b.appendChild(brief);
+        b.appendChild(more);
+        b.addEventListener("click", function(){
+          var was = b.classList.contains("on");
+          Array.prototype.forEach.call(box.querySelectorAll(".featrow"), function(r){
+            r.classList.remove("on");
+          });
+          if (!was) b.classList.add("on");
+          b.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+        box.appendChild(b);
+      });
+    });
+  }
+  function openFeatGuide(){
+    paintFeatGuide();
+    if ($("featDlg") && $("featDlg").showModal) $("featDlg").showModal();
+  }
   function wireSettings(){
     function bindCheck(id, key){
       $(id).addEventListener("change", function(){ cfg[key] = this.checked; saveCfg(); });
@@ -8554,6 +8768,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setBtn").addEventListener("click", function(){ buildSettings(); $("setDlg").showModal(); });
     $("setClose").addEventListener("click", function(){ $("setDlg").close(); });
     $("setX").addEventListener("click", function(){ $("setDlg").close(); });
+    if ($("featGuideBtn")) $("featGuideBtn").addEventListener("click", openFeatGuide);
+    if ($("featClose")) $("featClose").addEventListener("click", function(){ $("featDlg").close(); });
+    if ($("featX")) $("featX").addEventListener("click", function(){ $("featDlg").close(); });
 
     /* ---- knowing what you changed, and being able to take it back ----
        Settings apply the instant you touch them, which is right until you
@@ -11708,16 +11925,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* ---- hover the pen over anything to find out what it does ----
      Hovering is something only a pen can do, and it is otherwise unused, so
-     it costs nothing to put the explanations there. Two seconds of the nib
-     held over a control, without touching, and it says what it is for.
-     The text comes from data-help where there is one, and falls back to the
-     control's own title, so every button in the app is covered without each
-     one having to be written out twice. */
+     it costs nothing to put the explanations there. A short hold of the nib
+     above a control, without touching, and it says what it is for.
+     The text comes from data-help, then title, then the feature guide
+     (so a new tool added there is explained on hover without a second copy). */
   var penHelp = { timer: null, el: null, x: 0, y: 0 };
   function helpTextFor(el){
     while (el && el !== document.body){
       if (el.getAttribute){
         var h = el.getAttribute("data-help") || el.getAttribute("title");
+        if (!h && el.id && HELP_BY_ID[el.id]) h = HELP_BY_ID[el.id];
+        if (!h && el.getAttribute("aria-label")) h = el.getAttribute("aria-label");
         if (h && h.length > 1) return { text: h, el: el };
       }
       el = el.parentNode;
@@ -11751,7 +11969,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var found = helpTextFor(e.target);
     if (!found) return;
     penHelp.el = found.el; penHelp.x = e.clientX; penHelp.y = e.clientY;
-    penHelp.timer = setTimeout(function(){ showPenHelp(found); }, 2000);
+    penHelp.timer = setTimeout(function(){ showPenHelp(found); }, 700);
   }, true);
   document.addEventListener("pointerdown", hidePenHelp, true);
   document.addEventListener("pointerleave", hidePenHelp, true);
@@ -15814,7 +16032,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     loadCfg();
     ink.hideLists = cfg.collapseOnWrite !== false;
     buildInkTools(); buildTextPalettes();
-    buildPresets(); buildFavBar(); wireSettings(); wireBarFolds(); paintEdge();
+    buildPresets(); buildFavBar(); wireSettings(); applyFeatHelp(); wireBarFolds(); paintEdge();
     setMode(ink.mode);
     updateTouchAction();
     paintInkTools();
