@@ -2521,7 +2521,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b108";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b109";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -7020,7 +7020,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (e.pointerType === "pen"){ penDetected(); applyPenButton(e); armPenHold(S, e); }
       else { handOverToTyping(e); if (S.name === "note") armHold(e); }
       if (touchGesture(S, e, "down")) return;
-      if (fingerPanDown(S, e)) return;
+      if (fingerPanDown(S, e)){
+        try { sc.setPointerCapture(e.pointerId); } catch (err) {}
+        return;
+      }
       if (!mayDraw(e)) return;
       e.preventDefault();
       if (sc.setPointerCapture){ try { sc.setPointerCapture(e.pointerId); } catch (err) {} }
@@ -7165,9 +7168,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var gest = { pts: {}, base: null };
   function touchGesture(S, e, phase){
     if (e.pointerType !== "touch") return false;
-    /* same reason as fingerPanDown: a picture being handled owns the gesture */
-    if (phase === "down" && e.target && e.target.closest &&
-        e.target.closest("figure.imgblock")) return false;
+    if (phase === "down" && e.target && e.target.closest){
+      var g = e.target.closest("figure.imgblock");
+      if (g && g.classList.contains("on")) return false;
+    }
     var blocking = ink.lock || ink.penNear || ink.mode === "write";
     /* Two fingers are always a pinch/pan, even when one finger is still
        scrolling the page natively. */
@@ -15252,11 +15256,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function fingerPanDown(S, e){
     if (e.pointerType !== "touch") return false;
     if (mayDraw(e)) return false;              /* this finger is drawing */
-    /* A finger that has landed on a picture is handling the picture.
-       #paper's handler runs BEFORE #body's, so the page used to claim the
-       gesture and pan — which is why dragging a picture up or down scrolled
-       the page instead, and why resizing scrolled at the same time. */
-    if (e.target && e.target.closest && e.target.closest("figure.imgblock")) return false;
+    /* A finger on an already-selected picture is moving or resizing it.
+       A finger that merely crosses an unselected picture must keep
+       scrolling — selecting is a tap with no move. */
+    if (e.target && e.target.closest){
+      var hitFig = e.target.closest("figure.imgblock");
+      if (hitFig && (hitFig.classList.contains("on") ||
+          (e.target.getAttribute && e.target.getAttribute("data-grip"))))
+        return false;
+    }
     /* Pan exactly when the browser used to be allowed to: the lock, the pen
        being near, and write mode all still mean a finger does nothing. */
     if (ink.lock || ink.penNear || ink.mode === "write") return false;
