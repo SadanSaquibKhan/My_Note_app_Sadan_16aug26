@@ -2597,7 +2597,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b128";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b129";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5616,6 +5616,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     /* only touch innerHTML when the note actually changed — rewriting it
        mid-typing would kill the caret and the Samsung keyboard's state */
     if ($("body").dataset.noteId !== state.note.id){
+      /* the catch was drawn over the page that is leaving; its elements are
+         about to be thrown away, and acting on it afterwards would move the
+         new page's blocks instead */
+      if (typeof lassoHas === "function" && lassoHas() &&
+          typeof lassoClear === "function") lassoClear();
       /* the page under it is about to be replaced: anything still holding a
          picture on it is holding a node that will not exist in a moment */
       parkPageUndo($("body").dataset.noteId);
@@ -9881,15 +9886,28 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var b = C.polyBounds(lasso.poly);
       if (b){
         var c = pageToClient(lasso.surface, (b.minX + b.maxX) / 2, b.minY);
+        var c2 = pageToClient(lasso.surface, (b.minX + b.maxX) / 2, b.maxY);
         x = c.clientX; y = c.clientY;
+        lasso.boxH = Math.max(0, c2.clientY - c.clientY);
       }
     }
     var w = bar.offsetWidth || 220, h = bar.offsetHeight || 44;
     var off = cfg.lassoPopOff || { dx: 0, dy: 0 };
     x = x + (off.dx || 0);
     y = y + (off.dy || 0);
+    /* Clear of the corner handles, which reach about 36 screen pixels out from
+       the outline. The bar used to sit 16px above the top edge — right on top
+       of the north handles — so a tap meant for a corner landed on the bar and
+       nothing moved, and the only things that did work were the bar's own
+       buttons. That is why pressing the minus button appeared to "unlock"
+       resizing: it shrank the box out from under the bar.
+       Below the catch by preference, above it when there is no room. */
+    var GAP = 46;
+    var top = y + (lasso.boxH || 0) + GAP;
+    if (top + h > vh - 8) top = y - h - GAP;
+    if (top < 8) top = Math.min(vh - h - 8, Math.max(8, y + (lasso.boxH || 0) + GAP));
     bar.style.left = Math.max(8, Math.min(x - w / 2, vw - w - 8)) + "px";
-    bar.style.top = Math.max(8, Math.min(y - h - 16, vh - h - 8)) + "px";
+    bar.style.top = Math.max(8, Math.min(top, vh - h - 8)) + "px";
     bar.style.transform = "none";
     placeLassoStyle();
   }
@@ -10004,8 +10022,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     (lasso.picked || []).forEach(function(s){
       for (var i = 0; i + 1 < s.pts.length; i += 3){ xs.push(s.pts[i]); ys.push(s.pts[i+1]); }
     });
+    /* A picked element is trimmed to what you drew over it. A paragraph is a
+       single element, so boxing three words in the middle of a long line picks
+       the whole <p> — and squaring the outline out to the whole <p> put the
+       corners at the top of the paragraph, a long way from the three words you
+       were looking at. The catch you could see was then not the catch being
+       hit-tested, so dragging it did nothing and the corners could not be
+       found. The element still moves and scales as a whole; only the outline
+       and its handles stay where you put them. */
+    var db = (lasso.drawn && C.polyBounds(lasso.drawn)) || null;
     (lasso.pickedEls || []).forEach(function(el){
       var b = elPageBox(el, lasso.surface);
+      if (db){
+        var iMinX = Math.max(b.minX, db.minX), iMaxX = Math.min(b.maxX, db.maxX);
+        var iMinY = Math.max(b.minY, db.minY), iMaxY = Math.min(b.maxY, db.maxY);
+        /* only when they really do overlap, and enough of it to grab */
+        if (iMaxX - iMinX > 12 && iMaxY - iMinY > 12){
+          xs.push(iMinX, iMaxX); ys.push(iMinY, iMaxY);
+          return;
+        }
+      }
       xs.push(b.minX, b.maxX); ys.push(b.minY, b.maxY);
     });
     if (!xs.length){
@@ -10025,6 +10061,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return;
     }
     lasso.poly = poly; lasso.surface = S;
+    /* what you actually drew, kept because the box is about to be squared off
+       and, for typed writing, a whole paragraph may be picked from it */
+    lasso.drawn = poly.slice();
     var box = C.polyBounds(poly);
     if (!box || ((box.maxX - box.minX) < 8 && (box.maxY - box.minY) < 8)){
       lassoClear();
