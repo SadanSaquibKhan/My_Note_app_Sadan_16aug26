@@ -2597,7 +2597,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b127";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b128";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5673,8 +5673,23 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           if (place && place.noteId === openingId){
             restoreScroll(place.top || 0, place.left || 0);
           } else {
-            /* a different page: this is now the notebook's place, at the top */
-            savePlace();
+            /* A different page opens at its top — and it has to be SCROLLED
+               there, not merely recorded as being there. Nothing else in the
+               opening path ever writes the scroll, so the page inherited
+               whatever offset the page before it had. Open a short page from
+               a long one and you landed deep inside the following page's
+               band, past the line where scrolling hands over, and the app
+               turned the page for you before you had touched anything.
+               The record is written straight out rather than through
+               savePlace(), because restoreScroll raises placeRestoring and
+               savePlace stands down while that is up. */
+            if (state.nbId){
+              C.setMeta(placeKey(state.nbId), {
+                noteId: openingId, top: 0, left: 0, zoom: state.zoom, at: Date.now()
+              });
+            }
+            C.setMeta("nplace:" + openingId, { top: 0, left: 0, at: Date.now() });
+            restoreScroll(0, 0);
           }
         });
       }
@@ -5688,7 +5703,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof paintPageEnd === "function") paintPageEnd();
     /* the band is about to be rebuilt for a different page: record the new
        height without treating it as a shift to compensate for */
-    if (typeof padWatch === "object" && padWatch) padWatch.skip = true;
+    if (typeof padWatch === "object" && padWatch){
+      padWatch.skip = true; padWatch.skipAt = Date.now();
+    }
     if (typeof paintPrevPeek === "function") paintPrevPeek();
     if (typeof warmNeighbourInk === "function") warmNeighbourInk();
     if (typeof watchPad === "function") watchPad();
@@ -13763,11 +13780,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var chipDrag = null;
   var chipLand = null;
   function showPageTag(){ paintNavChips(); }
+  /* The section chip counts within the section of the page you are ON.
+     state.sectionId is what the pages panel is showing, and the two can
+     differ — creating a section points the panel at it without changing the
+     page. The chip then measured a list its own page was not in, and every
+     answer that follows is wrong: its label counts from a different set, and
+     listProgress cannot find the page at all. */
   function sectionPageList(){
     var all = (typeof pageOrder === "function") ? pageOrder() : (state.notes || []);
-    var sid = (typeof currentSectionId === "function") ? currentSectionId() : state.sectionId;
+    var sid = (state.note && state.note.sectionId) ||
+              ((typeof currentSectionId === "function") ? currentSectionId() : state.sectionId);
     if (!sid) return all;
-    return all.filter(function(n){ return n.sectionId === sid; });
+    var out = all.filter(function(n){ return n.sectionId === sid; });
+    return out.length ? out : all;
   }
   function pageSpan(id){
     return (typeof pageHeightOf === "function") ? pageHeightOf(id) : 1500;
@@ -13793,7 +13818,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (list[i].id === state.noteId) return Math.min(1, (acc + Math.min(h, y)) / tot);
       acc += h;
     }
-    return 0;
+    /* Not in this list at all. That is not the same as being at its very top,
+       and answering 0 made a tap on the chip think you were already at the
+       start and throw you to the end of a list you were not even in. */
+    return -1;
   }
   function progressToPlace(list, prog){
     var tot = listVirtual(list);
@@ -14024,7 +14052,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         chipDrag = null; pageTagDrag = null;
         /* tap the chip: start of that list, or the end if you are already there */
         var here = listProgress(list);
-        var dest = here < 0.08 ? 1 : 0;
+        /* at the top: go to the end. Anywhere else — including not being in
+           this list at all, which reads -1 — go to the start. */
+        var dest = (here >= 0 && here < 0.08) ? 1 : 0;
         applyChipPlace(progressToPlace(list, dest), list);
       }
       paintNavChips();
@@ -14563,7 +14593,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* Keeps what you are looking at still when something above it changes size.
      Relative, never absolute: it only ever adds the amount the band grew or
      shrank, so a scroll in progress carries on untouched. */
-  var padWatch = { last: 0, on: false, skip: false };
+  var padWatch = { last: 0, on: false, skip: false, skipAt: 0 };
   function watchPad(){
     if (padWatch.on || typeof ResizeObserver !== "function") return;
     var el = document.getElementById("prevPeek");
@@ -14578,7 +14608,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          scroll is being set on purpose — by restoreScroll, or by the
          handover's own single correction. Compensating as well would fight
          them, so the first measurement after either is recorded and skipped. */
-      if (padWatch.skip){ padWatch.skip = false; return; }
+      /* The skip belongs to the page change that raised it, and nothing else.
+         It used to have no deadline: it is set on every paint, but only ever
+         taken down by the next band resize — and for most pairs of pages the
+         band does not change size at all, so it stayed up. The first genuine
+         resize after that, a pinch or a picture decoding inside a tall
+         previous page, was then swallowed instead, and the page slid under
+         your eye by the whole height change with nothing to put it back. */
+      if (padWatch.skip){
+        padWatch.skip = false;
+        if (Date.now() - (padWatch.skipAt || 0) < 1200) return;
+      }
       if (!d || handover.busy || placeRestoring) return;
       p.scrollTop += d;
       redrawAll();
