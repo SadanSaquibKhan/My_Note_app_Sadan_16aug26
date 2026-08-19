@@ -2518,7 +2518,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b102";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b103";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -13010,11 +13010,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }, 1400);
   }
   if ($("pageTag")) $("pageTag").addEventListener("pointerdown", function(e){
-    var list = pageOrder();
-    if (list.length < 2) return;
-    var i = 0;
-    list.forEach(function(n, k){ if (n.id === state.noteId) i = k; });
-    pageTagDrag = { i: i, y0: e.clientY, n: list.length };
+    var p = $("paper");
+    if (!p || !state.note) return;
+    /* drag the chip to scroll the paper itself, so you see the pages
+       run past rather than jump to a number on lift */
+    pageTagDrag = { y0: e.clientY, top0: p.scrollTop, noteId: state.noteId };
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
     e.preventDefault(); e.stopPropagation();
     clearTimeout(pageTagTimer);
@@ -13024,22 +13024,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   document.addEventListener("pointermove", function(e){
     if (!pageTagDrag) return;
     var p = $("paper");
-    var pr = p ? p.getBoundingClientRect() : { top: 0, height: 400 };
-    var frac = (e.clientY - pr.top) / Math.max(1, pr.height);
-    var i = Math.round(frac * (pageTagDrag.n - 1));
-    i = Math.max(0, Math.min(pageTagDrag.n - 1, i));
-    pageTagDrag.at = i;
+    if (!p) return;
+    if (pageTagDrag.noteId !== state.noteId){
+      pageTagDrag.noteId = state.noteId;
+      pageTagDrag.y0 = e.clientY;
+      pageTagDrag.top0 = p.scrollTop;
+    }
+    p.scrollTop = Math.max(0, pageTagDrag.top0 + (e.clientY - pageTagDrag.y0) * 2.4);
+    var pr = p.getBoundingClientRect();
     $("pageTag").style.top = Math.max(pr.top + 20, Math.min(e.clientY, pr.bottom - 20)) + "px";
     $("pageTag").style.transform = "translateY(-50%)";
-    $("pageTag").textContent = pageTagLabel(i);
+    var list = pageOrder();
+    var i = -1;
+    list.forEach(function(n, k){ if (n.id === state.noteId) i = k; });
+    $("pageTag").textContent = pageTagLabel(i, list);
   });
   document.addEventListener("pointerup", function(){
     if (!pageTagDrag) return;
-    var i = pageTagDrag.at != null ? pageTagDrag.at : pageTagDrag.i;
-    var list = pageOrder();
     pageTagDrag = null;
-    var n = list[i];
-    if (n && n.id !== state.noteId) go({ nbId: state.nbId, noteId: n.id });
+    var el = $("pageTag");
+    if (el){ el.style.top = ""; el.style.transform = ""; }
     showPageTag();
   });
   /* A page's stored HTML, made safe to show a second time on screen.
