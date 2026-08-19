@@ -2060,6 +2060,10 @@
           way; it can catch a stray letter, and undo puts it straight back.</p>
           <label class="check"><input type="checkbox" id="setHover"> Show where the nib will land</label>
           <label class="check"><input type="checkbox" id="setAutoScroll"> Scroll on when I write near the bottom</label>
+          <label class="check"><input type="checkbox" id="setTapGrow"> Double-tap near the bottom to make the page longer</label>
+          <p class="hint">Each double-tap adds half a new page of paper. Writing
+          near the bottom no longer grows the page on its own — that used to
+          make the jump from one page to the next jerk.</p>
           <label class="check"><input type="checkbox" id="setPinch"> Pinch with two fingers to zoom</label>
           <label class="check"><input type="checkbox" id="setPageFlow"> Keep scrolling past the end to reach the next page</label>
           <label class="check"><input type="checkbox" id="setHints"> Show the small passing messages (&ldquo;Zoom unlocked&rdquo;, &ldquo;Undo&rdquo;&hellip;)</label>
@@ -2381,6 +2385,7 @@
         <tr><td>Hold Box / Free</td><td>catch a piece, or only what is fully inside</td></tr>
         <tr><td>Two / three fingers</td><td>tap to undo / redo</td></tr>
         <tr><td>Pen side button</td><td>press: eraser on; press again: last pen</td></tr>
+        <tr><td>Double-tap near the bottom</td><td>make the page half a sheet longer</td></tr>
         <tr><td>Long press</td><td>the spot menu: mark, link, paste, attach</td></tr>
         <tr><td>[[</td><td>open the link picker</td></tr>
         <tr><td>-&gt; &nbsp;&lt;= &nbsp;!= &nbsp;:alpha:</td><td>expand to symbols as you type</td></tr>
@@ -2498,7 +2503,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b98";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b99";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5414,8 +5419,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       $("body").dataset.noteId = state.note.id;
       /* size the sheet from the last measured ink BEFORE pictures decode,
          so the first scroll into this page does not grow under you */
-      if (pageInkDepth[state.note.id] != null && typeof pageHeightFor === "function"){
-        $("body").style.minHeight = Math.round(pageHeightFor(pageInkDepth[state.note.id])) + "px";
+      if (typeof pageHeightOf === "function"){
+        $("body").style.minHeight = Math.round(pageHeightOf(state.note.id)) + "px";
       }
       ink.focusOverride = false;
       resetTextHist();
@@ -6515,13 +6520,36 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         S.strokes = S.strokes.filter(function(x){ return x.id !== st.id; });
         return;
       }
+      /* Two quick taps of the nib near the foot add half a sheet, instead
+         of growing the page as you write. Same dots as the eraser double
+         tap, so this wins when you are in the bottom band. */
+      if (cfg.tapGrow !== false && S.name === "note" && st.pts.length === 3 &&
+          typeof nearPageFoot === "function" && nearPageFoot(st.pts[1])){
+        var nowG = Date.now();
+        var nearG = tapGrow.last &&
+                    Math.abs(st.pts[0] - tapGrow.x) < 26 &&
+                    Math.abs(st.pts[1] - tapGrow.y) < 26 &&
+                    (nowG - tapGrow.last) < 420;
+        if (nearG){
+          S.strokes = S.strokes.filter(function(x){
+            return x.id !== st.id && x.id !== tapGrow.id;
+          });
+          tapGrow.last = 0;
+          S.redraw();
+          addPageHalf();
+          return;
+        }
+        tapGrow.last = nowG; tapGrow.x = st.pts[0]; tapGrow.y = st.pts[1];
+        tapGrow.id = st.id;
+      }
       /* Two quick taps of the nib in the same spot toggle the eraser.
          This exists because the S Pen's side button never arrives: Samsung
          binds it to Air Actions above the browser, so no amount of listening
          for it helps. A tap leaves a single-point stroke, so a double tap is
          two dots close together in time and place — both are taken back out
          again, and nothing is drawn. */
-      if (cfg.tapErase && S.name === "note" && st.pts.length === 3){
+      if (cfg.tapErase && S.name === "note" && st.pts.length === 3 &&
+          !(cfg.tapGrow !== false && typeof nearPageFoot === "function" && nearPageFoot(st.pts[1]))){
         var nowT = Date.now();
         var near = tapErase.last &&
                    Math.abs(st.pts[0] - tapErase.x) < 26 &&
@@ -7900,6 +7928,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     backupGap: 1,
     defaultZoom: 1,
     pageFlow: true,    /* scrolling past the end carries on to the next page */
+    tapGrow: true,     /* double-tap near the foot to add half a sheet */
     eraserSize: 22,    /* how wide the eraser bites, in page units */
     tapErase: true,       /* double-tap the nib to toggle the eraser */
     penButtonErase: true, /* press the side button: toggle eraser */
@@ -8087,6 +8116,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setShapeMode").value = shapeMode();
     $("setHover").checked = cfg.hoverDot;
     $("setAutoScroll").checked = cfg.autoScroll;
+    if ($("setTapGrow")) $("setTapGrow").checked = cfg.tapGrow !== false;
     $("setWake").checked = cfg.wakeLock;
     $("setPinch").checked = cfg.pinchZoom;
     $("setPageFlow").checked = cfg.pageFlow !== false;
@@ -8184,6 +8214,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       saveCfg();
     });
     bindCheck("setAutoScroll", "autoScroll");
+    if ($("setTapGrow")) bindCheck("setTapGrow", "tapGrow");
     bindCheck("setPinch", "pinchZoom");
     bindCheck("setPageFlow", "pageFlow");
     bindCheck("setHints", "hints");
@@ -9987,6 +10018,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      tool comes straight back when it is let go. */
   var btn = { held: false, was: null };
   var tapErase = { last: 0, x: 0, y: 0, id: null, was: "pen" };
+  var tapGrow = { last: 0, x: 0, y: 0, id: null };
 
   /* ---- hold the nib down to switch to the eraser ----
      Margin's own timer, not Android's long press. Waiting for the browser to
@@ -11500,6 +11532,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
                (t - backToType.last) < 420;
     if (near){
       backToType.last = 0;
+      var py = (typeof clientToPageY === "function") ? clientToPageY(e.clientY) : null;
+      if (cfg.tapGrow !== false && typeof nearPageFoot === "function" && nearPageFoot(py)){
+        addPageHalf();
+        return;
+      }
       if (cfg.dblType === false) return;
       if (ink.penNear) return;        /* the pen is still in play; leave it be */
       setMode("type");
@@ -12829,8 +12866,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* ---- 20d. which page am I on, and what happens at the foot of it ----
      The page name rides alongside while you scroll and fades when you stop.
      Near the bottom a small pair of buttons appears: one makes the next page,
-     one goes to it. Writing near the bottom already grows the page (see
-     growForInk), so this is about moving on rather than about room. */
+     one goes to it. A page stays the size of a sheet unless you double-tap
+     near the foot to add more paper, so this is about moving on. */
   var pageTagTimer = null;
   var pageTagDrag = null;
   function pageTagLabel(i, list){
@@ -13018,25 +13055,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       /* the page may have moved on while this was loading */
       if (cv.getAttribute("data-for") !== noteId) return;
       var strokes = (a && a.strokes) || [];
-      /* THE reason the two pages did not run together. A page is as tall as its
-         handwriting reaches — growForInk sets the live page to inkDepth+400 —
-         but the preview band held only the words, which for a handwritten page
-         is almost nothing, so the band was one screen tall and the page it
-         previewed was several. Its foot was therefore clipped while you scrolled
-         towards it, and it sprang to full height the instant it became the page
-         you were on: the jump.
-         The band is given the very same height the page will have when it is
-         live, by the very same rule, so the two are one continuous run of
-         paper. */
+      /* THE reason the two pages did not run together. Live page and preview
+         band must be the same height, by the same rule, or the join jumps
+         the instant the neighbour becomes the live page. Height is now the
+         sheet plus any extra you added with a double-tap — not the ink.
+         Ink used to grow the page as you wrote, and the band learned that
+         a frame late. */
       if (body && host.parentNode && !host.parentNode.classList.contains("thin")){
-        var depth = C.inkDepth(strokes);
-        Array.prototype.forEach.call(
-          body.querySelectorAll('figure.imgblock[data-free="1"]'), function(fig){
-            var y = Number(fig.getAttribute("data-y"));
-            if (isFinite(y)) depth = Math.max(depth, y + (fig.offsetHeight || 0));
-          });
-        pageInkDepth[noteId] = depth;
-        body.style.minHeight = Math.round(pageHeightFor(depth)) + "px";
+        body.style.minHeight = Math.round(pageHeightOf(noteId)) + "px";
         host.style.minHeight = "0px";          /* size to the body, as the live sheet does */
       }
       var c2 = fit();                          /* re-measure against the grown band */
@@ -13070,11 +13096,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       box.hidden = false;
     } else {
       $("prevPeekBody").innerHTML = previewHtml(prev.html);
-      /* its true height at once, if we have seen this page before; paintPeekInk
-         refines it a moment later against the real strokes */
-      var pd = pageInkDepth[prev.id];
-      $("prevPeekBody").style.minHeight =
-        (pd != null ? Math.round(pageHeightFor(pd)) : Math.round(pageFloorPx())) + "px";
+      /* the same stored sheet height the live page uses — never refined
+         later from ink, or the band would jump as the strokes arrive */
+      $("prevPeekBody").style.minHeight = Math.round(pageHeightOf(prev.id)) + "px";
       $("prevPeekPage").style.minHeight = "0px";
       hydratePeekImages("prev", $("prevPeekBody"));
       if (typeof renderMath === "function") renderMath($("prevPeekBody"));
@@ -13117,9 +13141,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        pictures become a marker rather than being loaded — hydrateImages only
        ever looks inside #body, so a live figure here would sit empty. */
     $("nextPeekBody").innerHTML = previewHtml(next.html);
-    var nd = pageInkDepth[next.id];
-    $("nextPeekBody").style.minHeight =
-      (nd != null ? Math.round(pageHeightFor(nd)) : Math.round(pageFloorPx())) + "px";
+    $("nextPeekBody").style.minHeight = Math.round(pageHeightOf(next.id)) + "px";
     $("nextPeekPage").style.minHeight = "0px";
     hydratePeekImages("next", $("nextPeekBody"));
     if (typeof renderMath === "function") renderMath($("nextPeekBody"));
@@ -13837,15 +13859,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     hintTimer = setTimeout(function(){ h.hidden = true; }, 2600);
   }
 
-  /* ---- 4. the page grows to meet the writing ----
-     Previously the scroll height came from the typed text alone, so once you
-     wrote past the last paragraph there was nowhere left to scroll and no room
-     to carry on. */
-  /* How tall a page is, in one place so the live page and both preview bands
-     can never disagree. A page is at least a full sheet — taller than A4, the
-     width of A4 — and grows past that to hold whatever handwriting reaches. An
-     empty new page is therefore a proper page, not the little 400px stub it
-     used to collapse to. */
+  /* ---- 4. how tall a page is ----
+     A page is a sheet. Writing near the bottom used to stretch it, and that
+     stretch arrived in the preview band a frame late — the jump from one
+     page to the next. Height is now only the default sheet plus extra you
+     add on purpose (double-tap near the foot). Live page and both preview
+     bands use this one number, so they can never disagree. */
   var _pageFloor = 0;
   function pageFloorPx(){
     if (!_pageFloor){
@@ -13855,33 +13874,51 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     return _pageFloor;
   }
-  function pageHeightFor(depth){ return Math.max(depth + 400, pageFloorPx()); }
-
-  /* The depth of each page's ink, remembered as it is seen, so a page arriving
-     into a band can be given its true height at once instead of springing to
-     it a frame later when its strokes finish loading — which is the small
-     glitch that was left at the join. */
+  var pageExtra = {};
   var pageInkDepth = {};
-
+  function pageHeightOf(id){
+    return pageFloorPx() + ((id && pageExtra[id]) || 0);
+  }
+  function pageHeightFor(idOrDepth){
+    /* one helper, used by live page and both peek bands. Extra is per page;
+       a bare number is treated as leftover ink-depth from an older build. */
+    if (typeof idOrDepth === "string") return pageHeightOf(idOrDepth);
+    return pageFloorPx() + ((idOrDepth && pageExtra[idOrDepth]) || 0);
+  }
+  function extraFromOldDepth(depth){
+    var h = Math.max((Number(depth) || 0) + 400, pageFloorPx());
+    return Math.max(0, Math.round(h - pageFloorPx()));
+  }
+  function savePageExtra(){
+    C.setMeta("pageExtra", pageExtra);
+  }
+  function clientToPageY(clientY){
+    var paper = $("paper");
+    if (!paper) return null;
+    var z = state.zoom || 1;
+    var padv = (typeof prevPad === "function") ? prevPad() : 0;
+    var pr = paper.getBoundingClientRect();
+    return (clientY - pr.top + paper.scrollTop - padv) / z;
+  }
+  function nearPageFoot(pageY){
+    if (pageY == null || !isFinite(pageY)) return false;
+    var h = pageHeightOf(state.noteId);
+    var band = Math.min(320, Math.max(180, h * 0.18));
+    return pageY >= (h - band);
+  }
+  function addPageHalf(){
+    if (!state.noteId) return;
+    var add = Math.round(pageFloorPx() / 2);
+    pageExtra[state.noteId] = (pageExtra[state.noteId] || 0) + add;
+    savePageExtra();
+    growForInk();
+    hint("Page made longer.");
+  }
   function growForInk(){
-    var depth = C.inkDepth(noteSurface.strokes);
-    /* A dragged picture is out of the text flow, so it adds nothing to the
-       page's height on its own — drag one to the foot of the page and it
-       would hang off the end with nothing to scroll to. Its bottom counts
-       toward how far the page has to reach, exactly as handwriting does. */
+    /* applies the stored sheet height. Does not grow from handwriting. */
     var b = $("body");
-    Array.prototype.forEach.call(b.querySelectorAll('figure.imgblock[data-free="1"]'), function(fig){
-      var y = Number(fig.getAttribute("data-y"));
-      if (isFinite(y)) depth = Math.max(depth, y + (fig.offsetHeight || 0));
-    });
-    if (state.noteId){
-      pageInkDepth[state.noteId] = depth;
-      clearTimeout(growForInk.saveT);
-      growForInk.saveT = setTimeout(function(){
-        C.setMeta("pageInkDepth", pageInkDepth);
-      }, 900);
-    }
-    b.style.minHeight = Math.round(pageHeightFor(depth)) + "px";
+    if (!b) return;
+    b.style.minHeight = Math.round(pageHeightOf(state.noteId)) + "px";
   }
 
   /* ---- 5. runaway blank lines ----
@@ -15357,6 +15394,21 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     C.getMeta("secPlace", {}).then(function(m){ state.secPlace = m || {}; });
     C.getMeta("pageInkDepth", {}).then(function(m){
       if (m && typeof m === "object") pageInkDepth = m;
+    });
+    C.getMeta("pageExtra", null).then(function(ex){
+      if (ex && typeof ex === "object"){
+        pageExtra = ex;
+        return;
+      }
+      /* first run after auto-grow was removed: keep already-long pages long */
+      return C.getMeta("pageInkDepth", {}).then(function(m){
+        if (!m || typeof m !== "object") return;
+        Object.keys(m).forEach(function(id){
+          var extra = extraFromOldDepth(m[id]);
+          if (extra) pageExtra[id] = extra;
+        });
+        if (Object.keys(pageExtra).length) C.setMeta("pageExtra", pageExtra);
+      });
     });
     loadOpenNbs();
     loadCfg();
