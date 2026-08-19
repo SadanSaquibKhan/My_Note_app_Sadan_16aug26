@@ -613,6 +613,10 @@
   .featrow.on{border-color:var(--live); background:var(--live-faint)}
   .featrow.on .featmore{display:block}
   .featintro{font-size:13px; color:var(--ink-2); margin:0 0 10px; line-height:1.45}
+  .simplehide{display:none !important}
+  body.simpleSet #setDlg [data-adv]{display:none !important}
+  #setViewSeg{margin-bottom:10px}
+  #simpleBarBtn[aria-pressed="true"]{background:var(--ink); color:var(--panel); border-color:var(--ink)}
   .settings .check{display:flex; align-items:center; gap:8px; margin:7px 0; font-size:13.5px; color:var(--ink)}
   .settings input[type=range]{width:100%; accent-color:var(--live); margin:6px 0}
   .settings select{
@@ -1727,6 +1731,7 @@
           <button class="ghost" id="zoomLabel" title="Reset zoom">100%</button>
           <button class="ghost" id="zoomIn" aria-label="Zoom in">+</button>
         </span>
+        <button class="ghost" id="simpleBarBtn" aria-pressed="true" title="Short toolbars. Tap for every button.">Simple</button>
         <button class="ghost" id="pinBtn" aria-pressed="false" title="Pin to top of the notebook">Pin</button>
       </div>
       <div class="barrail" id="barRail" hidden></div>
@@ -2088,17 +2093,21 @@
            buttons at the foot were pushed off the bottom of the screen, and
            the only way out of the dialog was to reload the page. -->
       <div class="field" style="padding:14px 14px 0">
+        <span class="segmented" id="setViewSeg">
+          <button type="button" id="setSimple" aria-pressed="true">Simple</button>
+          <button type="button" id="setAll" aria-pressed="false">All</button>
+        </span>
         <button type="button" class="btn" id="featGuideBtn">What can I do here?</button>
-        <p class="hint">A short list of every tool and gesture. Tap one for more.</p>
+        <p class="hint">Simple is the short list. All is every setting. Tap a row below for more in the guide.</p>
       </div>
-      <details class="setgroup" open>
+      <details class="setgroup" data-group="write" open>
         <summary>While writing</summary>
         <div class="field">
           <label class="check"><input type="checkbox" id="setCollapseWrite"> Collapse the side panels when the pen starts</label>
           <label class="check"><input type="checkbox" id="setLockList"> Keep the page list open while I write</label>
           <label class="check"><input type="checkbox" id="setLockSec"> Keep the section list open while I write</label>
           <label class="check"><input type="checkbox" id="setLockRail"> Keep the notebook list open while I write</label>
-          <label class="check"><input type="checkbox" id="setCollapseType"> Collapse them when I start typing too</label>
+          <label class="check" data-adv="1"><input type="checkbox" id="setCollapseType"> Collapse them when I start typing too</label>
           <label for="setShapeMode" style="display:block;margin-top:10px">Tidy shapes</label>
           <select id="setShapeMode">
             <option value="hold">When I rest the nib at the end of the stroke</option>
@@ -2114,27 +2123,27 @@
           <p class="hint">Each double-tap adds half a new page of paper. Writing
           near the bottom no longer grows the page on its own — that used to
           make the jump from one page to the next jerk.</p>
-          <label class="check"><input type="checkbox" id="setPinch"> Pinch with two fingers to zoom</label>
+          <label class="check" data-adv="1"><input type="checkbox" id="setPinch"> Pinch with two fingers to zoom</label>
           <label class="check"><input type="checkbox" id="setPageFlow"> Keep scrolling past the end to reach the next page</label>
-          <label class="check"><input type="checkbox" id="setHints"> Show the small passing messages (&ldquo;Zoom unlocked&rdquo;, &ldquo;Undo&rdquo;&hellip;)</label>
-          <label class="check"><input type="checkbox" id="setKeepFoot"> Keep the note footer on screen while writing</label>
-          <label class="check"><input type="checkbox" id="setWake"> Keep the screen awake</label>
-          <label class="check"><input type="checkbox" id="setTapType"> A single tap on blank page starts typing there</label>
+          <label class="check" data-adv="1"><input type="checkbox" id="setHints"> Show the small passing messages (&ldquo;Zoom unlocked&rdquo;, &ldquo;Undo&rdquo;&hellip;)</label>
+          <label class="check" data-adv="1"><input type="checkbox" id="setKeepFoot"> Keep the note footer on screen while writing</label>
+          <label class="check" data-adv="1"><input type="checkbox" id="setWake"> Keep the screen awake</label>
+          <label class="check" data-adv="1"><input type="checkbox" id="setTapType"> A single tap on blank page starts typing there</label>
         <label class="check"><input type="checkbox" id="setDblType"> Two taps with a finger open the keyboard</label>
-          <label class="check"><input type="checkbox" id="setSpell"> Check spelling as I type</label>
-          <label class="check"><input type="checkbox" id="setSymbols"> Expand typed shortcuts (-&gt; becomes an arrow)</label>
-          <label class="check"><input type="checkbox" id="setMarkdown"> Inline markdown for bold, italic and code</label>
-          <label class="check"><input type="checkbox" id="setSmart"> Smart quotes</label>
+          <label class="check" data-adv="1"><input type="checkbox" id="setSpell"> Check spelling as I type</label>
+          <label class="check" data-adv="1"><input type="checkbox" id="setSymbols"> Expand typed shortcuts (-&gt; becomes an arrow)</label>
+          <label class="check" data-adv="1"><input type="checkbox" id="setMarkdown"> Inline markdown for bold, italic and code</label>
+          <label class="check" data-adv="1"><input type="checkbox" id="setSmart"> Smart quotes</label>
           <label class="check"><input type="checkbox" id="setLeft"> Left-handed layout</label>
-          <label for="setLassoContain" style="display:block;margin-top:10px">Lasso: when it only covers part of something</label>
-          <select id="setLassoContain">
+          <label for="setLassoContain" data-adv="1" style="display:block;margin-top:10px">Lasso: when it only covers part of something</label>
+          <select id="setLassoContain" data-adv="1">
             <option value="partial">Still select it</option>
             <option value="full">Only if it is completely inside</option>
           </select>
         </div>
       </details>
 
-      <details class="setgroup">
+      <details class="setgroup" data-group="pen">
         <summary>Pen and eraser</summary>
         <div class="field">
           <label class="check"><input type="checkbox" id="setEvenWidth"> Keep the same thickness no matter how hard I press</label>
@@ -2149,13 +2158,13 @@
             <option value="firm">A lot</option>
           </select>
         </div>
-        <div class="field">
+        <div class="field" data-adv="1">
           <label for="setEraser">Eraser size <b id="eraserOut"></b></label>
           <input type="range" id="setEraser" min="8" max="60" step="2">
           <p class="hint">If the eraser seems to miss your writing, make it
           bigger. &ldquo;Wipe an area&rdquo; in the ink bar uses roughly double this.</p>
         </div>
-        <div class="field">
+        <div class="field" data-adv="1">
           <label class="check"><input type="checkbox" id="setHoldErase"> Hold the nib still on the page to turn the eraser on and off</label>
           <label for="setHoldEraseMs">&hellip;after <b id="holdEraseOut"></b></label>
           <input type="range" id="setHoldEraseMs" min="300" max="1500" step="50">
@@ -2171,12 +2180,12 @@
           and then touch. If the button never reacts, turn Air Actions off
           (Settings &rarr; Advanced features &rarr; S Pen) so Chrome can see it.</p>
         </div>
-        <div class="field">
+        <div class="field" data-adv="1">
           <label for="setPenAway">How long the pen stays present after it lifts <b id="penAwayOut"></b></label>
           <input type="range" id="setPenAway" min="400" max="4000" step="200">
           <p class="hint">While the pen is present, a finger neither draws nor scrolls.</p>
         </div>
-        <div class="field">
+        <div class="field" data-adv="1">
           <label for="setInput">What may draw</label>
           <select id="setInput">
             <option value="penmouse">Pen and mouse</option>
@@ -2184,7 +2193,7 @@
             <option value="any">Anything, including a finger</option>
           </select>
         </div>
-        <div class="field">
+        <div class="field" data-adv="1">
           <button type="button" class="btn" id="pressBtn">Test what my pen reports</button>
           <div class="pressbox" id="pressBox" hidden>
             <p class="hint" id="pressOut">draw a stroke&hellip;</p>
@@ -2193,7 +2202,7 @@
         </div>
       </details>
 
-      <details class="setgroup">
+      <details class="setgroup" data-group="hand">
         <summary>How my handwriting looks</summary>
         <div class="field">
           <label for="setSmooth">Handwriting smoothing <b id="smoothOut"></b></label>
@@ -2222,7 +2231,7 @@
         </div>
       </details>
 
-      <details class="setgroup">
+      <details class="setgroup" data-group="scroll">
         <summary>Scrolling and zoom</summary>
         <div class="field">
           <label for="setGlide">Scrolling carries on after your finger lifts <b id="glideOut"></b></label>
@@ -2242,7 +2251,7 @@
         </div>
       </details>
 
-      <details class="setgroup">
+      <details class="setgroup" data-group="jump">
         <summary>The shortcuts bar</summary>
         <div class="field">
           <label class="check"><input type="checkbox" id="setJumpBar"> Show the floating shortcuts bar</label>
@@ -2253,7 +2262,7 @@
         </div>
       </details>
 
-      <details class="setgroup">
+      <details class="setgroup" data-group="fav">
         <summary>The favourites bar</summary>
         <div class="field">
           <label class="check"><input type="checkbox" id="setFavBar"> Show the floating favourites bar (drag it where you like)</label>
@@ -2268,7 +2277,7 @@
         </div>
       </details>
 
-      <details class="setgroup">
+      <details class="setgroup" data-group="bars">
         <summary>Bars and screen</summary>
         <div class="field">
           <label>Which bars to show</label>
@@ -2293,11 +2302,11 @@
             <option value="dark">Always dark</option>
           </select>
         </div>
-        <div class="field">
+        <div class="field" data-adv="1">
           <label for="setUIScale">Interface size <b id="uiScaleOut"></b></label>
           <input type="range" id="setUIScale" min="85" max="130" step="5">
         </div>
-        <div class="field">
+        <div class="field" data-adv="1">
           <button type="button" class="btn" id="screenBtn">Check how the screen is being used</button>
           <div class="pressbox" id="screenBox" hidden>
             <p class="hint" id="screenOut"></p>
@@ -2305,7 +2314,7 @@
         </div>
       </details>
 
-      <details class="setgroup">
+      <details class="setgroup" data-group="page">
         <summary>The page</summary>
         <div class="field">
           <label for="setTemplate">Page</label>
@@ -2327,7 +2336,7 @@
         </div>
       </details>
 
-      <details class="setgroup">
+      <details class="setgroup" data-group="backup">
         <summary>Backups and menus</summary>
         <div class="field">
           <label for="setBackupGap">Ask me to back up every <b id="backupGapOut"></b></label>
@@ -2337,6 +2346,19 @@
         <div class="field">
           <label for="setHold">How long a press opens the spot menu <b id="holdOut"></b></label>
           <input type="range" id="setHold" min="300" max="1400" step="100">
+        </div>
+      </details>
+      <details class="setgroup" data-group="simplepick">
+        <summary>What is in Simple</summary>
+        <div class="field">
+          <p class="hint">These choices only apply when Simple is on. All still shows everything.</p>
+          <label>Settings groups in Simple</label>
+          <div id="simpleGroupPick" class="btnhide"></div>
+        </div>
+        <div class="field">
+          <label>Toolbar buttons in Simple</label>
+          <p class="hint">Untick a button and it leaves the short toolbars. The All view still has it.</p>
+          <div id="simpleBarPick" class="btnhide"></div>
         </div>
       </details>
     </div>
@@ -2567,7 +2589,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b116";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b117";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -8243,7 +8265,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     curvePct: 60,      /* how much the joins between points are rounded */
     stabilise: 30,     /* how far the drawn line trails the nib */
     zoomMin: 50,       /* zoom limits, per cent, honoured by buttons and pinch */
-    zoomMax: 300
+    zoomMax: 300,
+    simpleSet: true,   /* Settings opens on the short list */
+    simpleBars: true,  /* toolbars show the frequent buttons first */
+    simpleGroups: null, /* null = the shipped Simple groups */
+    simpleBarIds: null  /* null = the shipped Simple toolbar buttons */
   };
   var CFG_KEYS = Object.keys(cfg);
   /* the shipped values, kept aside so "Reset all" has something to go back to */
@@ -8291,6 +8317,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     applyTemplate(cfg.template);
     document.body.classList.toggle("keepfoot", cfg.keepFoot === true);
     if (typeof applyBars === "function") applyBars();
+    if (typeof applySimpleSet === "function") applySimpleSet();
     if (typeof applySpell === "function") applySpell();
     if (typeof applyHand === "function") applyHand();
     if (typeof applyUIScale === "function") applyUIScale();
@@ -8465,6 +8492,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("penAwayOut").textContent = (cfg.penAway / 1000).toFixed(1) + "s";
     $("fontSizeOut").textContent = cfg.fontSize + "px";
     $("lineHeightOut").textContent = cfg.lineHeight + "px";
+    if (typeof buildSimplePicks === "function") buildSimplePicks();
+    if (typeof applySimpleSet === "function") applySimpleSet();
   }
 
   /* ---- what can I do here ----
@@ -8586,8 +8615,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         more: "Turn this on or off in Settings. The page no longer grows by itself as you write." }
     ]},
     { group: "Settings and data", items: [
+      { id: "simpleBarBtn", name: "Simple / All toolbars", brief: "Short toolbars, or every button.",
+        more: "Simple keeps the frequent tools. All shows everything. In Settings, All \u2192 What is in Simple lets you choose which buttons stay on the short bars." },
       { id: "setBtn", name: "Settings", brief: "Every switch for writing, bars, and the tablet.",
-        more: "Grouped so the buttons at the bottom stay reachable. Changes apply at once. Undo changes at the foot puts back what you had when you opened Settings." },
+        more: "Simple is the short list. All is every setting. Changes apply at once. Undo changes at the foot puts back what you had when you opened Settings." },
       { id: "featGuideBtn", name: "What can I do here?", brief: "This list. Tap any row for more.",
         more: "Kept in step with the app. When a tool is added or a gesture changes, the matching row here is updated too." },
       { id: "dataBtn", name: "Data", brief: "Backup, restore, and export.",
@@ -8850,6 +8881,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("setBtn").addEventListener("click", function(){ buildSettings(); $("setDlg").showModal(); });
     $("setClose").addEventListener("click", function(){ $("setDlg").close(); });
     $("setX").addEventListener("click", function(){ $("setDlg").close(); });
+    if ($("setSimple")) $("setSimple").addEventListener("click", function(){
+      cfg.simpleSet = true; saveCfg(); applySimpleSet();
+    });
+    if ($("setAll")) $("setAll").addEventListener("click", function(){
+      cfg.simpleSet = false; saveCfg(); applySimpleSet();
+    });
     if ($("featGuideBtn")) $("featGuideBtn").addEventListener("click", openFeatGuide);
     if ($("featClose")) $("featClose").addEventListener("click", function(){ $("featDlg").close(); });
     if ($("featX")) $("featX").addEventListener("click", function(){ $("featDlg").close(); });
@@ -12942,6 +12979,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof paintFavBar === "function") paintFavBar();
     setTimeout(redrawAll, 60);
   }
+  if ($("simpleBarBtn")) $("simpleBarBtn").addEventListener("click", function(){
+    if (typeof toggleSimpleBars === "function") toggleSimpleBars();
+  });
   $("immerseBtn").addEventListener("click", function(){ setImmerse(true); });
   $("immerseOut").addEventListener("click", function(){
     setImmerse(false);
@@ -14491,10 +14531,118 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function applyBars(){
     BARS.forEach(function(b){ document.body.classList.toggle(b.cls, barFolded(b)); });
     applyBtnHide();
+    if (typeof applySimpleBars === "function") applySimpleBars();
     paintBarRail();
     setTimeout(redrawAll, 40);
   }
 
+  /* ---- Simple vs All ----
+     Settings and the toolbars each have a short view. Simple is the default.
+     All is everything. Advanced Settings has a picker so the short lists
+     can be changed without hiding a tool for good. */
+  var SET_GROUPS = [
+    ["write","While writing"], ["pen","Pen and eraser"], ["hand","How my handwriting looks"],
+    ["scroll","Scrolling and zoom"], ["jump","The shortcuts bar"], ["fav","The favourites bar"],
+    ["bars","Bars and screen"], ["page","The page"], ["backup","Backups and menus"]
+  ];
+  var SIMPLE_GROUPS = ["write","pen","hand","jump","fav","bars","page"];
+  var SIMPLE_BAR_BTNS = [
+    ["gUndo","Undo"], ["gRedo","Redo"], ["starBtn","Star"], ["markBtn","Bookmark"],
+    ["mode_auto","Auto"], ["mode_write","Write"], ["mode_type","Type"],
+    ["drawBtn","Draw"], ["lockBtn","Lock"], ["immerseBtn","Immerse"],
+    ["zoomOut","Zoom out"], ["zoomLabel","Zoom"], ["zoomIn","Zoom in"],
+    ["textUndo","Typing undo"], ["textRedo","Typing redo"],
+    ["fmtBold","Bold"], ["fmtItalic","Italic"], ["fmtUnder","Underline"],
+    ["fmtH1","H1"], ["fmtH2","H2"], ["fmtBody","Body"],
+    ["fmtUl","Bullets"], ["fmtOl","Numbers"], ["fmtTodo","To-do"],
+    ["imgBtn","Image"], ["findBtn","Find"],
+    ["tool_pen","Pen"], ["tool_pencil","Pencil"], ["tool_marker","Marker"],
+    ["tool_eraser","Eraser"], ["tool_lasso","Lasso"], ["lassoShapeBtn","Box / free"],
+    ["evenWidthBtn","Even"], ["inkColours","Ink colours"], ["inkWidths","Thickness"],
+    ["inkUndo","Ink undo"], ["inkRedo","Ink redo"]
+  ];
+  var SIMPLE_BAR_DEFAULTS = SIMPLE_BAR_BTNS.map(function(b){ return b[0]; });
+  var SIMPLE_BAR_ALL = SIMPLE_BAR_DEFAULTS.concat([
+    "pracBtn","focusBtn","jumpTop","jumpBottom","outlineBtn","recBtn","pinBtn",
+    "fmtStrike","fmtSup","fmtSub","fmtH3","mathBtn","calloutBtn","codeBtn",
+    "linkBtn","tagBtn","camBtn","fileBtn","pdfPagesBtn","quoteBtn","ruleBtn",
+    "foldBtn","mdBtn","pngBtn","printBtn","fmtClear","fmtHighlights",
+    "rulerBtn","customColour","eraseMode","inkInput","replayBtn","inkClear","inkDone"
+  ]);
+  function simpleGroups(){
+    return Array.isArray(cfg.simpleGroups) ? cfg.simpleGroups.slice() : SIMPLE_GROUPS.slice();
+  }
+  function simpleBarIds(){
+    return Array.isArray(cfg.simpleBarIds) ? cfg.simpleBarIds.slice() : SIMPLE_BAR_DEFAULTS.slice();
+  }
+  function applySimpleSet(){
+    var on = cfg.simpleSet !== false;
+    document.body.classList.toggle("simpleSet", on);
+    var show = {};
+    simpleGroups().forEach(function(k){ show[k] = 1; });
+    Array.prototype.forEach.call(document.querySelectorAll("#setDlg .setgroup[data-group]"), function(g){
+      var k = g.getAttribute("data-group");
+      g.hidden = on && !show[k];
+    });
+    if ($("setSimple")) $("setSimple").setAttribute("aria-pressed", on ? "true" : "false");
+    if ($("setAll")) $("setAll").setAttribute("aria-pressed", on ? "false" : "true");
+  }
+  function applySimpleBars(){
+    var on = cfg.simpleBars !== false;
+    document.body.classList.toggle("simpleBars", on);
+    var allow = {};
+    simpleBarIds().forEach(function(id){ allow[id] = 1; });
+    SIMPLE_BAR_ALL.forEach(function(id){
+      var el = $(id);
+      if (!el) return;
+      el.classList.toggle("simplehide", on && !allow[id]);
+    });
+    var b = $("simpleBarBtn");
+    if (b){
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      b.textContent = on ? "Simple" : "All";
+      b.title = on ? "Short toolbars. Tap for every button." : "Every button. Tap for the short toolbars.";
+      b.setAttribute("data-help", b.title);
+    }
+  }
+  function toggleSimpleBars(){
+    cfg.simpleBars = cfg.simpleBars === false;
+    saveCfg();
+    applySimpleBars();
+  }
+  function buildSimplePicks(){
+    function ticks(hostId, items, current, save){
+      var host = $(hostId);
+      if (!host) return;
+      host.textContent = "";
+      var have = {};
+      current.forEach(function(k){ have[k] = 1; });
+      items.forEach(function(it){
+        var lab = document.createElement("label");
+        lab.className = "check";
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = !!have[it[0]];
+        cb.addEventListener("change", function(){
+          var next = items.map(function(x){ return x[0]; }).filter(function(id){
+            if (id === it[0]) return cb.checked;
+            return !!have[id];
+          });
+          if (cb.checked) have[it[0]] = 1; else delete have[it[0]];
+          save(next);
+        });
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(" " + it[1]));
+        host.appendChild(lab);
+      });
+    }
+    ticks("simpleGroupPick", SET_GROUPS, simpleGroups(), function(next){
+      cfg.simpleGroups = next; saveCfg(); applySimpleSet();
+    });
+    ticks("simpleBarPick", SIMPLE_BAR_BTNS, simpleBarIds(), function(next){
+      cfg.simpleBarIds = next; saveCfg(); applySimpleBars();
+    });
+  }
   /* the note-bar buttons that are a matter of taste — hidden one by one from
      Settings, for people who never touch half of them */
   var HIDEABLE_BTNS = [
