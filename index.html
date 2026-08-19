@@ -323,10 +323,14 @@
     display:flex; align-items:center; justify-content:center;
     font-size:16px; line-height:1;
   }
-  #lassoGrip{
+  #lassoGrip, #imgGrip{
     width:18px; min-width:18px; cursor:move; opacity:.55;
     display:flex; align-items:center; justify-content:center;
     letter-spacing:-2px; font-size:12px;
+  }
+  #imgBar{
+    z-index:91; max-width:min(96vw, 520px); touch-action:none;
+    overflow-x:auto; overflow-y:hidden;
   }
   .lassobar .ghost{color:#fff; border-color:transparent; background:transparent}
   .lassobar .ghost:hover{background:rgba(255,255,255,.12)}
@@ -1872,6 +1876,7 @@
         <button class="ghost danger" id="playDelete">Delete</button>
       </div>
       <div class="lassobar" id="imgBar" hidden>
+        <span id="imgGrip" title="Drag the bar" aria-label="Move the bar">::</span>
         <span>Picture</span>
         <button class="ghost" id="imgSmaller">&minus;</button>
         <button class="ghost" id="imgBigger">+</button>
@@ -2592,7 +2597,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b118";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b119";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -11162,6 +11167,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!state.note) return Promise.resolve();
     var noteId = state.note.id;
     var host = activeTextHost();
+    if (host && host.id !== "pracText" && typeof snapText === "function") snapText();
     return shrink(file).then(function(r){
       return C.createImage(noteId, r.blob, r.w, r.h);
     }).then(function(asset){
@@ -11184,6 +11190,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           return;
         }
         markDirty();
+        if (typeof snapText === "function") snapText();
         /* Putting a picture in is not a request to type. The file picker
            hands focus back to the page, and a focused editable page is what
            raises the keyboard — so unless typing was already what you were
@@ -11275,7 +11282,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     fig.classList.add("on");
     addGrips(fig);
     $("imgBar").hidden = false;
+    imgBarOff = { dx: 0, dy: 0 };
     paintImgBar();
+    requestAnimationFrame(placeImgBar);
   }
   function deselectImage(){
     if (typeof endCrop === "function") endCrop();
@@ -11338,7 +11347,61 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("imgMove").disabled = locked;
     $("imgSmaller").disabled = locked;
     $("imgBigger").disabled = locked;
+    placeImgBar();
   }
+  var imgBarOff = { dx: 0, dy: 0 };
+  function placeImgBar(){
+    var bar = $("imgBar");
+    if (!bar || bar.hidden || !pickedImage || !pickedImage.fig) return;
+    var r = pickedImage.fig.getBoundingClientRect();
+    var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+    bar.style.transform = "none";
+    var w = bar.offsetWidth || 280, h = bar.offsetHeight || 44;
+    var cx = r.left + r.width / 2;
+    var x = cx - w / 2 + (imgBarOff.dx || 0);
+    var y = r.top - h - 10 + (imgBarOff.dy || 0);
+    if (y < 8) y = r.bottom + 10 + (imgBarOff.dy || 0);
+    x = Math.max(8, Math.min(x, vw - w - 8));
+    y = Math.max(8, Math.min(y, vh - h - 8));
+    bar.style.left = x + "px";
+    bar.style.top = y + "px";
+  }
+  (function wireImgBarDrag(){
+    var grip = $("imgGrip"), bar = $("imgBar");
+    if (!grip || !bar) return;
+    var drag = null;
+    grip.addEventListener("pointerdown", function(e){
+      e.preventDefault(); e.stopPropagation();
+      var r = bar.getBoundingClientRect();
+      drag = { x0: e.clientX, y0: e.clientY, l0: r.left, t0: r.top };
+      try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    grip.addEventListener("pointermove", function(e){
+      if (!drag) return;
+      var vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+      var w = bar.offsetWidth || 280, h = bar.offsetHeight || 44;
+      var nx = Math.max(8, Math.min(drag.l0 + (e.clientX - drag.x0), vw - w - 8));
+      var ny = Math.max(8, Math.min(drag.t0 + (e.clientY - drag.y0), vh - h - 8));
+      bar.style.left = nx + "px";
+      bar.style.top = ny + "px";
+    });
+    function end(){
+      if (!drag) return;
+      var r = bar.getBoundingClientRect();
+      var fig = pickedImage && pickedImage.fig;
+      if (fig){
+        var ir = fig.getBoundingClientRect();
+        var w = r.width || 280, h = r.height || 44;
+        var natX = ir.left + ir.width / 2 - w / 2;
+        var natY = ir.top - h - 10;
+        if (natY < 8) natY = ir.bottom + 10;
+        imgBarOff = { dx: r.left - natX, dy: r.top - natY };
+      }
+      drag = null;
+    }
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+  })();
 
   function imgResize(delta){
     if (!pickedImage) return;
@@ -11355,10 +11418,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("imgBigger").addEventListener("click", function(){ imgResize(10); });
   $("imgRemove").addEventListener("click", function(){
     if (!pickedImage) return;
-    if (!confirm("Take this picture out of the note?")) return;
+    if (typeof snapText === "function") snapText();
     pickedImage.fig.remove();
     pickedImage = null;
     $("imgBar").hidden = true;
+    if (typeof snapText === "function") snapText();
     markDirty(); flush();
   });
   $("imgDone").addEventListener("click", deselectImage);
@@ -14258,6 +14322,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       scrollTick = 0;
       showPageTag();
       paintEndKit();
+      if (typeof placeImgBar === "function") placeImgBar();
       pageHandover();
     });
   }, { passive: true });
