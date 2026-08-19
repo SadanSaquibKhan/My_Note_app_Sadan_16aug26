@@ -2515,7 +2515,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b104";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b105";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -10125,16 +10125,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      It is the route that works on this tablet: the S Pen's side button is
      taken by One UI before Chrome is told about it, so nothing in this file
      can see it, no matter where it listens. */
-  var penHold = { timer: null, x: 0, y: 0, S: null, fired: false };
+  var penHold = { timer: null, x: 0, y: 0, lx: 0, ly: 0, travel: 0, S: null, fired: false };
   function armPenHold(S, e){
     clearPenHold();
     if (cfg.holdErase === false) return;
     if (ink.tool === "lasso") return;          /* a lasso needs a long drag */
-    penHold.S = S; penHold.x = e.clientX; penHold.y = e.clientY; penHold.fired = false;
+    if (ink.tool === "eraser") return;         /* already erasing */
+    penHold.S = S;
+    penHold.x = penHold.lx = e.clientX;
+    penHold.y = penHold.ly = e.clientY;
+    penHold.travel = 0;
+    penHold.fired = false;
     penHold.timer = setTimeout(function(){
       /* A slow start of a letter used to look like a hold and switch to
-         the eraser mid-word. If the stroke has already travelled, this is
-         writing, not a request to erase. */
+         the eraser mid-word. Any real writing — even a small loop that
+         comes back to where it started — is travel, not a hold. */
+      if (penHold.travel > 10){ clearPenHold(); return; }
       var S0 = penHold.S;
       var st = S0 && S0.drawing && S0.drawing.stroke;
       if (st && st.pts && st.pts.length >= 6){
@@ -10143,7 +10149,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           var dx = st.pts[i] - st.pts[i-3], dy = st.pts[i+1] - st.pts[i-2];
           d += Math.sqrt(dx * dx + dy * dy);
         }
-        if (d > 12){ clearPenHold(); return; }
+        if (d > 8 || st.pts.length >= 9){ clearPenHold(); return; }
       }
       penHold.fired = true;
       holdEraseFired();
@@ -10151,7 +10157,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   function movePenHold(e){
     if (!penHold.timer) return;
-    if (Math.abs(e.clientX - penHold.x) > 14 || Math.abs(e.clientY - penHold.y) > 14){
+    var dx = e.clientX - penHold.lx, dy = e.clientY - penHold.ly;
+    penHold.travel += Math.sqrt(dx * dx + dy * dy);
+    penHold.lx = e.clientX; penHold.ly = e.clientY;
+    if (penHold.travel > 10 ||
+        Math.abs(e.clientX - penHold.x) > 10 ||
+        Math.abs(e.clientY - penHold.y) > 10){
       clearPenHold();                          /* you are writing, not holding */
     }
   }
