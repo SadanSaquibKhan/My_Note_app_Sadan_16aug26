@@ -484,9 +484,6 @@
     text-transform:uppercase; color:var(--ink-2); margin-bottom:8px;
   }
   .nextpeek-body p, .prevpeek-body p{margin:0 0 var(--lead)}
-  .nextpeek-body h1,.nextpeek-body h2,.nextpeek-body h3{
-    font-family:var(--display); margin:0 0 6px; font-size:17px;
-  }
   .peekstub{
     display:inline-block; padding:1px 7px; border:1px dashed var(--rule);
     border-radius:3px; font-family:var(--mono); font-size:10px;
@@ -2518,7 +2515,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b103";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b104";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -13375,9 +13372,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (band && !band.hidden){
       band.style.height = prevPad() + "px";
       band.style.overflow = "hidden";
-      $("prevPeekBody").innerHTML = "";
+      /* going forward the previous band is off the top — wipe it so the
+         page-before-last cannot flash. Do not wipe the incoming page: that
+         is still on screen, and emptying it is the shiver at the join. */
+      if (dir > 0 && $("prevPeekBody")) $("prevPeekBody").innerHTML = "";
     }
-    if ($("nextPeekBody")) $("nextPeekBody").innerHTML = "";
 
     /* The correction cannot go on the next frame: go() finishes through the
        hash and the database, so a frame later the page has usually not been
@@ -13435,10 +13434,21 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          nothing left to correct, so a scroll of your own is never fought for
          more than a moment. */
       var pTop0 = p.getBoundingClientRect().top;
+      /* a finger or page-chip still dragging: one re-anchor, then let them
+         keep scrolling. Fighting the finger for sixteen frames is the shiver. */
+      var stillHeld = (typeof pan === "object" && pan && pan.on) ||
+                      (typeof pageTagDrag === "object" && pageTagDrag);
       (function settle(){
         var pad = prevPad();
         var want = Math.max(0, pad - pend.keepAt);
         p.scrollTop = want;
+        if (stillHeld){
+          padWatch.last = pad; padWatch.skip = false;
+          redrawAll();
+          document.body.classList.remove("swapping");
+          handover.busy = false;
+          return;
+        }
         /* pin the watched block to the screen row it was on at the swap */
         var moved = 0;
         if (pend.aIdx >= 0){
