@@ -2597,7 +2597,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b126";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b127";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -7323,6 +7323,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var boost = glideSpeed();
     if (!boost || !S || !S.scroller) return;
     if (S.drawing) return;
+    /* The page turned during this very drag. Whatever speed the finger had was
+       gathered on the page you have left, and spending it here carries you
+       straight down the new one — which is the "it snapped to the top and kept
+       going". The join is where the throw stops. */
+    if (typeof pan === "object" && pan && pan.noGlide) return;
     if (Math.sqrt(vx*vx + vy*vy) < 0.06) return;   /* a slow lift means stop, not throw */
     glide.S = S; glide.vx = vx * boost; glide.vy = vy * boost; glide.last = nowMs();
     (function step(){
@@ -14460,15 +14465,38 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          keep scrolling. Fighting the finger for sixteen frames is the shiver. */
       var stillHeld = (typeof pan === "object" && pan && pan.on) ||
                       (typeof pageTagDrag === "object" && pageTagDrag);
+      /* A finger that never lifted is still working from where the page was
+         when it landed: fingerPanMove scrolls to pan.top minus how far the
+         finger has travelled. The swap has just rewritten scrollTop, so that
+         sum now describes a page that is no longer there, and the very next
+         twitch of the finger throws the page hundreds of pixels — usually to
+         the top. Tell the pan where the page actually is now, and its next
+         move carries on smoothly from here. A swap also cancels the throw:
+         momentum gathered on the page you left must not be spent on this one. */
+      function rebasePan(){
+        if (typeof pan !== "object" || !pan || !pan.on) return;
+        pan.top = p.scrollTop;
+        pan.left = p.scrollLeft;
+        if (pan.py != null) pan.y = pan.py;
+        if (pan.px != null) pan.x = pan.px;
+        pan.vx = 0; pan.vy = 0;
+        pan.noGlide = true;
+      }
+      /* Going back, the target is the foot of the page you are returning to,
+         and it is worked out ONCE. pageBottom reads where the end-of-page rule
+         currently sits, and that keeps moving for several frames after a swap
+         while the bands hydrate and pictures decode — so re-reading it every
+         frame meant the place being asked for kept changing underneath the
+         correction that was chasing it. That chase is a shiver of its own,
+         with no finger involved. */
+      var backWant = null;
+      if (pend.dir < 0){
+        var bot0 = (typeof pageBottom === "function") ? pageBottom(p) : p.scrollHeight;
+        backWant = Math.max(0, bot0 - p.clientHeight * 0.55);
+      }
       (function settle(){
         var pad = prevPad();
-        var want = Math.max(0, pad - pend.keepAt);
-        /* going back: the incoming page's TOP is far above the eye. Anchoring
-           that top puts you at the heading. Stay at the foot instead. */
-        if (pend.dir < 0){
-          var bot = (typeof pageBottom === "function") ? pageBottom(p) : p.scrollHeight;
-          want = Math.max(0, bot - p.clientHeight * 0.55);
-        }
+        var want = (backWant != null) ? backWant : Math.max(0, pad - pend.keepAt);
         p.scrollTop = want;
         function pinBlock(){
           if (pend.aIdx < 0) return 0;
@@ -14484,6 +14512,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         }
         if (stillHeld){
           pinBlock();
+          rebasePan();
           padWatch.last = pad; padWatch.skip = false;
           redrawAll();
           document.body.classList.remove("swapping");
@@ -14505,6 +14534,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
             }
           }
         }
+        rebasePan();
         padWatch.last = pad;
         padWatch.skip = false;
         tries++;
@@ -16348,6 +16378,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     /* the surface is stashed because fingerPanUp is called without one */
     pan.S = S;
     pan.vx = pan.vy = 0; pan.t = 0; pan.px = e.clientX; pan.py = e.clientY;
+    pan.noGlide = false;     /* a fresh touch may throw again */
     return true;
   }
   function fingerPanMove(S, e){
