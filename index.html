@@ -2597,7 +2597,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b122";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b123";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5697,7 +5697,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (chipLand != null && state.note){
       var land = chipLand; chipLand = null;
       var ph = (typeof pageHeightOf === "function") ? pageHeightOf(state.note.id) : 1500;
-      if (typeof restoreScroll === "function") restoreScroll(land * ph, 0);
+      /* page heights are sheet pixels; the scroller is screen pixels with the
+         zoom already baked in, so the two only agree at 100% */
+      var pz = (typeof pageZoom === "function") ? pageZoom() : 1;
+      if (typeof restoreScroll === "function") restoreScroll(land * ph * pz, 0);
       if (typeof paintNavChips === "function") paintNavChips();
     }
     if (typeof paintNavChips === "function") paintNavChips();
@@ -13710,10 +13713,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!on) return;
     var book = (typeof pageOrder === "function") ? pageOrder() : (state.notes || []);
     var sec = sectionPageList();
+    /* While a chip is being dragged the numbers must follow the FINGER, not
+       the page. Turning the page is a real page load, so it always lags the
+       drag a little — and a label that waits for it reads exactly like the
+       app has stopped responding, which is what it looked like. */
+    var wantNote = (chipDrag && chipDrag.want && chipDrag.want.note)
+                     ? chipDrag.want.note : null;
+    var atId = wantNote ? wantNote.id : state.noteId;
+    var atNote = wantNote || state.note;
+    /* dragging the notebook chip can point into a different section, so the
+       section chip has to count within THAT section, not the one you left */
+    if (wantNote && wantNote.sectionId &&
+        wantNote.sectionId !== (state.note && state.note.sectionId)){
+      sec = book.filter(function(n){ return n.sectionId === wantNote.sectionId; });
+    }
     var bi = -1, si = -1;
-    book.forEach(function(n, k){ if (n.id === state.noteId) bi = k; });
-    sec.forEach(function(n, k){ if (n.id === state.noteId) si = k; });
-    var secObj = state.note ? sectionOfNote(state.note) : null;
+    book.forEach(function(n, k){ if (n.id === atId) bi = k; });
+    sec.forEach(function(n, k){ if (n.id === atId) si = k; });
+    var secObj = atNote ? sectionOfNote(atNote) : null;
     var secName = (typeof C.sectionDisplayName === "function" && secObj)
       ? C.sectionDisplayName(secObj, 0) : "Sec";
     secEl.textContent = secName + "  " + (si + 1) + "/" + Math.max(1, sec.length);
@@ -13730,63 +13747,48 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var pad = (typeof prevPad === "function") ? prevPad() : 0;
     p.scrollTop = pad + Math.max(0, Math.min(1, frac)) * h * pageZoom();
   }
-  /* Scroll just far enough that the neighbour takes over the screen —
-     not to the far end of its preview, which overshot and then jumped. */
-  function scrollToJoin(dir){
-    var p = $("paper");
-    if (!p) return;
-    var pr = p.getBoundingClientRect();
-    if (dir > 0){
-      var nextEl = $("nextPeekPage");
-      if (nextEl && $("nextPeek") && !$("nextPeek").hidden){
-        var nr = nextEl.getBoundingClientRect();
-        p.scrollTop += (nr.top - pr.top) - pr.height * 0.30;
-        return;
-      }
-      p.scrollTop = p.scrollHeight;
-      return;
-    }
-    var prevBox = $("prevPeek"), prevEl = $("prevPeekPage");
-    if (prevEl && prevBox && !prevBox.hidden && !prevBox.classList.contains("thin")){
-      var pb = prevEl.getBoundingClientRect();
-      p.scrollTop += (pb.bottom - pr.top) - pr.height * 0.70;
-      return;
-    }
-    p.scrollTop = 0;
-  }
+  /* A chip is a seek, not a scroll: where the chip sits IS where you are,
+     the way a scrollbar works. It used to try something cleverer for a
+     neighbouring page — scroll down into that page's preview band and let
+     the ordinary scroll-driven swap carry you over the join. That put two
+     things in charge of which page you are on at the same moment, and they
+     argued: the chip scrolled you across the join, the swap fired, the swap
+     re-anchored, the next drag event read the new page and scrolled you back
+     across it again. That argument is the up-down-up-down bounce. */
   function applyChipPlace(place, list){
     if (!place || !place.note) return;
-    var p = $("paper");
-    if (!p) return;
-    if (place.note.id === state.noteId){
-      /* just crossed a join: the virtual frac is the top of the new page,
-         which is what yanked you to the heading and back again */
-      if (chipDrag && Date.now() < (chipDrag.noLandUntil || 0)) return;
-      landOnPage(place.frac);
-      return;
-    }
-    list = list || (chipDrag && chipDrag.list) || [];
-    var cur = -1, want = -1;
-    list.forEach(function(n, i){
-      if (n.id === state.noteId) cur = i;
-      if (n.id === place.note.id) want = i;
-    });
-    if (chipDrag && place.note.id === chipDrag.justLeft) return;
-    if (want === cur + 1 || want === cur - 1){
-      if (chipDrag && chipDrag.lastJoin === place.note.id) return;
-      if (chipDrag){
-        chipDrag.lastJoin = place.note.id;
-        chipDrag.justLeft = state.noteId;
-        chipDrag.noLandUntil = Date.now() + 600;
-      }
-      scrollToJoin(want === cur + 1 ? 1 : -1);
+    if (!$("paper")) return;
+    if (place.note.id === state.noteId){ landOnPage(place.frac); return; }
+    if (typeof swapping === "function" && swapping()){
+      /* a page is already loading: let it land, then come here */
+      handover.queued = { id: place.note.id, frac: place.frac };
       return;
     }
     chipLand = place.frac;
+    go({ nbId: state.nbId, noteId: place.note.id });
+  }
+  /* How often the page underneath may change while you drag. Turning the
+     page is a real page load, so it cannot happen on every pointermove —
+     but it has to happen DURING the drag, not only when you let go, or the
+     screen sits still while the chip travels and then lurches at the end.
+     That lurch is what you saw. */
+  var CHIP_SEEK_MS = 130;
+  function chipSeek(force){
+    if (!chipDrag || !chipDrag.want || !chipDrag.want.note) return;
+    var place = chipDrag.want;
+    /* inside the page you are already on this is a plain scroll, so it can
+       follow every single move */
+    if (place.note.id === state.noteId){ landOnPage(place.frac); return; }
+    if (!force){
+      if (typeof swapping === "function" && swapping()) return;  /* one at a time */
+      if (Date.now() - (chipDrag.lastSeek || 0) < CHIP_SEEK_MS) return;
+    }
+    chipDrag.lastSeek = Date.now();
     if (typeof swapping === "function" && swapping()){
       handover.queued = { id: place.note.id, frac: place.frac };
       return;
     }
+    chipLand = place.frac;
     go({ nbId: state.nbId, noteId: place.note.id });
   }
   function wireNavChip(id, kind){
@@ -13797,66 +13799,80 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       e.preventDefault(); e.stopPropagation();
       var list = kind === "sec" ? sectionPageList() : pageOrder();
       chipDrag = { kind: kind, list: list, id: e.pointerId,
-                   x: e.clientX, y: e.clientY, moved: false, pending: null };
+                   x: e.clientX, y: e.clientY, moved: false,
+                   want: null, prog: null, lastSeek: 0 };
       pageTagDrag = chipDrag;
       try { el.setPointerCapture(e.pointerId); } catch (err) {}
       el.classList.add("on");
     });
     el.addEventListener("pointermove", function(e){
       if (!chipDrag || chipDrag.kind !== kind) return;
+      if (chipDrag.id != null && e.pointerId !== chipDrag.id) return;
       if (Math.abs(e.clientX - chipDrag.x) > 8 || Math.abs(e.clientY - chipDrag.y) > 8)
         chipDrag.moved = true;
       var tr = chipTrack();
       if (!tr) return;
       var prog = (e.clientY - tr.top) / tr.h;
       prog = Math.max(0, Math.min(1, prog));
-      placeChip(el, prog);
       var place = progressToPlace(chipDrag.list, prog);
       if (!place) return;
-      /* A neighbour is reached by scrolling the join. A far page is only
-         opened on lift — going on every move rebuilt the page ten times
-         a drag and was the jump. */
-      if (place.note.id === state.noteId){
-        landOnPage(place.frac);
-        chipDrag.pending = null;
-      } else {
-        var cur = -1, want = -1;
-        chipDrag.list.forEach(function(n, i){
-          if (n.id === state.noteId) cur = i;
-          if (n.id === place.note.id) want = i;
-        });
-        if (want === cur + 1 || want === cur - 1){
-          chipDrag.pending = null;
-          applyChipPlace(place, chipDrag.list);
-        } else {
-          chipDrag.pending = place;
-        }
-      }
+      chipDrag.prog = prog;
+      chipDrag.want = place;
+      /* the chip stays under your finger and the numbers read the target,
+         so something is always answering the drag even when the page
+         underneath is still catching up */
       paintNavChips();
       placeChip(el, prog);
+      chipSeek(false);
     });
-    function endChip(){
+    function endChip(e){
       if (!chipDrag || chipDrag.kind !== kind) return;
+      if (e && e.pointerId != null && chipDrag.id != null &&
+          e.pointerId !== chipDrag.id) return;
       var list = chipDrag.list;
-      var pending = chipDrag.pending;
       var moved = chipDrag.moved;
-      chipDrag = null; pageTagDrag = null;
       el.classList.remove("on");
-      if (!moved){
+      if (moved){
+        /* land exactly where the chip was let go, even if the last move
+           fell inside the throttle window and never got its turn */
+        chipSeek(true);
+        chipDrag = null; pageTagDrag = null;
+      } else {
+        chipDrag = null; pageTagDrag = null;
         /* tap the chip: start of that list, or the end if you are already there */
         var here = listProgress(list);
         var dest = here < 0.08 ? 1 : 0;
         applyChipPlace(progressToPlace(list, dest), list);
-      } else if (pending){
-        applyChipPlace(pending, list);
       }
       paintNavChips();
     }
     el.addEventListener("pointerup", endChip);
     el.addEventListener("pointercancel", endChip);
+    /* a capture that is taken away mid-drag would otherwise leave chipDrag
+       set for the rest of the session, and with it every page swap frozen */
+    el.addEventListener("lostpointercapture", endChip);
   }
   wireNavChip("secChip", "sec");
   wireNavChip("bookChip", "book");
+  /* A drag now switches the scroll-driven page swap off for as long as it
+     lasts, which makes an unfinished drag expensive: if the pointer is ever
+     released somewhere the chip never hears about — capture refused, the
+     finger lifted off the edge of the screen — turning the page by scrolling
+     would stay dead for the rest of the session. This listens on the way back
+     up, so the chip's own handler still gets first refusal and this only ever
+     picks up what it missed. */
+  ["pointerup", "pointercancel"].forEach(function(evt){
+    document.addEventListener(evt, function(e){
+      if (!chipDrag) return;
+      if (chipDrag.id != null && e.pointerId != null && e.pointerId !== chipDrag.id) return;
+      if (chipDrag.moved) chipSeek(true);
+      chipDrag = null; pageTagDrag = null;
+      var a = $("secChip"), b = $("bookChip");
+      if (a) a.classList.remove("on");
+      if (b) b.classList.remove("on");
+      paintNavChips();
+    });
+  });
   /* A page's stored HTML, made safe to show a second time on screen.
      Every id is removed: ids are how the rest of the app finds things, and a
      duplicate would have anchors, links and the outline all pointing at the
@@ -14129,8 +14145,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (document.body.classList.contains("drawing")) return;
     if (ink.active && ink.surfaces && ink.surfaces[ink.active] &&
         ink.surfaces[ink.active].drawing) return;
+    /* A chip drag says which page you are on outright. Letting the
+       scroll-driven swap fire as well puts two things in charge of that at
+       the same moment, and they argue across the join — the bounce. */
+    if (chipDrag) return;
     var coasting = !!(typeof glide === "object" && glide && glide.raf);
-    if (!chipDrag && !coasting && Date.now() < (handover.until || 0)) return;
+    if (!coasting && Date.now() < (handover.until || 0)) return;
     var p = $("paper");
     if (!p) return;
     var pr = p.getBoundingClientRect();
