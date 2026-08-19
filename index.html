@@ -828,20 +828,24 @@
   .navchip{
     position:fixed; z-index:74; pointer-events:auto; touch-action:none; cursor:ns-resize;
     font-family:var(--mono); font-size:10px; letter-spacing:.08em;
-    border-radius:14px; padding:7px 10px; min-width:72px; text-align:center;
+    border-radius:14px; padding:6px 8px; min-width:48px; text-align:center;
     box-shadow:0 6px 20px var(--shadow); user-select:none; -webkit-user-select:none;
     white-space:nowrap;
+    transition:transform .2s ease;
   }
   .navchip[hidden]{display:none}
+  /* 32px apart, chips ~64px wide → about half of each stays exposed when they
+     share a row. That is what lets them sit on the edge instead of out in
+     the writing. */
   .secchip{
-    right:96px; background:var(--live); color:var(--panel); border:2px solid var(--live);
+    right:40px; z-index:75; background:var(--live); color:var(--panel); border:2px solid var(--live);
   }
   .bookchip{
-    right:10px; background:var(--panel); color:var(--ink); border:2px solid var(--ink);
+    right:8px; background:var(--panel); color:var(--ink); border:2px solid var(--ink);
   }
-  .navchip.on{box-shadow:0 0 0 3px var(--live-soft), 0 6px 20px var(--shadow)}
-  body.lefty .secchip{right:auto; left:96px}
-  body.lefty .bookchip{right:auto; left:10px}
+  .navchip.on{box-shadow:0 0 0 3px var(--live-soft), 0 6px 20px var(--shadow); z-index:76}
+  body.lefty .secchip{right:auto; left:40px}
+  body.lefty .bookchip{right:auto; left:8px}
 
   .secjoinlab{
     flex:none; text-align:center; padding:10px 12px;
@@ -2597,7 +2601,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b131";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b132";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -13951,19 +13955,64 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var r = p.getBoundingClientRect();
     return { top: r.top + 28, h: Math.max(80, r.height - 56), paper: p };
   }
+  /* After a second of not touching either chip they tuck toward the edge,
+     leaving about half of each still showing. Touching a tucked one brings
+     only that one back. The numbers: 1100ms so a rest between drags is not
+     a tuck; 52% of the chip's own width so a finger still has ~28px to hit. */
+  var chipDock = { sec: false, book: false, t: 0, armed: false };
+  var CHIP_TUCK_MS = 1100;
+  var CHIP_TUCK_FRAC = 0.52;
+  function chipKindOf(el){
+    return (el && el.id === "secChip") ? "sec" : "book";
+  }
+  function chipTuckX(el){
+    if (!el || !chipDock[chipKindOf(el)]) return 0;
+    var w = el.offsetWidth || 56;
+    var lefty = document.body.classList.contains("lefty");
+    return (lefty ? -1 : 1) * Math.round(w * CHIP_TUCK_FRAC);
+  }
+  function applyChipXform(el){
+    if (!el) return;
+    el.style.transform = "translate(" + chipTuckX(el) + "px,-50%)";
+    el.classList.toggle("tuck", !!chipDock[chipKindOf(el)]);
+  }
+  function setChipTuck(kind, on){
+    chipDock[kind] = !!on;
+    applyChipXform($(kind === "sec" ? "secChip" : "bookChip"));
+  }
+  function tuckBothChips(){
+    if (chipDrag) return;
+    if (!state.note || state.view !== "note") return;
+    setChipTuck("sec", true);
+    setChipTuck("book", true);
+  }
+  function kickChipTuck(){
+    clearTimeout(chipDock.t);
+    chipDock.t = setTimeout(tuckBothChips, CHIP_TUCK_MS);
+  }
+  function wakeChip(kind){
+    setChipTuck(kind, false);
+    kickChipTuck();
+  }
   function placeChip(el, prog){
     var tr = chipTrack();
     if (!el || !tr) return;
     var y = tr.top + Math.max(0, Math.min(1, prog)) * tr.h;
     el.style.top = y + "px";
-    el.style.transform = "translateY(-50%)";
+    applyChipXform(el);
   }
   function paintNavChips(){
     var secEl = $("secChip"), bookEl = $("bookChip");
     if (!secEl || !bookEl) return;
     var on = !!(state.note && state.view === "note");
     secEl.hidden = !on; bookEl.hidden = !on;
-    if (!on) return;
+    if (!on){
+      chipDock.armed = false;
+      chipDock.sec = false; chipDock.book = false;
+      clearTimeout(chipDock.t);
+      return;
+    }
+    if (!chipDock.armed){ chipDock.armed = true; kickChipTuck(); }
     var book = (typeof pageOrder === "function") ? pageOrder() : (state.notes || []);
     var sec = sectionPageList();
     /* While a chip is being dragged the numbers must follow the FINGER, not
@@ -13984,10 +14033,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     book.forEach(function(n, k){ if (n.id === atId) bi = k; });
     sec.forEach(function(n, k){ if (n.id === atId) si = k; });
     var secObj = atNote ? sectionOfNote(atNote) : null;
-    var secName = (typeof C.sectionDisplayName === "function" && secObj)
-      ? C.sectionDisplayName(secObj, 0) : "Sec";
-    secEl.textContent = secName + "  " + (si + 1) + "/" + Math.max(1, sec.length);
-    bookEl.textContent = "All  " + (bi + 1) + "/" + Math.max(1, book.length);
+    var secN = (typeof C.sectionNumber === "function")
+      ? C.sectionNumber(secObj, 0) : 1;
+    /* short on purpose: "S2  3/6" and "3/12" so the pair can sit on the
+       edge and still overlap by half when they share a row */
+    secEl.textContent = "S" + secN + "  " + (si + 1) + "/" + Math.max(1, sec.length);
+    bookEl.textContent = (bi + 1) + "/" + Math.max(1, book.length);
     if (!chipDrag){
       placeChip(secEl, listProgress(sec));
       placeChip(bookEl, listProgress(book));
@@ -14114,10 +14165,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     el.addEventListener("pointerdown", function(e){
       if (!state.note) return;
       e.preventDefault(); e.stopPropagation();
+      var wasTuck = !!chipDock[kind];
+      wakeChip(kind);
       var list = kind === "sec" ? sectionPageList() : pageOrder();
       chipDrag = { kind: kind, list: list, id: e.pointerId,
                    x: e.clientX, y: e.clientY, moved: false,
-                   want: null, prog: null, lastSeek: 0, pendingId: null };
+                   want: null, prog: null, lastSeek: 0, pendingId: null,
+                   wasTuck: wasTuck };
       pageTagDrag = chipDrag;
       try { el.setPointerCapture(e.pointerId); } catch (err) {}
       el.classList.add("on");
@@ -14151,6 +14205,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           e.pointerId !== chipDrag.id) return;
       var list = chipDrag.list;
       var moved = chipDrag.moved;
+      var wasTuck = chipDrag.wasTuck;
       el.classList.remove("on");
       if (moved){
         /* land exactly where the chip was let go, even if the last move
@@ -14159,13 +14214,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         chipDrag = null; pageTagDrag = null;
       } else {
         chipDrag = null; pageTagDrag = null;
-        /* tap the chip: start of that list, or the end if you are already there */
-        var here = listProgress(list);
-        /* at the top: go to the end. Anywhere else — including not being in
-           this list at all, which reads -1 — go to the start. */
-        var dest = (here >= 0 && here < 0.08) ? 1 : 0;
-        applyChipPlace(progressToPlace(list, dest), list);
+        /* a tap on a tucked chip only brings that chip back. Jumping to
+           the start or the end is for a tap on one that was already out. */
+        if (!wasTuck){
+          var here = listProgress(list);
+          /* at the top: go to the end. Anywhere else — including not being in
+             this list at all, which reads -1 — go to the start. */
+          var dest = (here >= 0 && here < 0.08) ? 1 : 0;
+          applyChipPlace(progressToPlace(list, dest), list);
+        }
       }
+      kickChipTuck();
       paintNavChips();
     }
     el.addEventListener("pointerup", endChip);
@@ -14192,6 +14251,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var a = $("secChip"), b = $("bookChip");
       if (a) a.classList.remove("on");
       if (b) b.classList.remove("on");
+      kickChipTuck();
       paintNavChips();
     });
   });
