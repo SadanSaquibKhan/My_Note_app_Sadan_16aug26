@@ -824,6 +824,7 @@
   body.swapping .sheet, body.swapping .peekpage, body.swapping .prevpeek, body.swapping .nextpeek{
     transition:none !important;
   }
+  body.swapping .navchip{transition:none !important}
   .pagetag{display:none !important}
   .navchip{
     position:fixed; z-index:74; pointer-events:auto; touch-action:none; cursor:ns-resize;
@@ -1345,6 +1346,10 @@
     word-wrap:break-word; -webkit-user-select:text; user-select:text;
   }
   #body:empty::before{content:attr(data-placeholder); color:var(--ink-2)}
+  /* the hint is for a page you have settled on, not for a page flashing past
+     while you scroll through. Showing it at the join is the empty-page flicker. */
+  body.swapping #body:empty::before,
+  body.chipdrag #body:empty::before{content:none !important}
   #body p{margin:0 0 var(--lead)}
   #body h1,#body h2,#body h3{font-family:var(--display); margin:var(--lead) 0 0; line-height:var(--lead)}
   #body h1{font-size:24px; font-variation-settings:"wght" 700,"wdth" 80}
@@ -2601,7 +2606,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b132";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b133";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -14173,6 +14178,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
                    want: null, prog: null, lastSeek: 0, pendingId: null,
                    wasTuck: wasTuck };
       pageTagDrag = chipDrag;
+      document.body.classList.add("chipdrag");
       try { el.setPointerCapture(e.pointerId); } catch (err) {}
       el.classList.add("on");
     });
@@ -14212,8 +14218,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
            fell inside the throttle window and never got its turn */
         chipSeek(true);
         chipDrag = null; pageTagDrag = null;
+        document.body.classList.remove("chipdrag");
       } else {
         chipDrag = null; pageTagDrag = null;
+        document.body.classList.remove("chipdrag");
         /* a tap on a tucked chip only brings that chip back. Jumping to
            the start or the end is for a tap on one that was already out. */
         if (!wasTuck){
@@ -14248,6 +14256,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (chipDrag.id != null && e.pointerId != null && e.pointerId !== chipDrag.id) return;
       if (chipDrag.moved) chipSeek(true);
       chipDrag = null; pageTagDrag = null;
+      document.body.classList.remove("chipdrag");
       var a = $("secChip"), b = $("bookChip");
       if (a) a.classList.remove("on");
       if (b) b.classList.remove("on");
@@ -14563,10 +14572,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     handover.busy = true;
     document.body.classList.add("swapping");
     handover.until = Date.now() + 400;    /* no second swap straight after */
-    /* A long fling used to keep going after the swap and dump you at the
-       top of the page you had just entered. The join is a stop. */
+    /* Keep the speed, lose the old animation frame. Spending the leftover
+       throw on the new page used to dump you at its heading, because the
+       scroll had not been re-anchored yet. We stop the frame here, carry
+       the velocity, and start it again AFTER finishHandover has put you
+       where you were looking — damped, so one flick does not fly through
+       three pages. */
+    var carry = null;
+    if (typeof glide === "object" && glide && glide.raf && glide.S){
+      carry = { S: glide.S, vx: glide.vx, vy: glide.vy };
+    }
     if (typeof stopGlide === "function") stopGlide();
     handover.glide = null;
+    handover.glideCarry = carry;
     var keepAt = anchorTop - pr.top;      /* where that page's top sits now */
     var nbId = state.nbId, id = target.id;
 
@@ -14678,8 +14696,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         pan.left = p.scrollLeft;
         if (pan.py != null) pan.y = pan.py;
         if (pan.px != null) pan.x = pan.px;
-        pan.vx = 0; pan.vy = 0;
-        pan.noGlide = true;
+        /* Do not zero vx/vy and do not set noGlide. The finger's recent
+           speed is still the right speed; killing it is the "momentum
+           stops at the join". The old dump-to-the-heading was stale
+           pan.top, which the lines above have just repaired. */
       }
       /* Going back, the target is the foot of the page you are returning to,
          and it is worked out ONCE. pageBottom reads where the end-of-page rule
@@ -14716,6 +14736,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           redrawAll();
           document.body.classList.remove("swapping");
           handover.busy = false;
+          handover.glideCarry = null;   /* finger is still down; it owns the scroll */
           return;
         }
         /* pin the watched block to the screen row it was on at the swap */
@@ -14747,6 +14768,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         document.body.classList.remove("swapping");
         handover.busy = false;
         handover.glide = null;
+        if (handover.glideCarry && handover.glideCarry.S &&
+            typeof startGlide === "function"){
+          var c = handover.glideCarry; handover.glideCarry = null;
+          /* 0.7 keeps the coast feeling like the same flick, without
+             spending a full leftover throw on the new sheet */
+          startGlide(c.S, c.vx * 0.7, c.vy * 0.7);
+        } else {
+          handover.glideCarry = null;
+        }
         if (handover.queued && handover.queued.id &&
             handover.queued.id !== state.noteId){
           var q = handover.queued; handover.queued = null;
