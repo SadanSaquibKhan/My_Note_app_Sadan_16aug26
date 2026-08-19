@@ -2597,7 +2597,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b130";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b131";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -7196,8 +7196,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          each time, so it folds each time. Someone who wants the panels to
          stay has the "Collapse the side panels when the pen starts" setting
          to turn the whole behaviour off. */
-      if (ink.hideLists){
-        /* a long-pressed arrow is pinned: that list stays while you write */
+      if (ink.hideLists &&
+          !(ink.tool === "lasso" && typeof lassoHas === "function" && lassoHas())){
+        /* a long-pressed arrow is pinned: that list stays while you write.
+           A live catch is measured in page space against the paper's width,
+           so folding the lists here would shift every hit-test and make the
+           box you can see miss the box you can grab. */
         if (!cfg.lockRail) cfg.railMin = true;
         if (!cfg.lockSec)  cfg.secMin  = true;
         if (!cfg.lockList) cfg.listMin = true;
@@ -9866,15 +9870,33 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     return null;
   }
+  function lassoBoxHit(b, px, py, pad){
+    return !!(b && px >= b.minX - pad && px <= b.maxX + pad &&
+              py >= b.minY - pad && py <= b.maxY + pad);
+  }
   function lassoInCatch(px, py){
-    if (!lasso.poly) return false;
-    if (C.pointInPoly(px, py, lasso.poly)) return true;
-    var b = C.polyBounds(lasso.poly);
-    if (!b) return false;
     var z = zoom() || 1;
     var pad = 16 / z;
-    return px >= b.minX - pad && px <= b.maxX + pad &&
-           py >= b.minY - pad && py <= b.maxY + pad;
+    /* the outline you can see */
+    if (lasso.poly){
+      if (C.pointInPoly(px, py, lasso.poly)) return true;
+      if (lassoBoxHit(C.polyBounds(lasso.poly), px, py, pad)) return true;
+    }
+    /* and the box you actually drew, in case snap trimmed it */
+    if (lasso.drawn && lasso.drawn !== lasso.poly){
+      if (C.pointInPoly(px, py, lasso.drawn)) return true;
+      if (lassoBoxHit(C.polyBounds(lasso.drawn), px, py, pad)) return true;
+    }
+    /* A typed catch is a whole <p> even when the outline only covers the
+       words you boxed. Grabbing those words — or anywhere on that block —
+       has to start a move, not a new box or a page-scroll. */
+    var S = lasso.surface;
+    if (S && lasso.pickedEls && lasso.pickedEls.length){
+      for (var i = 0; i < lasso.pickedEls.length; i++){
+        if (lassoBoxHit(elPageBox(lasso.pickedEls[i], S), px, py, pad)) return true;
+      }
+    }
+    return false;
   }
   function lassoClear(){
     lasso.poly = null; lasso.draft = null;
@@ -9986,7 +10008,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }, true);
   document.addEventListener("pointermove", function(e){
     if (!lassoAway.on) return;
-    if (Math.abs(e.clientX - lassoAway.x) > 12 || Math.abs(e.clientY - lassoAway.y) > 12)
+    /* a finger tap jitters more than 12px on glass */
+    if (Math.abs(e.clientX - lassoAway.x) > 22 || Math.abs(e.clientY - lassoAway.y) > 22)
       lassoAway.on = false;
   }, true);
   document.addEventListener("pointerup", function(e){
@@ -9996,7 +10019,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (Date.now() < (lasso.coolUntil || 0)) return;
     if (lassoOnChrome(e.target)) return;
     var S = lasso.surface;
-    if (S && S.drawing) return;
+    /* A still tap outside the catch used to set maybeReplace and then this
+       listener refused to clear because a drawing was open. The lift then
+       either started a new empty box or left the old one sitting there —
+       which is "the only way out is to change tools". A tap that never
+       travelled is a dismiss, even if begin() armed a replacement. */
+    if (S && S.drawing && !S.drawing.maybeReplace) return;
+    if (S && S.drawing && S.drawing.maybeReplace) S.drawing = null;
     lassoClear();
   }, true);
   function placeLassoStyle(){
@@ -11164,8 +11193,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* a finger or mouse means "I want to type" — end the pen's hold at once */
   function handOverToTyping(e){
-    if (e.pointerType === "pen") return;
+    if (typeof isPenType === "function" ? isPenType(e) : e.pointerType === "pen") return;
     if (ink.mode === "write") return;
+    /* a finger on a live catch is moving it, not asking for the keyboard */
+    if (ink.tool === "lasso" && typeof lassoHas === "function" && lassoHas()){
+      var S0 = (typeof lasso === "object" && lasso.surface) ||
+               (typeof noteSurface !== "undefined" && noteSurface);
+      if (S0 && S0.toPage && lasso.poly){
+        var pt = S0.toPage(e);
+        if ((typeof lassoHitHandle === "function" && lassoHitHandle(pt.x, pt.y)) ||
+            (typeof lassoInCatch === "function" && lassoInCatch(pt.x, pt.y)))
+          return;
+      }
+    }
     /* A mirrored screen can echo one pen event as a mouse or touch event in the
        same input frame. Anything arriving that fast is an echo, not a finger.
        Kept short so a real tap straight after writing is not swallowed. */
@@ -16472,9 +16512,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         return false;
     }
     /* A live lasso must not pin the page. The pen is often still hovering,
-       which used to block this path and left the catch undismissable. */
+       which used to block this path and left the catch undismissable.
+       This runs BEFORE mayDraw, so it has to do its own hit-test: a finger
+       on the catch or a handle is a move/resize, not a page-scroll. The
+       empty branch that used to sit here always started a pan, which is
+       why dragging a typed block with a finger did nothing. */
     if (ink.tool === "lasso" && typeof lassoHas === "function" && lassoHas()){
-      /* mayDraw already said this finger is not on the catch */
+      var S0 = (typeof lasso === "object" && lasso.surface) || S;
+      if (S0 && S0.toPage && lasso.poly){
+        var pt = S0.toPage(e);
+        if ((typeof lassoHitHandle === "function" && lassoHitHandle(pt.x, pt.y)) ||
+            (typeof lassoInCatch === "function" && lassoInCatch(pt.x, pt.y)))
+          return false;
+      }
     } else if (ink.lock || ink.mode === "write"){
       return false;
     } else if (typeof penBlockingPalm === "function" ? penBlockingPalm(e) : ink.penNear){
