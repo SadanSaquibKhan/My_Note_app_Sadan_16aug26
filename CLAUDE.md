@@ -116,9 +116,19 @@ Every shipped change follows this exact sequence:
    what they reported, and what to test next on the tablet (confirm the new
    build number in Settings first, since the service worker can lag).
 
-As of the last commit in this file's history, the build was **b41**
-(commit `43a3291`). Check `index.html`'s `BUILD` constant and `git log` for
+As of the last commit in this file's history, the build was **b130**
+(commit `19bffec`). Check `index.html`'s `BUILD` constant and `git log` for
 the real current state — don't trust this number once time has passed.
+
+**The test folder is shared ground.** Several `*.mjs` suites carry assertions
+that pin the *exact source text* of a design. When you deliberately replace a
+design, those go red — that is not a regression, but you must not just delete
+them either: rewrite each one to state the new intent, and keep the sentence
+describing what the old bug was. The reliable way to tell a real regression
+from a stale assertion is to run every suite against the **previous** build as
+well and compare the counts; only a suite that got worse is a regression.
+`pass3sim.mjs` is **inverted** — it was written by the Grok agent so that a
+FAILING check means the bug it describes is gone. Its count going *up* is good.
 
 ## Do not touch / repo hygiene
 
@@ -178,19 +188,39 @@ the real current state — don't trust this number once time has passed.
   `0.5` so they stay even later if pressure is turned back on; speed-for-
   pressure is also skipped. Turning Even off restores `cfg.pressureLast`
   (the last light/normal/firm feel).
-- The S Pen's side button has **no reliable `PointerEvent.buttons` bit on
-  this tablet** — One UI intercepts it before Chrome sees a clean
-  press/release pair; the only trace that reaches the page is a
-  `contextmenu` event with no matching "released" event. Current design
-  (search `the side button, held, not toggled`): the button now **holds**
-  (press-and-hold erases, release restores the previous tool), using the pen
-  leaving proximity (`pointerleave`/`pointerout`) as the release signal
-  since there is no better one — and honoring a real button-release event
-  immediately if a particular pen/build ever does report one. A second press
-  always cancels, so it can never get stuck. There's also a separate,
-  independent "hold the nib still on the glass" eraser gesture and a
-  double-tap latch gesture — three different eraser triggers coexist by
-  design, each solving a different physical motion the user described.
+- **The S Pen side button — read this before touching it again.** It took
+  many builds and several wrong theories. The decisive fact, found in b126:
+  **Chrome on this tablet renames the pointer to `pointerType: "eraser"` for
+  as long as the button is held.** The button's own logic was fine long
+  before the feature worked, because every gate that asked "is this the pen"
+  by testing `pointerType === "pen"` stopped recognising the pen at exactly
+  the moment the button was down. `mayDraw()` refused the stroke, so the
+  eraser lit up in the toolbar and rubbing removed *nothing*; and the nib
+  landing fell into the branch meant for a finger, which hands over to
+  typing. Proved by driving the previous build in a browser: three strokes
+  drawn, rubbed with the button held, all three still on the page.
+  `isPenType(e)` now answers that question everywhere (drawing, the nib
+  landing, hover, move, over). **Never narrow one of those back to the bare
+  string `"pen"`.**
+  The rest of the design: entering "erase mode" (the renamed pointer, or
+  `buttons & 32`) is the *press*, counted once on the transition — it must
+  never be tested per-event, or every nib-down reads as another press, which
+  is the old "press it then touch the screen and it flips back". `buttons`
+  bits 2/4 are the button proper; a bit that lasts one sample while hovering
+  is noise and is confirmed ~40ms later. A `contextmenu` while the nib is on
+  the glass is *never* the button — `penHold` already knows whether the pen
+  actually stayed still, and if it moved that contextmenu is Android being
+  noisy about a slow letter. `keydown "Unidentified"` is not the button
+  either (Android's IME emits it constantly).
+  All three eraser gestures — side button, hold-the-nib-still, double-tap —
+  go through **one** gate (`eraserPress`), **one** clock (`PRESS_ONE_MS`),
+  and **one** memory of the tool to come back to (`eraserReturn`). They used
+  to be three machines with three memories and two clocks, and they undid
+  each other; a single physical press could get through two doors and cancel
+  itself, which looks exactly like a button that does nothing.
+  `penNibOnGlass()` must not count `width`/`height` as contact — a hovering
+  pen reports a 1x1 patch too, and treating that as contact made a hover look
+  like a long press of the nib.
 
 ### Continuous page scroll (the hardest, most-iterated feature)
 
@@ -238,6 +268,54 @@ one. Ask (or infer from their description) which direction, and whether it's
 the very first time crossing into that particular neighboring page this
 session (cache-cold) or a page they've already been to (cache-warm) — the
 fix should be complete for the warm case.
+
+**The two nav chips (`#secChip` blue = this section, `#bookChip` grey = the
+whole notebook).** A chip is a *seek*, like a scrollbar: where the chip sits
+is where you are, page and all. Two earlier designs both put the chip and the
+scroll-driven swap in charge of the page at the same moment and they argued
+across the join — that argument is the up-down-up-down bounce. `pageHandover`
+now stands down entirely while `chipDrag` is set. Because of that, a drag that
+never gets its `pointerup` would leave page-turning dead for the session, so
+`lostpointercapture` ends it and a document-level listener catches a release
+the chip never hears (it must listen on the way **up**, so the chip's own
+handler goes first). Further rules learned the hard way:
+- The join is a single point in the track: one pixel either side is "foot of
+  this page" or "head of the next", and a resting hand crosses it many times a
+  second. `CHIP_STICK` (~4% of the track) keeps the page you are on until the
+  chip has genuinely travelled past. Without it every crossing asked for a
+  whole page load.
+- Only **one** page load may be in flight (`chipLoading()`), and which page is
+  scrolled is decided by what is **mounted** (`$("body").dataset.noteId`),
+  never by `state.noteId` — those disagree for a few hundred ms after a page
+  is asked for, and landing on the strength of the new id scrolls the old page
+  with the new page's measurements.
+- A page fraction is read the way a scrollbar reads it: 0 = head of the page at
+  the top of the screen, 1 = its **foot at the bottom** (`pageScrollFor`).
+  Reading 1 as "one whole page further down" leaves the page entirely above the
+  screen and the reader inside the next page's band, past the hand-over line —
+  so the page turns itself the moment you let go.
+- `listProgress` returns **-1** for "this page is not in this list", which is
+  not the same as 0 ("you are at the top"). `sectionPageList` follows the open
+  page's own section, not whichever section the panel happens to show.
+
+**The finger crossing a join.** `fingerPanMove` scrolls to `pan.top` minus how
+far the finger has travelled; the swap rewrites `scrollTop`, so that sum then
+describes a page that is gone and the next twitch throws the page ~900px. Any
+code that moves the scroll under a finger that is still down **must rebase the
+pan** (`rebasePan()`), and must cancel the throw (`pan.noGlide`) — momentum
+gathered on the page you left must not be spent on the page you arrived at.
+The backward target is computed **once** before the settle loop: `pageBottom`
+keeps moving for several frames as bands hydrate, so re-reading it each frame
+moved the target ~200px under the correction chasing it.
+
+**Opening a page never scrolled it anywhere** until b128. Nothing in the
+opening path writes the scroll, so a page opened from the list inherited the
+previous page's offset (measured: 3502px instead of the top), which from a
+short page lands inside the *following* page's band and turns the page for you.
+
+**Only the newest render may finish** (`renderSeq`). `state.noteId` moves
+synchronously, `state.note` asynchronously; without the guard an older render
+lands after a newer one and the app is split across two pages.
 
 ### Images
 
