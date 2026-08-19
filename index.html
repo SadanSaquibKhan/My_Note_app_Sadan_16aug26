@@ -2597,7 +2597,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b120";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b121";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -13759,6 +13759,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var p = $("paper");
     if (!p) return;
     if (place.note.id === state.noteId){
+      /* just crossed a join: the virtual frac is the top of the new page,
+         which is what yanked you to the heading and back again */
+      if (chipDrag && Date.now() < (chipDrag.noLandUntil || 0)) return;
       landOnPage(place.frac);
       return;
     }
@@ -13768,8 +13771,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (n.id === state.noteId) cur = i;
       if (n.id === place.note.id) want = i;
     });
-    if (want === cur + 1){ scrollToJoin(1); return; }
-    if (want === cur - 1){ scrollToJoin(-1); return; }
+    if (chipDrag && place.note.id === chipDrag.justLeft) return;
+    if (want === cur + 1 || want === cur - 1){
+      if (chipDrag && chipDrag.lastJoin === place.note.id) return;
+      if (chipDrag){
+        chipDrag.lastJoin = place.note.id;
+        chipDrag.justLeft = state.noteId;
+        chipDrag.noLandUntil = Date.now() + 600;
+      }
+      scrollToJoin(want === cur + 1 ? 1 : -1);
+      return;
+    }
     chipLand = place.frac;
     if (typeof swapping === "function" && swapping()){
       handover.queued = { id: place.note.id, frac: place.frac };
@@ -14195,7 +14207,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        swapped yet and the band still measures the old one — which is the jump.
        paintDoc calls this back once the new page and its bands are really in
        place. */
-    handover.pending = { id: id, keepAt: keepAt, aIdx: aIdx, aOff: aOff };
+    handover.pending = { id: id, keepAt: keepAt, aIdx: aIdx, aOff: aOff, dir: dir };
     /* If the swap never lands — a failed read, a route that went elsewhere —
        the frozen band and the busy flag would stay for the rest of the
        session and continuous scrolling would simply stop. */
@@ -14253,8 +14265,27 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       (function settle(){
         var pad = prevPad();
         var want = Math.max(0, pad - pend.keepAt);
+        /* going back: the incoming page's TOP is far above the eye. Anchoring
+           that top puts you at the heading. Stay at the foot instead. */
+        if (pend.dir < 0){
+          var bot = (typeof pageBottom === "function") ? pageBottom(p) : p.scrollHeight;
+          want = Math.max(0, bot - p.clientHeight * 0.55);
+        }
         p.scrollTop = want;
+        function pinBlock(){
+          if (pend.aIdx < 0) return 0;
+          var kid = $("body").children[pend.aIdx];
+          if (!kid) return 0;
+          var now = kid.getBoundingClientRect().top - p.getBoundingClientRect().top;
+          var d = now - pend.aOff;
+          if (Math.abs(d) > 1 && Math.abs(d) < 400){
+            p.scrollTop = Math.max(0, p.scrollTop + d);
+            return d;
+          }
+          return 0;
+        }
         if (stillHeld){
+          pinBlock();
           padWatch.last = pad; padWatch.skip = false;
           redrawAll();
           document.body.classList.remove("swapping");
