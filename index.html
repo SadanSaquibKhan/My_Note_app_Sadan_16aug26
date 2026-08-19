@@ -306,7 +306,7 @@
   }
   .findbar .ghost, .lassobar .ghost{padding:7px 10px; min-height:34px}
   .lassobar{
-    position:fixed; z-index:80; left:50%; bottom:auto; top:30%;
+    position:fixed; z-index:90; left:50%; bottom:auto; top:30%;
     transform:translateX(-50%);
     background:#2c2c2e; color:#fff;
     border:none; border-radius:22px;
@@ -2567,7 +2567,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b114";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b115";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -2997,6 +2997,21 @@ var MarginCore = (function(){
     if (!n) return false;
     for (var i = 0; i < n; i++) if (pointInPoly(p[i*3], p[i*3+1], poly)) hit++;
     return full ? (hit === n) : (hit / n >= 0.6);
+  }
+  /* A box that merely overlaps a stroke should still catch it. The
+     polygon test can miss a word when the box is a few pixels shy. */
+  function strokeHitsBox(stroke, b){
+    if (!stroke || !stroke.pts || !b) return false;
+    var p = stroke.pts, i;
+    var sx0 = Infinity, sy0 = Infinity, sx1 = -Infinity, sy1 = -Infinity;
+    for (i = 0; i + 1 < p.length; i += 3){
+      var x = p[i], y = p[i + 1];
+      if (x >= b.minX && x <= b.maxX && y >= b.minY && y <= b.maxY) return true;
+      if (x < sx0) sx0 = x; if (x > sx1) sx1 = x;
+      if (y < sy0) sy0 = y; if (y > sy1) sy1 = y;
+    }
+    if (sx0 === Infinity) return false;
+    return !(sx1 < b.minX || sx0 > b.maxX || sy1 < b.minY || sy0 > b.maxY);
   }
   function polyBounds(poly){
     if (!poly || poly.length < 4) return null;
@@ -4844,7 +4859,7 @@ var MarginCore = (function(){
     practiceAll:practiceAll, weakNotes:weakNotes,
     snippet:snippet, search:search, practicePages:practicePages,
     TEMPLATES:TEMPLATES,
-    pointInPoly:pointInPoly, strokeInPoly:strokeInPoly, polyBounds:polyBounds,
+    pointInPoly:pointInPoly, strokeInPoly:strokeInPoly, strokeHitsBox:strokeHitsBox, polyBounds:polyBounds,
     translateStrokes:translateStrokes, scaleStrokes:scaleStrokes, detectShape:detectShape,
     normTag:normTag, allTags:allTags, notesWithTag:notesWithTag, setTags:setTags,
     markRevised:markRevised, backlinks:backlinks,
@@ -6599,7 +6614,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
                     (S.scroller.scrollTop - pad()) / z - 2,
                     r.width / z + 4, r.height / z + 4);
       visibleStrokes(S).forEach(function(s){ drawStroke(ctx, s); });
-      if (lasso.surface === S && lasso.poly) drawLasso(ctx, lasso.poly);
+      if (lasso.surface === S){
+        if (lasso.poly) drawLasso(ctx, lasso.poly, lassoHas());
+        if (lasso.draft) drawLasso(ctx, lasso.draft, false);
+      }
     };
     S.queueRedraw = function(){
       if (S.raf) return;
@@ -6627,7 +6645,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          or rubbing out, not a second press. */
       var p = S.toPage(e);
       if (ink.tool === "lasso"){
-        if ((lasso.picked.length || (lasso.pickedEls && lasso.pickedEls.length)) && lasso.poly){
+        if (Date.now() < (lasso.coolUntil || 0)) return;
+        if (lassoHas() && lasso.poly){
           var h = lassoHitHandle(p.x, p.y);
           if (h){
             lassoBeginScale(S, h, p);
@@ -6638,12 +6657,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
             hideLassoStyle();
             return;
           }
-          /* a tap or stroke away from the catch drops it. A new box is
-             a separate gesture, not this one. */
-          lassoClear();
+          /* Outside the catch: a tap will drop it, a real drag starts a
+             new box. Do not clear here — that ate the next move and left
+             a dotted ghost that could not be dismissed. */
+          lasso.origin = p;
+          lasso.draft = (ink.lassoShape === "rect")
+            ? [p.x, p.y, p.x, p.y, p.x, p.y, p.x, p.y]
+            : [p.x, p.y];
+          S.drawing = { lassoing:true, replacing:true };
+          hideLassoStyle();
           return;
         }
         lasso.surface = S; lasso.picked = []; lasso.pickedEls = [];
+        lasso.draft = null;
         /* A box selection is still a polygon, just one with four corners.
            Keeping the same shape downstream means strokeInPoly, polyBounds,
            the move, the scale and the drawing code all carry on unchanged. */
@@ -6674,11 +6700,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (!evs || !evs.length) evs = [e];
       if (S.drawing.lassoing){
         lasso.cx = e.clientX; lasso.cy = e.clientY;
+        var dest = S.drawing.replacing ? "draft" : "poly";
         if (ink.lassoShape === "rect" && lasso.origin){
           var q = S.toPage(e), o = lasso.origin;
-          lasso.poly = [o.x, o.y, q.x, o.y, q.x, q.y, o.x, q.y];
+          lasso[dest] = [o.x, o.y, q.x, o.y, q.x, q.y, o.x, q.y];
         } else {
-          evs.forEach(function(ev){ var q2 = S.toPage(ev); lasso.poly.push(q2.x, q2.y); });
+          if (!lasso[dest]) lasso[dest] = [];
+          evs.forEach(function(ev){ var q2 = S.toPage(ev); lasso[dest].push(q2.x, q2.y); });
         }
         S.redraw();
         return;
@@ -6731,7 +6759,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var d = S.drawing;
       if (!d) return;
       S.drawing = null;
-      if (d.lassoing){ lassoFinish(S, lasso.poly); return; }
+      if (d.lassoing){
+        var poly = d.replacing ? lasso.draft : lasso.poly;
+        lasso.draft = null;
+        lassoFinish(S, poly);
+        return;
+      }
       if (d.moving || d.scaling){ S.queueSave(); markDirty(); return; }
       if (d.erasing){
         if (d.removed.length){ S.undo.push(tagOp({ t:"del", ss:d.removed })); S.redo = []; clearTextRedo(); S.queueSave(); }
@@ -6960,10 +6993,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     ctx.restore();
   }
-  function drawLasso(ctx, poly){
+  function drawLasso(ctx, poly, selected){
     if (!poly || poly.length < 4) return;
-    var selected = (lasso.picked && lasso.picked.length) ||
-                   (lasso.pickedEls && lasso.pickedEls.length);
     ctx.save();
     if (selected){
       /* After a catch: a clean box with eight handles, like Samsung Notes.
@@ -9658,7 +9689,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   /* ---- lasso ---- */
-  var lasso = { poly: null, picked: [], pickedEls: [], surface: null, dragging: false, last: null };
+  var lasso = { poly: null, draft: null, picked: [], pickedEls: [], surface: null,
+                dragging: false, last: null, coolUntil: 0 };
 
   function hideLassoStyle(){
     if ($("lassoStylePop")) $("lassoStylePop").hidden = true;
@@ -9724,7 +9756,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return null;
   }
   function lassoClear(){
-    lasso.poly = null; lasso.picked = []; lasso.pickedEls = []; lasso.surface = null;
+    lasso.poly = null; lasso.draft = null;
+    lasso.picked = []; lasso.pickedEls = []; lasso.surface = null;
     lasso.scaleOrig = null;
     $("lassoBar").hidden = true;
     if ($("lassoMore")) $("lassoMore").hidden = true;
@@ -9796,15 +9829,40 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     grip.addEventListener("pointerup", end);
     grip.addEventListener("pointercancel", end);
   })();
+  /* Tap-away must not fire on the same press that finished the box, and
+     must not fire on a finger that is scrolling. Record a candidate on
+     down; cancel it if the pointer travels; clear only on a still tap. */
+  var lassoAway = { on: false, x: 0, y: 0 };
+  function lassoOnChrome(el){
+    return !!(el && el.closest && el.closest(
+      "#lassoBar, #lassoStylePop, #lassoMore, #favBar, #jumpBar, #inkTools, #fmtBar, #favDot, #jumpDot"
+    ));
+  }
   document.addEventListener("pointerdown", function(e){
+    lassoAway.on = false;
     if (typeof lassoHas !== "function" || !lassoHas()) return;
-    if (e.target && e.target.closest &&
-        e.target.closest("#lassoBar, #lassoStylePop, #lassoMore")) return;
+    if (Date.now() < (lasso.coolUntil || 0)) return;
+    if (lassoOnChrome(e.target)) return;
     var S = lasso.surface || (typeof noteSurface !== "undefined" ? noteSurface : null);
     if (S && S.toPage && lasso.poly){
       var p = S.toPage(e);
       if (lassoHitHandle(p.x, p.y) || C.pointInPoly(p.x, p.y, lasso.poly)) return;
     }
+    lassoAway.on = true; lassoAway.x = e.clientX; lassoAway.y = e.clientY;
+  }, true);
+  document.addEventListener("pointermove", function(e){
+    if (!lassoAway.on) return;
+    if (Math.abs(e.clientX - lassoAway.x) > 12 || Math.abs(e.clientY - lassoAway.y) > 12)
+      lassoAway.on = false;
+  }, true);
+  document.addEventListener("pointerup", function(e){
+    if (!lassoAway.on) return;
+    lassoAway.on = false;
+    if (typeof lassoHas !== "function" || !lassoHas()) return;
+    if (Date.now() < (lasso.coolUntil || 0)) return;
+    if (lassoOnChrome(e.target)) return;
+    var S = lasso.surface;
+    if (S && S.drawing) return;
     lassoClear();
   }, true);
   function placeLassoStyle(){
@@ -9854,21 +9912,33 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     lasso.poly = [x0, y0, x1, y0, x1, y1, x0, y1];
   }
   function lassoFinish(S, poly){
-    lasso.poly = poly; lasso.surface = S;
-    var box = C.polyBounds(poly);
-    if (box && (box.maxX - box.minX) < 8 && (box.maxY - box.minY) < 8){
-      lassoClear();
-      hint("Box was too small. Drag a larger one.");
+    lasso.coolUntil = Date.now() + 320;
+    lasso.draft = null;
+    if (!poly || poly.length < 4){
+      if (lassoHas()) lassoClear();
       return;
     }
+    lasso.poly = poly; lasso.surface = S;
+    var box = C.polyBounds(poly);
+    if (!box || ((box.maxX - box.minX) < 8 && (box.maxY - box.minY) < 8)){
+      lassoClear();
+      return;
+    }
+    var pad = 8;
+    var fat = { minX: box.minX - pad, minY: box.minY - pad,
+                maxX: box.maxX + pad, maxY: box.maxY + pad };
     var full = lassoFull();
     lasso.picked = S.strokes.filter(function(s){ return C.strokeInPoly(s, poly, full); });
+    if (!lasso.picked.length && C.strokeHitsBox)
+      lasso.picked = S.strokes.filter(function(s){ return C.strokeHitsBox(s, fat); });
     lasso.pickedEls = lassoPickEls(S, poly);
     var any = lassoHas();
     if (!any){
+      lassoClear();
       hint("Nothing in that box.");
+      return;
     }
-    $("lassoBar").hidden = !any;
+    $("lassoBar").hidden = false;
     if ($("lassoMore")) $("lassoMore").hidden = true;
     hideLassoStyle();
     var bits = [];
@@ -9878,9 +9948,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (imgs) bits.push(imgs + (imgs === 1 ? " picture" : " pictures"));
     if (words) bits.push(words + (words === 1 ? " block" : " blocks"));
     $("lassoCount").textContent = bits.join(" · ") || "";
-    if (any) lassoSnapBox();
+    lassoSnapBox();
     S.redraw();
-    if (any) placeLassoPop();
+    requestAnimationFrame(function(){ placeLassoPop(); });
     if ($("lassoPaste")) $("lassoPaste").disabled = !inkClip.length && !(typeof elClip !== "undefined" && elClip.length);
   }
   function dropBounds(list){ dropBoundsOf(list); }
@@ -15661,9 +15731,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           (e.target.getAttribute && e.target.getAttribute("data-grip"))))
         return false;
     }
-    /* Pan exactly when the browser used to be allowed to: the lock, the pen
-       being near, and write mode all still mean a finger does nothing. */
-    if (ink.lock || ink.penNear || ink.mode === "write") return false;
+    /* A live lasso must not pin the page. The pen is often still hovering,
+       which used to block this path and left the catch undismissable. */
+    if (ink.tool === "lasso" && typeof lassoHas === "function" && lassoHas()){
+      /* mayDraw already said this finger is not on the catch */
+    } else if (ink.lock || ink.penNear || ink.mode === "write"){
+      return false;
+    }
     if (Object.keys(gest.pts).length > 1) return false;  /* two fingers: pinch */
     pan.id = e.pointerId; pan.on = true;
     pan.x = e.clientX; pan.y = e.clientY;
