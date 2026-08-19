@@ -2597,7 +2597,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b129";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b130";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5854,9 +5854,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* what the last render showed, so reopening a notebook can tell "I have just
      arrived here" from "I have just backed out of a page in it" */
   var prevView = null, prevNbId = null;
+  /* Which render is the current one. A page change is asked for synchronously
+     but answered by storage a moment later, so during a chip drag several are
+     in the air at once. Whichever was asked for last is the only one allowed
+     to finish; the rest fall away where they stand. Without this an older one
+     could land after a newer one and put the previous page's words on screen
+     underneath the new page's handwriting. */
+  var renderSeq = 0;
 
   function render(){
     var r = parseHash();
+    var mine = ++renderSeq;
     var changedNote = (r.noteId !== state.noteId);
     var backedOutOfNote = (prevView === "note" && prevNbId === r.nbId);
     prevView = r.view; prevNbId = r.nbId;
@@ -5874,6 +5882,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       C.trash(), C.notesSnapshot(), C.practiceCounts(), C.allGroups(),
       r.nbId ? C.ensureDefaultSection(r.nbId) : Promise.resolve([])
     ]).then(function(res){
+      if (mine !== renderSeq) return;        /* a newer page was asked for */
       state.notebooks = res[0];
       state.groups = res[7] || [];
       state.sections = res[8] || [];
@@ -5916,6 +5925,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return finishRender();
 
       function finishRender(){
+        if (mine !== renderSeq) return;      /* a newer page was asked for */
         if (changedNote){
           /* park BEFORE clearing the id. Clearing first made park see a
              blank page, so the page you left forgot its undo stack — and
@@ -10159,6 +10169,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         return {
           el: el,
           box: box,
+          /* Where the block has already been dragged to. left/top are an
+             offset from where it naturally sits, and box is measured where it
+             SHOWS — offset included — so a new offset worked out from box
+             alone would replace the drag rather than add to it, and the block
+             would snap back home the moment you resized it. Taken once here,
+             never re-read while the finger is moving, or it would compound. */
+          ox: Number(el.getAttribute("data-lasso-x") || 0),
+          oy: Number(el.getAttribute("data-lasso-y") || 0),
           pct: Number(el.getAttribute("data-pct") || 70),
           fs: parseFloat((el.style && el.style.fontSize) || window.getComputedStyle(el).fontSize) || 16
         };
@@ -10223,8 +10241,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         applyImagePlace(el);
       } else {
         el.style.position = "relative";
-        el.setAttribute("data-lasso-x", a.x - rec.box.minX);
-        el.setAttribute("data-lasso-y", a.y - rec.box.minY);
+        el.setAttribute("data-lasso-x", (rec.ox || 0) + (a.x - rec.box.minX));
+        el.setAttribute("data-lasso-y", (rec.oy || 0) + (a.y - rec.box.minY));
         el.style.left = (a.x - rec.box.minX) + "px";
         el.style.top = (a.y - rec.box.minY) + "px";
         var f = (a.sx + a.sy) / 2;
@@ -10241,6 +10259,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var n = lasso.picked.length + ((lasso.pickedEls && lasso.pickedEls.length) || 0);
     if (n >= 5 && !confirm("Delete " + n + " things from this page?")) return;
     var ids = {}; lasso.picked.forEach(function(s){ ids[s.id] = 1; });
+    /* Typed blocks are about to be taken out of the page by hand. Only typing
+       raises the event that records the words for Undo, so without this the
+       deletion left no trace at all and Undo reached past it to whatever you
+       had typed before — sometimes on a different page entirely. Recorded
+       before and after, the way removing a picture already does. */
+    var hitBody = !!(lasso.pickedEls && lasso.pickedEls.length) && S.name !== "practice";
+    if (hitBody && typeof snapText === "function") snapText();
     if (lasso.picked.length){
       S.undo.push(tagOp({ t:"del", ss: S.strokes.map(function(s,i){ return {i:i, s:s}; })
                                           .filter(function(x){ return ids[x.s.id]; }) }));
@@ -10250,7 +10275,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     (lasso.pickedEls || []).forEach(function(el){
       if (el.parentNode) el.parentNode.removeChild(el);
     });
-    if (lasso.pickedEls && lasso.pickedEls.length) markDirty();
+    if (lasso.pickedEls && lasso.pickedEls.length){
+      /* and again after, which is what makes the deletion itself the thing
+         Undo takes back. It also clears the stale redo for free. */
+      if (hitBody && typeof snapText === "function") snapText();
+      markDirty();
+    }
     lassoClear(); S.queueSave(); paintInkTools();
     if (typeof paintFoot === "function") paintFoot();
   });
