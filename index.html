@@ -289,6 +289,7 @@
     border:1px solid transparent; border-radius:3px; background:transparent; color:var(--ink);
   }
   #noteTitle::placeholder{color:var(--ink-2); font-variation-settings:"wght" 400,"wdth" 85}
+  body.working #noteTitle{font-family:var(--mono); letter-spacing:.06em}
   #noteTitle:hover{border-color:var(--rule)}
   #noteTitle:focus{outline:2px solid var(--live); outline-offset:-1px; background:var(--field)}
   .docbar .ghost.on{background:var(--ink); color:var(--panel); border-color:var(--ink)}
@@ -2606,7 +2607,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b134";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b135";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4105,6 +4106,36 @@ var MarginCore = (function(){
       return putOne("practices", blankPractice(noteId, l.length));
     });
   }
+  /* Every live working page, grouped by the notebook page it belongs to.
+     Used to weave them into the same reading order as ordinary pages. */
+  function practicesGrouped(){
+    return getAll("practices").then(function(l){
+      var m = {};
+      l.filter(live).forEach(function(p){
+        if (!m[p.noteId]) m[p.noteId] = [];
+        m[p.noteId].push(p);
+      });
+      Object.keys(m).forEach(function(k){
+        m[k].sort(function(a,b){
+          return (a.page||0) - (b.page||0) || (a.createdAt||0) - (b.createdAt||0);
+        });
+      });
+      return m;
+    });
+  }
+  /* S2P2w1 — the page it was opened from, then which working sheet. */
+  function workingName(parent, index){
+    var base = "P";
+    if (parent){
+      var sp = splitSecPage(parent.title);
+      if (sp) base = "S" + sp.s + "P" + sp.p;
+      else {
+        var t = String(parent.title || "").trim();
+        base = t ? t.replace(/\s+/g, "").slice(0, 10) : "P";
+      }
+    }
+    return base + "w" + (index + 1);
+  }
   /* does this note have rough working attached, and how much? */
   function practiceSummary(){
     return getAll("practices").then(function(l){
@@ -4904,6 +4935,7 @@ var MarginCore = (function(){
     markRevised:markRevised, backlinks:backlinks,
     htmlToMarkdown:htmlToMarkdown, noteToMarkdown:noteToMarkdown,
     addPracticePage:addPracticePage, practiceSummary:practiceSummary,
+    practicesGrouped:practicesGrouped, workingName:workingName,
     reviveAsset:reviveAsset, tombstoneAssets:tombstoneAssets, bumpNote:bumpNote,
     matchNote:matchNote, stamp:stamp, relTime:relTime,
     createNotebook:createNotebook, allNotebooks:allNotebooks, getNotebook:getNotebook,
@@ -4947,6 +4979,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     allNotes: [], inkNotes: {}, attNotes: {}, audNotes: {}, nbLast: null,
     groups: [], gFold: {}, marks: [],
     sections: [], sFold: {}, sectionId: null, secPlace: {},
+    workId: null, workRec: null, workByNote: {},
     dirty: false, saving: false
   };
 
@@ -4962,7 +4995,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (p[0] === "weak") return {view:"weak", nbId:null, noteId:null};
     if (p[0] === "practice") return {view:"pracAll", nbId:null, noteId:null};
     if (p[0] === "nb" && p[1]){
-      if (p[2] === "note" && p[3]) return {view:"note", nbId:p[1], noteId:p[3]};
+      if (p[2] === "note" && p[3]){
+        var workId = (p[4] === "w" && p[5]) ? p[5] : null;
+        return {view:"note", nbId:p[1], noteId:p[3], workId:workId};
+      }
       return {view:"notebook", nbId:p[1], noteId:null};
     }
     return {view:"home", nbId:null, noteId:null};
@@ -4975,7 +5011,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     else if (route.marks) h = "#/marks";
     else if (route.weak) h = "#/weak";
     else if (route.pracAll) h = "#/practice";
-    else if (route.nbId) h = "#/nb/" + route.nbId + (route.noteId ? "/note/" + route.noteId : "");
+    else if (route.nbId) h = "#/nb/" + route.nbId + (route.noteId ? "/note/" + route.noteId : "") +
+      (route.noteId && route.workId ? "/w/" + route.workId : "");
     if (location.hash === h) return render();
     if (replace) history.replaceState(null, "", h); else location.hash = h;
     if (replace) render();
@@ -5033,6 +5070,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof flushPractice === "function" && prac.open) flushPractice();
     if (!state.dirty || !state.note || state.saving) return Promise.resolve();
     state.saving = true;
+    if (state.workId && state.workRec){
+      var wid = state.workId;
+      return C.savePractice(wid, { html: serializeBody() }).then(function(saved){
+        state.saving = false;
+        if (state.workId === wid) state.workRec = saved;
+        markSaved();
+        paintFoot();
+        broadcastChange();
+        return refreshLists();
+      }).catch(function(e){
+        state.saving = false;
+        say("Could not save: " + (e && e.message ? e.message : e));
+      });
+    }
     var id = state.note.id;
     var patch = {
       title: $("noteTitle").value,
@@ -5621,10 +5672,23 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return;
     }
     blank.style.display = "none"; live.hidden = false;
-    $("noteTitle").value = state.note.title || "";
+    var liveId = currentPageId();
+    var liveHtml = (state.workRec && state.workId) ? (state.workRec.html || "") : (state.note.html || "");
+    var liveTitle = (state.workRec && state.workId)
+      ? ((typeof C.workingName === "function")
+          ? C.workingName(state.note, (function(){
+              var ws = (state.workByNote[state.note.id] || []);
+              for (var wi = 0; wi < ws.length; wi++) if (ws[wi].id === state.workId) return wi;
+              return 0;
+            })())
+          : "working")
+      : (state.note.title || "");
+    $("noteTitle").value = liveTitle;
+    $("noteTitle").readOnly = !!state.workId;
+    document.body.classList.toggle("working", !!state.workId);
     /* only touch innerHTML when the note actually changed — rewriting it
        mid-typing would kill the caret and the Samsung keyboard's state */
-    if ($("body").dataset.noteId !== state.note.id){
+    if ($("body").dataset.noteId !== liveId){
       /* the catch was drawn over the page that is leaving; its elements are
          about to be thrown away, and acting on it afterwards would move the
          new page's blocks instead */
@@ -5634,12 +5698,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          picture on it is holding a node that will not exist in a moment */
       parkPageUndo($("body").dataset.noteId);
       if (typeof deselectImage === "function") deselectImage();
-      $("body").innerHTML = state.note.html || "";
-      $("body").dataset.noteId = state.note.id;
+      $("body").innerHTML = liveHtml;
+      $("body").dataset.noteId = liveId;
       /* size the sheet from the last measured ink BEFORE pictures decode,
          so the first scroll into this page does not grow under you */
       if (typeof pageHeightOf === "function"){
-        $("body").style.minHeight = Math.round(pageHeightOf(state.note.id)) + "px";
+        $("body").style.minHeight = Math.round(pageHeightOf(liveId)) + "px";
       }
       ink.focusOverride = false;
       resetTextHist();
@@ -5726,7 +5790,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     /* the swapped-to page is now really here, with its bands rebuilt */
     if (typeof finishHandover === "function") finishHandover();
     if (chipLand != null && state.note &&
-        (!chipLand.id || chipLand.id === state.note.id)){
+        (!chipLand.id || chipLand.id === currentPageId() || chipLand.id === state.note.id)){
       var land = (chipLand.frac || 0); chipLand = null;
       /* Read the same way the chip reads it while you are dragging: 0 is the
          head of the page at the top of the screen, 1 is its FOOT at the bottom.
@@ -5874,12 +5938,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function render(){
     var r = parseHash();
     var mine = ++renderSeq;
-    var changedNote = (r.noteId !== state.noteId);
+    var changedNote = (r.noteId !== state.noteId) ||
+                      ((r.workId || null) !== (state.workId || null));
     var backedOutOfNote = (prevView === "note" && prevNbId === r.nbId);
     prevView = r.view; prevNbId = r.nbId;
     state.nbId = r.nbId;
     if (r.nbId) state.nbLast = r.nbId;
     state.noteId = r.noteId;
+    state.workId = r.workId || null;
     state.view = r.view;
     document.body.dataset.view = r.view;
 
@@ -5889,7 +5955,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       Promise.resolve(null),
       r.noteId ? C.getNote(r.noteId) : Promise.resolve(null),
       C.trash(), C.notesSnapshot(), C.practiceCounts(), C.allGroups(),
-      r.nbId ? C.ensureDefaultSection(r.nbId) : Promise.resolve([])
+      r.nbId ? C.ensureDefaultSection(r.nbId) : Promise.resolve([]),
+      C.practicesGrouped()
     ]).then(function(res){
       if (mine !== renderSeq) return;        /* a newer page was asked for */
       state.notebooks = res[0];
@@ -5910,6 +5977,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       state.allNotes = snap.all; state.counts = snap.counts;
       state.starred = snap.starred; state.weak = snap.weak; state.marks = snap.marks || [];
       state.prac = res[6];
+      state.workByNote = res[9] || {};
+      state.workRec = null;
+      if (state.workId && state.noteId){
+        var wl = state.workByNote[state.noteId] || [];
+        wl.forEach(function(p){ if (p.id === state.workId) state.workRec = p; });
+        if (!state.workRec) state.workId = null;
+      }
       indexAssets();
       if (r.view === "search") runSearch();
 
@@ -7499,6 +7573,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var noteSurface = makeSurface("note", {
     scroller: $("paper"), canvas: $("inkLayer"),
     save: function(strokes){
+      if (state.workId){
+        return C.savePractice(state.workId, { strokes: strokes });
+      }
       var nid = state.noteId;
       if (!nid) return Promise.resolve();
       return C.getPageInk(nid, { create:true }).then(function(a){
@@ -7519,9 +7596,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       inkReady = Promise.resolve();
       return inkReady;
     }
+    if (state.workId && state.workRec){
+      noteSurface.strokes = state.workRec.strokes || [];
+      restorePageUndo("w:" + state.workId);
+      growForInk();
+      noteSurface.redraw();
+      paintInkTools();
+      inkReady = Promise.resolve();
+      return inkReady;
+    }
     var nid = state.noteId;
     inkReady = C.getPageInk(nid).then(function(a){
-      if (state.noteId !== nid) return;
+      if (state.noteId !== nid || state.workId) return;
       noteSurface.strokes = (a && a.strokes) || [];
       restorePageUndo(nid);
       growForInk();
@@ -7930,7 +8016,29 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   $("pracBtn").addEventListener("click", function(){
-    if (prac.open) closePractice(); else openPractice(0);
+    if (!state.note) return;
+    cfg.workFold = cfg.workFold || {};
+    /* already on a working sheet: fold the group and go back to the page */
+    if (state.workId){
+      cfg.workFold[state.note.id] = true;
+      saveCfg();
+      go({ nbId: state.nbId, noteId: state.note.id });
+      hint("Working pages hidden. Practice brings them back.");
+      return;
+    }
+    /* folded: unfold and open the first */
+    if (cfg.workFold[state.note.id]){
+      delete cfg.workFold[state.note.id];
+      saveCfg();
+    }
+    var list = (state.workByNote && state.workByNote[state.note.id]) || [];
+    if (list.length){
+      go({ nbId: state.nbId, noteId: state.note.id, workId: list[0].id });
+      return;
+    }
+    C.addPracticePage(state.note.id).then(function(p){
+      go({ nbId: state.nbId, noteId: state.note.id, workId: p.id });
+    });
   });
   $("pracClose").addEventListener("click", closePractice);
   $("pracPrev").addEventListener("click", function(){ gotoPracPage(prac.idx - 1); });
@@ -8299,6 +8407,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     showTagRow: true,
     showInkBar: true,
     hideBtns: {},      /* note-bar buttons turned off one by one in Settings */
+    workFold: {},      /* parent note id → hide that page's working sheets */
     spellcheck: true,
     symbols: true,
     markdown: true,
@@ -12871,12 +12980,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      silently means something different as soon as another page is added. */
   function openPracticeById(id){
     if (!state.note) return Promise.resolve();
-    return C.practicePages(state.note.id).then(function(list){
-      var i = -1;
-      list.forEach(function(p, k){ if (p.id === id) i = k; });
-      if (i < 0){ say("That working page is no longer there."); return; }
-      return openPractice(i);
-    });
+    if (cfg.workFold && cfg.workFold[state.note.id]){
+      delete cfg.workFold[state.note.id];
+      saveCfg();
+    }
+    go({ nbId: state.nbId, noteId: state.note.id, workId: id });
+    return Promise.resolve();
   }
   function pracHere(x, y){
     if (!state.note) return;
@@ -13931,9 +14040,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        are sheet pixels. Without the divide the chips lie as soon as you
        pinch, and a drag lands on the wrong page. */
     var y = p ? Math.max(0, (p.scrollTop - pad) / z) : 0;
+    var hereId = (typeof visualNoteId === "function" && visualNoteId()) ||
+                 (typeof currentPageId === "function" && currentPageId()) || state.noteId;
     for (var i = 0; i < list.length; i++){
       var h = pageSpan(list[i].id);
-      if (list[i].id === state.noteId) return Math.min(1, (acc + Math.min(h, y)) / tot);
+      if (list[i].id === hereId) return Math.min(1, (acc + Math.min(h, y)) / tot);
       acc += h;
     }
     /* Not in this list at all. That is not the same as being at its very top,
@@ -14026,8 +14137,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        app has stopped responding, which is what it looked like. */
     var wantNote = (chipDrag && chipDrag.want && chipDrag.want.note)
                      ? chipDrag.want.note : null;
-    var atId = wantNote ? wantNote.id : state.noteId;
-    var atNote = wantNote || state.note;
+    var atId = wantNote ? wantNote.id
+      : ((typeof currentPageId === "function" && currentPageId()) || state.noteId);
+    var atNote = wantNote || (typeof pageById === "function" && pageById(atId)) || state.note;
     /* dragging the notebook chip can point into a different section, so the
        section chip has to count within THAT section, not the one you left */
     if (wantNote && wantNote.sectionId &&
@@ -14091,14 +14203,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function applyChipPlace(place, list){
     if (!place || !place.note) return;
     if (!$("paper")) return;
-    if (place.note.id === state.noteId){ landOnPage(place.frac); return; }
+    if (place.note.id === (typeof currentPageId === "function" ? currentPageId() : state.noteId) ||
+        place.note.id === (typeof visualNoteId === "function" ? visualNoteId() : state.noteId)){
+      landOnPage(place.frac); return;
+    }
     if (typeof swapping === "function" && swapping()){
       /* a page is already loading: let it land, then come here */
       handover.queued = { id: place.note.id, frac: place.frac };
       return;
     }
     chipLand = { id: place.note.id, frac: place.frac };
-    go({ nbId: state.nbId, noteId: place.note.id });
+    if (typeof openPage === "function") openPage(place.note);
+    else go({ nbId: state.nbId, noteId: place.note.id });
   }
   /* How often the page underneath may change while you drag. Turning the
      page is a real page load, so it cannot happen on every pointermove —
@@ -14196,7 +14312,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return;
     }
     chipLand = { id: place.note.id, frac: place.frac };
-    go({ nbId: state.nbId, noteId: place.note.id });
+    if (typeof openPage === "function") openPage(place.note);
+    else go({ nbId: state.nbId, noteId: place.note.id });
   }
   function wireNavChip(id, kind){
     var el = $(id);
@@ -14418,6 +14535,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     fit();                                     /* something on screen at once */
     if (!noteId) return;
+    var wstrokes = (typeof workStrokesOf === "function") ? workStrokesOf(noteId) : null;
+    if (wstrokes){
+      if (body && host.parentNode && !host.parentNode.classList.contains("thin")){
+        body.style.minHeight = Math.round(pageHeightOf(noteId)) + "px";
+        host.style.minHeight = "0px";
+      }
+      var cW = fit();
+      if (cW) wstrokes.forEach(function(s){ drawStroke(cW, s); });
+      return;
+    }
     C.getPageInk(noteId).then(function(a){
       /* the page may have moved on while this was loading */
       if (cv.getAttribute("data-for") !== noteId) return;
@@ -14462,7 +14589,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       box.classList.remove("secjoin");
       box.hidden = false;
     } else {
-      $("prevPeekBody").innerHTML = previewHtml(prev.html);
+      $("prevPeekBody").innerHTML = previewHtml(pageSrcHtml(prev));
       /* the same stored sheet height the live page uses — never refined
          later from ink, or the band would jump as the strokes arrive */
       $("prevPeekBody").style.minHeight = Math.round(pageHeightOf(prev.id)) + "px";
@@ -14507,7 +14634,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        nothing in the app can find two of anything, it is not editable, and
        pictures become a marker rather than being loaded — hydrateImages only
        ever looks inside #body, so a live figure here would sit empty. */
-    $("nextPeekBody").innerHTML = previewHtml(next.html);
+    $("nextPeekBody").innerHTML = previewHtml(pageSrcHtml(next));
     $("nextPeekBody").style.minHeight = Math.round(pageHeightOf(next.id)) + "px";
     $("nextPeekPage").style.minHeight = "0px";
     hydratePeekImages("next", $("nextPeekBody"));
@@ -14526,6 +14653,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     [-1, 1].forEach(function(dir){
       var n = neighbourPage(dir);
       if (!n) return;
+      if (n.working || (n.id && String(n.id).indexOf("w:") === 0)){
+        if (dir < 0) paintPeekInk("prevPeekInk", n.id);
+        else paintPeekInk("nextPeekInk", n.id);
+        return;
+      }
       C.getPageInk(n.id).then(function(a){
         if (!a || !n) return;
         pageInkDepth[n.id] = C.inkDepth(a.strokes || []);
@@ -14683,14 +14815,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        milliseconds is time the fling spends carrying you past the join before
        the page underneath has changed, which is the lurch. */
     try { flush(); } catch (e) {}
-    go({ nbId: nbId, noteId: id });
+    if (typeof openPage === "function") openPage(target);
+    else go({ nbId: nbId, noteId: id });
   }
 
   /* called from paintDoc once the swapped-to page is mounted and its bands
      have been rebuilt */
   function finishHandover(){
     var pend = handover.pending;
-    if (!pend || !state.note || state.note.id !== pend.id) return;
+    if (!pend || !state.note) return;
+    var here = (typeof currentPageId === "function") ? currentPageId() : state.note.id;
+    if (pend.id !== here && pend.id !== state.note.id) return;
     handover.pending = null;
     clearTimeout(handover.guard);
     var p = $("paper"), band = $("prevPeek");
@@ -14815,7 +14950,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
             handover.queued.id !== state.noteId){
           var q = handover.queued; handover.queued = null;
           chipLand = { id: q.id, frac: q.frac };
-          go({ nbId: state.nbId, noteId: q.id });
+          if (typeof openPage === "function") openPage(q.id);
+          else go({ nbId: state.nbId, noteId: q.id });
         } else {
           handover.queued = null;
         }
@@ -14884,7 +15020,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("endNext").addEventListener("click", function(){
     var next = neighbourPage(1);
     if (!next) return;
-    flush().then(function(){ go({ nbId: state.nbId, noteId: next.id }); });
+    flush().then(function(){ openPage(next); });
   });
 
   /* ---- 20c. scrolling past the end flows into the next page ----
@@ -14902,11 +15038,73 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      and the page numbers never disagree */
   function pageOrder(){
     var secs = state.sections || [];
-    if (!secs.length) return C.sortPages(state.notes);
-    var grouped = C.notesBySection(state.notes, secs);
+    var notes = !secs.length ? C.sortPages(state.notes) : (function(){
+      var grouped = C.notesBySection(state.notes, secs);
+      var flat = [];
+      grouped.forEach(function(g){ flat = flat.concat(g.notes); });
+      return flat;
+    })();
+    /* Each page's working sheets sit immediately after it, named S2P2w1…
+       so scrolling and the chips walk …S2P2, S2P2w1, S2P2w2, S2P3… the
+       way a printed notebook would. Folded groups stay out of the flow. */
+    var fold = (cfg && cfg.workFold) || {};
+    var by = state.workByNote || {};
     var out = [];
-    grouped.forEach(function(g){ out = out.concat(g.notes); });
+    notes.forEach(function(n){
+      out.push(n);
+      if (fold[n.id]) return;
+      var ws = by[n.id] || [];
+      ws.forEach(function(p, i){
+        out.push({
+          id: "w:" + p.id,
+          working: true,
+          parentId: n.id,
+          pracId: p.id,
+          notebookId: n.notebookId,
+          sectionId: n.sectionId,
+          title: (typeof C.workingName === "function") ? C.workingName(n, i) : ("w" + (i+1)),
+          lastEdited: p.lastEdited
+        });
+      });
+    });
     return out;
+  }
+  function pageById(id){
+    var list = pageOrder();
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+  function openPage(n){
+    if (!n) return;
+    if (typeof n === "string") n = pageById(n);
+    if (!n) return;
+    if (n.working) go({ nbId: state.nbId || n.notebookId, noteId: n.parentId, workId: n.pracId });
+    else go({ nbId: state.nbId || n.notebookId, noteId: n.id });
+  }
+  function currentPageId(){
+    return state.workId ? ("w:" + state.workId) : state.noteId;
+  }
+  function pageSrcHtml(n){
+    if (!n) return "";
+    if (n.working){
+      var list = (state.workByNote && state.workByNote[n.parentId]) || [];
+      for (var i = 0; i < list.length; i++)
+        if (list[i].id === n.pracId) return list[i].html || "";
+      return "";
+    }
+    return n.html || "";
+  }
+  function workStrokesOf(pageId){
+    if (!pageId || String(pageId).indexOf("w:") !== 0) return null;
+    var prid = pageId.slice(2);
+    var by = state.workByNote || {};
+    var keys = Object.keys(by);
+    for (var i = 0; i < keys.length; i++){
+      var list = by[keys[i]] || [];
+      for (var j = 0; j < list.length; j++)
+        if (list[j].id === prid) return list[j].strokes || [];
+    }
+    return [];
   }
   function sectionOfNote(n){
     if (!n || !n.sectionId) return null;
@@ -14934,7 +15132,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function neighbourPage(dir){
     var list = pageOrder();
     var i = -1;
-    list.forEach(function(n, k){ if (n.id === state.noteId) i = k; });
+    var here = (typeof currentPageId === "function") ? currentPageId() : state.noteId;
+    list.forEach(function(n, k){ if (n.id === here) i = k; });
     if (i < 0) return null;
     return list[i + dir] || null;
   }
@@ -14979,7 +15178,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var landAtBottom = (dir < 0);
     showFlowCue(next, dir);
     flush().then(function(){
-      go({ nbId: state.nbId, noteId: next.id });
+      openPage(next);
       /* going backwards should land at the foot of the previous page, so the
          movement reads as one continuous document rather than a jump */
       setTimeout(function(){
@@ -16448,7 +16647,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (prev){
       chipLand = { id: prev.id, frac: 0 };
       flush();
-      go({ nbId: state.nbId, noteId: prev.id });
+      openPage(prev);
     } else {
       p.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -16465,7 +16664,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (next){
       chipLand = { id: next.id, frac: 0 };
       flush();
-      go({ nbId: state.nbId, noteId: next.id });
+      openPage(next);
     } else {
       p.scrollTo({ top: p.scrollHeight, behavior: "smooth" });
     }
