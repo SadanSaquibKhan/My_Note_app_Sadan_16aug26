@@ -34,10 +34,12 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b148**. Pictures now copy between the computer and the
-  tablet (not class recordings). A picture you insert should stay after a
-  reload. **b147** is still live for Home / tabs / reload-keeps-place if
-  you have not tried those yet.
+- Current build: **b149**. The top-bar **Full** button now has a lock:
+  long-press it (~400ms) to lock — it highlights — and then, only while
+  locked, starting to write or type fills the Chrome tab (real full screen).
+  Short tap still toggles full screen; it reads "Exit" to come back; a second
+  long-press unlocks. **b148 pictures still need your test** (see below):
+  put a picture on the laptop, Sync, then Sync on the tablet.
 - **Waiting on you:** close and reopen; confirm **b148** in Settings. Put
   a picture on the computer, tap Sync, then Sync on the tablet — the
   picture should appear, not “This picture is missing.” Put a picture on
@@ -189,6 +191,10 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
+- **b149** `75847fa` — Full button gains a long-press lock (highlights when locked);
+  only while locked, writing/typing auto-enters real Chrome full screen; short tap
+  still toggles, "Exit" comes back, second long-press unlocks. cfg-guarded (cfg is
+  defined below the button code). — *Claude Code*
 - **b148** `a062d2c` — Pictures copy between devices; a tablet picture no longer
   vanishes on reload; missing slot no longer eats the next picture. — *Grok Build*
 - **b147** `3233b3e` — Home folder grid, top Sync/Full/Tabs, tab-strip Home/+, keep open
