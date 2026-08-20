@@ -2831,7 +2831,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b150";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b151";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5381,7 +5381,10 @@ var MarginCore = (function(){
     if ((merged.strokes || []).some(function(s){ return s && s.id != null && !inIds[s.id]; }))
       return true;
     var inRm = incoming.removed || {};
-    return Object.keys(merged.removed || {}).some(function(id){ return inRm[id] == null; });
+    if (Object.keys(merged.removed || {}).some(function(id){ return inRm[id] == null; }))
+      return true;
+    var inRs = incoming.restored || {};
+    return Object.keys(merged.restored || {}).some(function(id){ return inRs[id] == null; });
   }
 
   return {
@@ -7538,7 +7541,21 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     };
     S.markBack = function(ids){
       S.removed = S.removed || {};
-      (ids || []).forEach(function(id){ if (id != null) delete S.removed[String(id)]; });
+      S.restored = S.restored || {};
+      /* Bringing a stroke back is a NEW fact that has to beat the erase across
+         devices. Deleting it from `removed` locally is not enough: the other
+         device still holds the erase tombstone, and the grow-only ink merge
+         would union it back and drop the stroke a second time — silently
+         losing handwriting the user just restored with Undo. So we also stamp a
+         restore time (later than the erase); the merge keeps whichever of
+         erase/restore is newer, per stroke id. */
+      var now = Date.now();
+      (ids || []).forEach(function(id){
+        if (id == null) return;
+        id = String(id);
+        delete S.removed[id];
+        S.restored[id] = now;
+      });
     };
 
     function zoom(){ return (name === "note") ? state.zoom : 1; }
@@ -7605,7 +7622,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       clearTimeout(S.saveTimer);
       if (!S.dirty) return Promise.resolve();
       S.dirty = false;
-      return S.save(S.strokes, S.removed || {}).then(function(){ markSaved(); paintFoot(); })
+      return S.save(S.strokes, S.removed || {}, S.restored || {}).then(function(){ markSaved(); paintFoot(); })
               .catch(function(e){ say("Could not save the writing: " + e.message); });
     };
 
@@ -8415,11 +8432,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* ---- mounting the note's page layer ---- */
   var noteSurface = makeSurface("note", {
     scroller: $("paper"), canvas: $("inkLayer"),
-    save: function(strokes, removed){
+    save: function(strokes, removed, restored){
       var nid = state.noteId;
       if (!nid) return Promise.resolve();
       return C.getPageInk(nid, { create:true }).then(function(a){
-        return C.saveAsset(a.id, { strokes: strokes, removed: removed || {} });
+        return C.saveAsset(a.id, { strokes: strokes, removed: removed || {}, restored: restored || {} });
       }).then(function(){ return C.bumpNote(nid); }).then(function(n){
         if (n && state.note && state.note.id === n.id) state.note = n;
       });
@@ -8431,6 +8448,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function loadNoteInk(){
     noteSurface.strokes = [];
     noteSurface.removed = {};
+    noteSurface.restored = {};
     if (!state.noteId){
       noteSurface.undo = []; noteSurface.redo = [];
       noteSurface.redraw();
@@ -8442,6 +8460,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (state.noteId !== nid) return;
       noteSurface.strokes = (a && a.strokes) || [];
       noteSurface.removed = (a && a.removed) || {};
+      noteSurface.restored = (a && a.restored) || {};
       restorePageUndo(nid);
       growForInk();
       noteSurface.redraw();
@@ -8764,9 +8783,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   var pracSurface = makeSurface("practice", {
     scroller: $("pracPaper"), canvas: $("pracInk"),
-    save: function(strokes, removed){
+    save: function(strokes, removed, restored){
       if (!prac.rec) return Promise.resolve();
-      return C.savePractice(prac.rec.id, { strokes: strokes, removed: removed || {} });
+      return C.savePractice(prac.rec.id, { strokes: strokes, removed: removed || {}, restored: restored || {} });
     }
   });
   wireSurface(pracSurface);
@@ -8801,6 +8820,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       $("pracText").innerHTML = prac.rec.html || "";
       pracSurface.strokes = prac.rec.strokes || [];
       pracSurface.removed = prac.rec.removed || {};
+      pracSurface.restored = prac.rec.restored || {};
       pracSurface.undo = []; pracSurface.redo = [];
       ink.active = "practice";
       if (typeof hydrateImages === "function") hydrateImages();
@@ -8839,7 +8859,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     clearTimeout(prac.saveTimer);
     if (!prac.rec) return Promise.resolve();
     var id = prac.rec.id;
-    return C.savePractice(id, { html: $("pracText").innerHTML, strokes: pracSurface.strokes, removed: pracSurface.removed || {} })
+    return C.savePractice(id, { html: $("pracText").innerHTML, strokes: pracSurface.strokes, removed: pracSurface.removed || {}, restored: pracSurface.restored || {} })
              .then(function(r){ if (prac.rec && prac.rec.id === id) prac.rec = r; })
              .catch(function(){});
   }
@@ -8861,6 +8881,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       $("pracText").innerHTML = prac.rec.html || "";
       pracSurface.strokes = prac.rec.strokes || [];
       pracSurface.removed = prac.rec.removed || {};
+      pracSurface.restored = prac.rec.restored || {};
       pracSurface.undo = []; pracSurface.redo = [];
       if (typeof hydrateImages === "function") hydrateImages();
       pracSurface.redraw();

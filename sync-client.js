@@ -68,20 +68,27 @@
       // a stroke id is drawn once; if both have it, keep either (they're equal)
       if (!byId[s.id]) byId[s.id] = s;
     });
-    // union of erase-tombstones, keeping the latest erase time per id
-    var removed = {};
-    function addRemoved(rm) {
-      if (!rm) return;
-      Object.keys(rm).forEach(function (id) {
-        var t = num(rm[id]);
-        if (removed[id] == null || t > removed[id]) removed[id] = t;
+    // union of erase-tombstones (removed) AND un-erase stamps (restored),
+    // keeping the LATEST time per id in each. A stroke that was erased and then
+    // brought back with Undo carries restored[id] later than removed[id], so the
+    // merge no longer drops it forever the way a grow-only remove-set did.
+    var removed = {}, restored = {};
+    function fold(into, m) {
+      if (!m) return;
+      Object.keys(m).forEach(function (id) {
+        var t = num(m[id]);
+        if (into[id] == null || t > into[id]) into[id] = t;
       });
     }
-    addRemoved(a.removed);
-    addRemoved(b.removed);
-    // a stroke survives only if it is not erased
+    fold(removed, a.removed);   fold(removed, b.removed);
+    fold(restored, a.restored); fold(restored, b.restored);
+    // a stroke survives unless its LAST action was an erase: hidden only when it
+    // was erased and not restored at least as late.
+    function erased(id) {
+      return removed[id] != null && (restored[id] == null || restored[id] < removed[id]);
+    }
     var strokes = Object.keys(byId)
-      .filter(function (id) { return removed[id] == null; })
+      .filter(function (id) { return !erased(id); })
       .map(function (id) { return byId[id]; })
       .sort(function (x, y) { return num(x.t) - num(y.t); });   // keep replay order
 
@@ -90,6 +97,7 @@
     for (var k in base) if (Object.prototype.hasOwnProperty.call(base, k)) out[k] = base[k];
     out.strokes = strokes;
     out.removed = removed;
+    out.restored = restored;
     out.lastEdited = Math.max(num(a.lastEdited), num(b.lastEdited));
     return out;
   }
