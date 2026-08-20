@@ -1,0 +1,11 @@
+name = "margin-sync"
+main = "worker.js"
+compatibility_date = "2026-08-16"
+
+# Fill database_id in after you run:  wrangler d1 create margin
+[[d1_databases]]
+binding = "DB"
+database_name = "margin"
+database_id = "81808087-1762-4a10-b43f-c434478d9dd1"
+
+# SYNC_KEY is set as a secret, not here:  wrangler secret put SYNC_KEY

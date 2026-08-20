@@ -33,12 +33,22 @@ can do".
 
 ---
 
-## The design decision: two classes of data
+## Expected data profile (from the user, 2026-08-20)
+Notes are ~empty today; expected to grow to **10–14GB**, **mostly audio**. The
+user also **pastes a lot of screenshots** into notes (mostly on the laptop).
+Confirmed in code: a pasted image is stored as its **own `image` asset (a blob)**
+via `createImage`; the note HTML only keeps a `figure.imgblock` with `data-img`
+= the asset id (`serializeBody` strips the picture out). So **note text and ink
+stay tiny no matter how many screenshots are pasted** — only the image blobs are
+bulky. This is what makes the split below clean.
+
+## The design decision: three classes of data
 
 | Class | What | Size | How it syncs |
 |---|---|---|---|
-| **Light** | notebooks, sections, notes (title + HTML), page ink (strokes), settings, small inserted photos | small (sub-GB) | **Automatic, online, both ways** |
-| **Heavy** | audio recordings (the `blob`) | ~10GB, tablet-only | **Manual** — copied by hand; the *record* syncs light |
+| **Light** | notebooks, sections, notes (title + HTML, image refs only), page ink (strokes), settings | small (sub-GB even with heavy use) | **Automatic, online, both ways** — Cloudflare D1 |
+| **Medium** | pasted **screenshots / photos** (`image` assets) | "a lot", maybe a few GB over time; created mostly on the laptop | **Automatic** via object storage (Cloudflare **R2**) — storage ~$0.015/GB/mo, **downloads free**. Optionally "fetch on Wi-Fi only" on the tablet (a Phase-4 nicety) | 
+| **Heavy** | audio recordings (the `blob`) | ~10GB, tablet-only, recorded in class | **Manual** — copied by hand; only its small *record* syncs as light data |
 
 An audio asset already stores the sound (`blob`) separately from its metadata
 (`id, noteId, startedAt, dur, pages[]`). Only the `blob` is heavy. Sync the

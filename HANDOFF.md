@@ -41,9 +41,17 @@ That's it. Everything it needs to catch up is in those two files.
   (b125–b126) and is working.
 - Still rough / next up: the grey page-divider now *shows* during a chip drag but
   only briefly — you asked whether it can linger longer. Lasso on typed text
-  still has open reports. And the big future item is **sync between your laptop
-  and tablet** (planned: sync everything except audio; audio stays manual). None
-  of the sync work has started yet.
+  still has open reports.
+- **Sync (started, groundwork done, 2026-08-20):** the design is in `SYNC-PLAN.md`
+  (sync everything except audio; audio manual). The risky core is built and
+  proven WITHOUT touching the app: the merge brain (`sync-client.js`, tested by
+  `tests/sync.js` — no data loss across conflicts/deletes/same-page ink/erases),
+  and the Cloudflare Worker + D1 server (`sync-server/`), which is **deployed and
+  live** at `https://margin-sync.khanssk89.workers.dev` and verified end-to-end.
+  The app itself is NOT wired to it yet. Next sync steps: (1) fix the backup
+  (audio-less/streamed) as the safety net — the first app change; (2) wire the
+  client into `index.html`; note erasing must start leaving stroke tombstones for
+  ink merge to be correct. The sync password is saved on the PC, out of the repo.
 
 **The golden rule for every AI (so nothing breaks silently).** After any change:
 run the tests in the `tests/` folder, bump the build number with the script
