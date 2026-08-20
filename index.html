@@ -1662,6 +1662,7 @@
     <button class="ghost" id="helpBtn" title="Keyboard shortcuts">?</button>
     <span id="buildTag"></span>
     <span class="state" id="saveState"><i class="lamp"></i><span id="saveWord">ready</span></span>
+    <button class="ghost" id="syncChip" hidden title="Sync">Sync</button>
     <button class="ghost" id="themeBtn">Dark</button>
     <button class="ghost" id="captureBtn" title="New scratch note in Inbox">Quick</button>
     <button class="ghost" id="switchBtn" title="Jump to any note (Ctrl+K)">Jump</button>
@@ -2456,10 +2457,11 @@
         </div>
         <div class="field">
           <label>Sync between this tablet and the computer</label>
-          <p class="hint">Off until you paste the server address and the password
-          once. They stay on this device only &mdash; never in the public app.
-          Notes, handwriting and structure copy across. Class recordings stay
-          on the device that made them.</p>
+          <p class="hint">Off until you paste the password (the server address
+          can stay as it is). They stay on this device only &mdash; never in
+          the public app. Notes, handwriting and structure copy across. Class
+          recordings stay on the device that made them. A <b>Sync</b> button
+          appears at the top once it is on.</p>
           <label for="syncUrl">Server address</label>
           <input type="url" id="syncUrl" autocomplete="off" spellcheck="false"
                  placeholder="https://margin-sync.khanssk89.workers.dev">
@@ -2731,7 +2733,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b144";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b145";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -18220,31 +18222,50 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      Off until the user pastes a server address and password into Settings.
      Those stay in this device's IndexedDB — they are never in the public
      page. Opening a note never waits on the network. */
-  var sync = { url: "", key: "", since: 0, busy: false, timer: null, lastOk: 0, lastErr: "" };
+  var sync = { url: "", key: "", since: 0, pushSince: 0, busy: false, timer: null, lastOk: 0, lastErr: "", failN: 0 };
+  var SYNC_HINT_URL = "https://margin-sync.khanssk89.workers.dev";
 
   function syncReady(){
     return !!(sync.url && sync.key && typeof SyncCore !== "undefined");
   }
+  /* After a failed try, wait longer each time so a dead network does not
+     hammer the tablet. Success goes back to the ordinary 45s cadence. */
+  function syncRetryWait(failN){
+    var n = Number(failN) || 0;
+    if (n <= 0) return 45000;
+    var ms = 8000, i;
+    for (i = 1; i < n; i++) ms = Math.min(ms * 2, 180000);
+    return ms;
+  }
   function paintSync(){
     var el = $("syncStat");
-    if (!el) return;
+    var chip = $("syncChip");
+    var line;
     if (!sync.url || !sync.key){
-      el.textContent = "Sync is off. Paste the server address and password, then Save and test.";
-      return;
-    }
-    if (typeof SyncCore === "undefined"){
-      el.textContent = "Sync helper did not load. Check the network, then reopen the app.";
-      return;
-    }
-    if (sync.lastErr){
-      el.textContent = "Last try failed: " + sync.lastErr +
+      line = "Sync is off. Paste the server address and password, then Save and test.";
+    } else if (typeof SyncCore === "undefined"){
+      line = "Sync helper did not load. Check the network, then reopen the app.";
+    } else if (sync.busy){
+      line = "Copying notes\u2026";
+    } else if (sync.lastErr){
+      line = "Last try failed: " + sync.lastErr +
         (sync.lastOk ? " (last ok " + C.relTime(sync.lastOk) + ")" : "") +
         ". Notes on this device are still safe.";
-      return;
+    } else {
+      line = sync.lastOk
+        ? "Sync is on. Last ok " + C.relTime(sync.lastOk) + "."
+        : "Sync is on. Waiting for the first copy.";
     }
-    el.textContent = sync.lastOk
-      ? "Sync is on. Last ok " + C.relTime(sync.lastOk) + "."
-      : "Sync is on. Waiting for the first copy.";
+    if (el) el.textContent = line;
+    if (chip){
+      var on = syncReady();
+      chip.hidden = !on;
+      if (on){
+        chip.textContent = sync.busy ? "Sync\u2026" : (sync.lastErr ? "Retry" : "Synced");
+        chip.title = line;
+        chip.classList.toggle("on", !sync.lastErr && !sync.busy && !!sync.lastOk);
+      }
+    }
   }
   function fillSyncFields(){
     if ($("syncUrl") && document.activeElement !== $("syncUrl")) $("syncUrl").value = sync.url || "";
@@ -18256,18 +18277,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       C.getMeta("syncUrl", ""),
       C.getMeta("syncKey", ""),
       C.getMeta("syncPullSince", 0),
-      C.getMeta("syncLastOk", 0)
+      C.getMeta("syncLastOk", 0),
+      C.getMeta("syncPushSince", 0)
     ]).then(function(r){
       sync.url = String(r[0] || "").replace(/\/+$/, "");
       sync.key = String(r[1] || "");
       sync.since = Number(r[2]) || 0;
       sync.lastOk = Number(r[3]) || 0;
+      sync.pushSince = Number(r[4]) || 0;
       fillSyncFields();
     });
   }
   function saveSyncCreds(){
     var url = ($("syncUrl") && $("syncUrl").value || "").trim().replace(/\/+$/, "");
     var key = ($("syncKey") && $("syncKey").value || "").trim();
+    /* The address is public; only the password is secret. If they paste just
+       the password, fill the known server so they do not have to type it. */
+    if (!url && key) url = SYNC_HINT_URL;
+    if ($("syncUrl") && url) $("syncUrl").value = url;
     sync.url = url;
     sync.key = key;
     return Promise.all([
@@ -18317,7 +18344,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function scheduleSync(ms){
     if (!syncReady()) return;
     clearTimeout(sync.timer);
-    sync.timer = setTimeout(function(){ syncOnce(); }, ms == null ? 45000 : ms);
+    if (ms == null) ms = sync.lastErr ? syncRetryWait(sync.failN) : 45000;
+    sync.timer = setTimeout(function(){ syncOnce(); }, ms);
   }
 
   function parsePullBody(row){
@@ -18367,11 +18395,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function syncOnce(){
     if (!syncReady() || sync.busy) return Promise.resolve();
     if (typeof navigator !== "undefined" && navigator.onLine === false){
-      scheduleSync(45000);
+      scheduleSync(15000);
       return Promise.resolve();
     }
     sync.busy = true;
+    paintSync();
     var device = C.deviceId() || "";
+    var marked = Date.now();
     var flushNotes = (typeof flush === "function") ? flush() : Promise.resolve();
     var flushInkP = (typeof flushInk === "function") ? flushInk() : Promise.resolve();
     return Promise.all([flushNotes, flushInkP]).then(function(){
@@ -18386,35 +18416,51 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       });
     }).then(function(info){
       return C.dumpLightMap().then(function(map){
-        var recs = SyncCore.changedSince(map, -1);
+        /* Only what changed since the last successful push. A full dump every
+           45s would keep growing as the library grows. */
+        var recs = SyncCore.changedSince(map, sync.pushSince || 0);
         if (!recs.length) return info;
         return syncFetch("/push", { method: "POST", body: { records: recs } }).then(function(){
+          sync.pushSince = marked;
+          C.setMeta("syncPushSince", marked);
           return info;
         });
       });
     }).then(function(info){
       sync.lastErr = "";
+      sync.failN = 0;
       sync.lastOk = Date.now();
       C.setMeta("syncLastOk", sync.lastOk);
       paintSync();
-      if (info && info.cfg && typeof loadCfg === "function") loadCfg();
-      if (info && info.notes && info.notes.length && !state.dirty &&
-          !(noteSurface && noteSurface.drawing) && typeof render === "function"){
-        var open = state.noteId;
-        if (open && info.notes.indexOf(open) >= 0) render();
-        else if (typeof refreshLists === "function") refreshLists();
-      } else if (typeof refreshLists === "function"){
-        refreshLists();
+      var userBusy = !!(state.dirty || (noteSurface && noteSurface.drawing) ||
+        (typeof pan === "object" && pan && pan.on) || chipDrag);
+      if (info && info.cfg && typeof loadCfg === "function" && !userBusy) loadCfg();
+      if (info && info.applied && !userBusy){
+        if (info.notes && info.notes.length && typeof render === "function"){
+          var open = state.noteId;
+          if (open && info.notes.indexOf(open) >= 0) render();
+          else if (typeof refreshLists === "function") refreshLists();
+        } else if (typeof refreshLists === "function"){
+          refreshLists();
+        }
       }
     }).catch(function(e){
       sync.lastErr = (e && e.message) ? e.message : String(e);
+      sync.failN = (sync.failN || 0) + 1;
       paintSync();
     }).then(function(){
       sync.busy = false;
-      scheduleSync(45000);
+      paintSync();
+      scheduleSync();
     });
   }
 
+  function openSyncSettings(){
+    if (typeof openSettings === "function") openSettings();
+    var g = document.querySelector('.setgroup[data-group="backup"]');
+    if (g) g.open = true;
+    if ($("syncKey")) setTimeout(function(){ $("syncKey").focus(); }, 80);
+  }
   if ($("syncSave")) $("syncSave").addEventListener("click", function(){ saveSyncCreds(); });
   if ($("syncNow")) $("syncNow").addEventListener("click", function(){
     if (!syncReady()) return say("Paste the server address and password first, then Save and test.");
@@ -18422,6 +18468,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (!sync.lastErr) say("Sync finished.");
       else say("Sync could not finish: " + sync.lastErr + ". Notes on this device are still safe.");
     });
+  });
+  if ($("syncChip")) $("syncChip").addEventListener("click", function(){
+    if (!syncReady()) return openSyncSettings();
+    if (sync.lastErr) syncOnce();
+    else openSyncSettings();
   });
   document.addEventListener("visibilitychange", function(){
     if (document.visibilityState === "visible") scheduleSync(800);
