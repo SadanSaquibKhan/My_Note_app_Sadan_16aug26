@@ -26,35 +26,28 @@ console.log("the page follows the chip while you drag it:");
 eq("there is a seek that runs during the drag", has(/function chipSeek\(force\)\{/));
 eq("the drag calls it on every move", has(/placeChip\(el, prog\);\s*\n      chipSeek\(false\);/));
 eq("inside the page you are on it is a plain scroll, every move",
-   has(/if \(vis && place\.note\.id === vis\)\{ landOnPage\(place\.frac, vis\); return; \}/));
-/* b140: the per-page peek-stepping (driveChipPeek + armChipHandover, gated by
-   chipPeekReady and a 130ms throttle) needed one full page mount per page
-   crossed, and a mount is slower than a drag — so while a mount was in flight
-   chipSeek returned early, the view FROZE on a stale page, the label ran ahead,
-   and it lurched a page or two to catch up when the mount landed. Reproduced in
-   a browser: dragging S2P4 up to S2P2 froze for 7 frames at one scroll position
-   while the label counted to 3/4, then skipped S2P3 entirely and jumped to
-   S2P2. The chip now seeks straight to the target, one load at a time, and a
-   frame loop re-aims at the LATEST target so it never waits on a page it has
-   already dragged past. After the fix the same drag froze 0 frames and visited
-   every page S2P4>S2P3>S2P2. */
-eq("the freezing peek-step design is gone from the drag path",
-   !/revealChipJoin\(list, chipDrag\.prog/.test(html) &&
-   !/if \(!chipPeekReady\(dir\)\) return;/.test(html) &&
-   !/armChipHandover\(place\.note\.id\)/.test(html));
+   has(/if \(prog >= band\.lo && prog <= band\.hi\)\{[\s\S]{0,180}landOnPage\(\(prog - band\.lo\)/));
+/* The mounted page follows the chip directly. An immediate neighbour is
+   revealed with measured preview geometry and handed over in the same turn;
+   only a genuinely farther target takes the direct one-load path. */
+eq("the neighbour reveal is a fifth of the mounted page's track share",
+   has(/var reveal = Math\.max\(pageStick\(band\.lo, band\.hi\), \(band\.hi - band\.lo\) \* 0\.20\);/));
+eq("both neighbour directions claim a ready handover synchronously",
+   has(/if \(chipPeekReady\(1\) && typeof pageHandover === "function"\) pageHandover\(\);/) &&
+   has(/if \(chipPeekReady\(-1\) && typeof pageHandover === "function"\) pageHandover\(\);/));
 eq("a frame loop keeps re-aiming at the newest target",
    has(/function chipChase\(\)\{/) && has(/chipDrag\.raf = requestAnimationFrame\(chipChase\);/) &&
    has(/if \(typeof chipChase === "function"\) chipChase\(\);/));
-eq("the seek goes straight to the page the finger points at",
+eq("a genuinely far seek goes straight to the page the finger points at",
    has(/chipLand = \{ id: place\.note\.id, frac: place\.frac \};\s*\n    if \(typeof openPage === "function"\) openPage\(place\.note, true\);/));
 eq("only one page load is in flight at a time",
    has(/function chipLoading\(\)\{/) &&
    has(/chipDrag\.pendingId && chipDrag\.pendingId !== visualNoteId\(\)/) &&
-   has(/if \(chipLoading\(\)\) return;\s*\n    if \(typeof swapping/));
+   has(/if \(chipLoading\(\)\) return;/));
 eq("the same target is not asked for twice",
    has(/if \(chipDrag\.pendingId === place\.note\.id\) return;/));
 eq("the nothing-until-you-let-go path is gone", !/chipDrag\.pending/.test(html));
-eq("releasing forces the final target through the throttle",
+eq("releasing resolves the final target before clearing the drag",
    has(/chipSeek\(true\);\s*\n        chipDrag = null; pageTagDrag = null;/));
 
 console.log("");
@@ -68,10 +61,16 @@ eq("dragging the notebook chip into another section counts within that section",
 
 console.log("");
 console.log("the chip and the scroll-driven swap cannot argue:");
-eq("the swap stands down for the length of a chip drag",
-   has(/if \(chipDrag\) return;/));
-eq("the old exemption that let it run during a drag is gone",
-   !/if \(!chipDrag && !coasting/.test(html));
+eq("the swap only stands down for a far chip load",
+   has(/if \(chipDrag && typeof chipLoading === "function" && chipLoading\(\)\) return;/));
+eq("the old whole-drag handover block is gone",
+   !/function pageHandover\(\)\{[\s\S]{0,1800}?if \(chipDrag\) return;/.test(html));
+eq("an immediate neighbour gets measured-preview grace before far loading",
+   has(/Math\.abs\(ti - vi\) === 1/) && has(/var ng = driveChipPeek\(vis, nd, 1\);/) &&
+   has(/if \(chipPeekReady\(nd\) && typeof pageHandover === "function"\) pageHandover\(\);\s*\n      return;/));
+eq("finishHandover rebases a held chip into one carried join coordinate",
+   has(/chipDrag\.join = \{[\s\S]{0,180}scroll: p\.scrollTop, slope: js, dir: pend\.dir/) &&
+   has(/var carried = j\.scroll \+ \(prog - j\.prog\) \* j\.slope;/));
 eq("the neighbour-by-scrolling path that caused the bounce is gone",
    !/scrollToJoin/.test(html) && !/noLandUntil/.test(html) &&
    !/lastJoin/.test(html) && !/justLeft/.test(html));
@@ -161,19 +160,21 @@ eq("touching a tucked chip wakes only that one",
 eq("a tap on a tucked chip does not jump to the start or end",
    has(/if \(!wasTuck\)\{/) && has(/a tap on a tucked chip only brings that chip back/));
 eq("a chip drag into a join overscrolls into the preview, not a still hold",
-   has(/function revealChipJoin/) && has(/function driveChipPeek/) &&
-   has(/pageScrollFor\(vis, 1\) \+ t \* peekPx/) &&
-   has(/pageScrollFor\(vis, 0\) - t \* peekPx/));
+   has(/function chipPeekGeometry/) && has(/function driveChipPeek/) &&
+   has(/target = p\.scrollTop \+ nb\.top - \(pr\.top \+ pr\.height \* 0\.40\) \+ room;/) &&
+   has(/target = p\.scrollTop \+ pb\.bottom - \(pr\.top \+ pr\.height \* 0\.60\) - room;/) &&
+   has(/g\.base \+ t \* \(g\.target - g\.base\)/));
+eq("the old fixed 0.62 viewport peek is not the coordinate source",
+   !/clientHeight\s*\*\s*0\.62/.test(html));
 {
-  const CHIP_STICK = 0.22;
+  const CHIP_STICK = 0.06;
   const lo = 0, hi = 0.5, pageShare = hi - lo;
   const stick = Math.max(0.012, pageShare * CHIP_STICK);
-  const peekPx = 620;
-  const extra = ((hi + stick * 0.5) - hi) / stick * peekPx;
-  eq("stick is 22% of this page, not 4% of the book",
-     Math.abs(stick - 0.11) < 1e-9);
-  eq("halfway through the stick band shows about half the next page",
-     Math.abs(extra - 310) < 1);
+  const reveal = Math.max(stick, pageShare * 0.20);
+  eq("stick is 6% of this page, not 4% of the book",
+     Math.abs(stick - 0.03) < 1e-9);
+  eq("the visible crossing lasts 20% of this page and exceeds the stick",
+     Math.abs(reveal - 0.10) < 1e-9 && reveal > stick);
 }
 eq("left-handed layout tucks the other way",
    has(/body\.lefty \.secchip\{right:auto; left:40px\}/) &&

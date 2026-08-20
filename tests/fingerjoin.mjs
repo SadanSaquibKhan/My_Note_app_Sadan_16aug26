@@ -66,9 +66,9 @@ console.log("the backward target is decided once, not chased:");
 
 console.log("");
 console.log("wired that way in the file:");
-eq("the backward target is computed before the settle loop",
-   has(/var backWant = null;/) &&
-   has(/var want = \(backWant != null\) \? backWant : Math\.max\(0, pad - pend\.keepAt\);/));
+eq("both directions use the same measured seam target",
+   !/backWant/.test(html) &&
+   has(/var want = Math\.max\(0, pad - pend\.keepAt\);/));
 eq("pageBottom is no longer re-read every settle frame",
    !/\(function settle\(\)\{[\s\S]{0,400}?pageBottom\(p\)/.test(html));
 eq("a finger still down is told where the page went",

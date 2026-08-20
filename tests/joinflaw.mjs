@@ -12,7 +12,7 @@ const eq = (l, c) => {
 const has = re => re.test(html);
 
 /* ---- transcribed helpers (must stay in lockstep with index.html) ---- */
-const CHIP_STICK = 0.22;
+const CHIP_STICK = 0.06;
 function listVirtual(hs){ return hs.reduce((a,b)=>a+0, 0) + hs.reduce((a,b)=>a+b,0); }
 function pageBand(hs, i){
   const tot = hs.reduce((a,b)=>a+b,0);
@@ -58,13 +58,13 @@ function chipPeekReady(dir, nextTop, prevBottom, paperTop, paperH){
 console.log("source locks — chip join:");
 eq("1  chipPeekReady exists (neighbour remount waits for the peek)", has(/function chipPeekReady\(dir\)/));
 eq("2  driveChipPeek exists (same overscroll a finger uses)", has(/function driveChipPeek\(vis, dir, t\)/));
-eq("3  stick is 22% of this page, not 4% of the book", has(/var CHIP_STICK = 0\.22;/));
+eq("3  stick is 6% of this page, not 4% of the book", has(/var CHIP_STICK = 0\.06;/));
 eq("4  pageStick floors so a long book still has a dead zone", has(/Math\.max\(0\.012, \(hi - lo\) \* CHIP_STICK\)/));
 eq("5  after a swap, frac 0 does not yank the join off screen",
    has(/Just after a neighbour swap/) && has(/Math\.abs\(\(frac \|\| 0\) - cur\) < 0\.20\) return;/));
-eq("6  a neighbour that is not peek-ready must not jump-load",
-   has(/if \(!chipPeekReady\(dir\)\) return;/) &&
-   has(/peek not ready enough to re-anchor/));
+eq("6  an immediate neighbour finishes through the measured preview",
+   has(/Math\.abs\(ti - vi\) === 1/) &&
+   has(/if \(chipPeekReady\(nd\).*pageHandover\(\)/));
 eq("7  neighbour remount is sync so the finger is not left on a gone page",
    has(/openPage\(place\.note, true\)/) && has(/openPage\(target, true\)/));
 eq("8  armChipHandover uses the same 40/60 lines as a finger",
@@ -75,14 +75,14 @@ eq("9  armChipHandover freezes the previous band the way pageHandover does",
    /armChipHandover[\s\S]{0,1800}band\.style\.height = prevPad\(\)/.test(html));
 eq("10 armChipHandover has a guard so a failed read cannot freeze scrolling",
    /armChipHandover[\s\S]{0,2200}handover\.guard = setTimeout/.test(html));
-eq("11 pageHandover still stands down for the whole chip drag",
-   has(/if \(chipDrag\) return;/));
+eq("11 pageHandover only stands down for a far chip load",
+   has(/if \(chipDrag && typeof chipLoading === "function" && chipLoading\(\)\) return;/));
 eq("12 stick follows the mounted page, not the pending one",
    has(/placeForDrag\(chipDrag\.list, prog, visualNoteId\(\)\)/));
 eq("13 far pages still go through chipLand (scrubbing must not crawl)",
    has(/chipLand = \{ id: place\.note\.id, frac: place\.frac \}/));
-eq("14 peek overscroll is 62% of the viewport (past the 40% line)",
-   has(/p\.clientHeight \* 0\.62/));
+eq("14 peek overscroll measures the real divider and threshold",
+   has(/function chipPeekGeometry/) && has(/nb\.top - \(pr\.top \+ pr\.height \* 0\.40\)/));
 eq("15 no scrollToJoin / noLandUntil bounce path",
    !/scrollToJoin/.test(html) && !/noLandUntil/.test(html));
 
@@ -105,9 +105,9 @@ eq("22 empty-page hint is hidden while a finger or fling is flying",
    has(/body\.fly #body:empty::before/) && has(/classList\.add\("fly"\)/));
 eq("23 fly is cleared when the fling dies and the finger is up",
    has(/classList\.remove\("fly"\)/));
-eq("24 backWant is still decided once",
-   has(/var backWant = null;/) &&
-   has(/backWant = Math\.max\(0, bot0 - p\.clientHeight \* 0\.55\);/));
+eq("24 both directions preserve the incoming measured seam",
+   !/backWant/.test(html) &&
+   has(/var want = Math\.max\(0, pad - pend\.keepAt\);/));
 eq("25 visualNoteId reads the mounted page, not state.noteId",
    has(/b\.dataset && b\.dataset\.noteId/));
 
@@ -123,7 +123,7 @@ console.log("transcribed: list-relative stick was the hold-then-jump:");
   eq("27 new stick is a slice of that one page",
      now < (band0.hi - band0.lo) && now > 0.01);
   eq("28 two-page section: new stick is still usable",
-     pageStick(0, 0.5) > 0.05 && pageStick(0, 0.5) < 0.2);
+     pageStick(0, 0.5) > 0.012 && pageStick(0, 0.5) < 0.05);
 }
 
 console.log("");

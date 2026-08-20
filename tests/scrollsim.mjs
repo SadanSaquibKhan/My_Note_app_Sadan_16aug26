@@ -21,13 +21,13 @@ eq("4  a carried fling still waits one join (until does not skip)",
 /* A neighbour chip-drag now overscrolls into the peek and remounts only
    once that peek has crossed the same 40/60 line a finger uses. The swap
    still stands down during the drag so the two machines cannot bounce. */
-eq("4b the swap stands down while a chip is held",
-   has(/if \(chipDrag\) return;/) && has(/function chipSeek\(force\)/));
+eq("4b the swap stands down only while a far chip page is loading",
+   has(/if \(chipDrag && typeof chipLoading === "function" && chipLoading\(\)\) return;/));
 eq("5  the chip opens a far page DURING the drag, throttled",
    has(/function chipSeek\(force\)/) && has(/var CHIP_SEEK_MS = 130;/) &&
    !/chipDrag\.pending\b/.test(html));
 eq("5d stick is a fraction of this page, not of the whole notebook",
-   has(/var CHIP_STICK = 0\.22;/) && has(/function pageStick\(lo, hi\)/) &&
+   has(/var CHIP_STICK = 0\.06;/) && has(/function pageStick\(lo, hi\)/) &&
    has(/function placeForDrag\(list, prog, stickId\)\{/));
 eq("5e the page on screen decides, and a neighbour is peeked not jump-loaded",
    has(/function visualNoteId\(\)\{/) &&
@@ -39,10 +39,9 @@ eq("5b chip lands where the chip is, never yanked to the top",
 /* Still the foot, but decided ONCE before the settle loop rather than
    re-read every frame: pageBottom keeps moving while the bands hydrate, so
    chasing it moved the target ~200px under the correction chasing it. */
-eq("5c going back lands at the foot, decided once, not chased",
-   has(/pend\.dir < 0/) && has(/var backWant = null;/) &&
-   has(/backWant = Math\.max\(0, bot0 - p\.clientHeight \* 0\.55\);/) &&
-   !/\(function settle\(\)\{[\s\S]{0,400}?pageBottom\(p\)/.test(html));
+eq("5c both directions preserve the measured incoming seam",
+   !/backWant/.test(html) && has(/var want = Math\.max\(0, pad - pend\.keepAt\);/) &&
+   has(/chipDrag\.join = \{/));
 eq("6  the bounce-prone join-scrolling path is gone entirely",
    !/scrollToJoin/.test(html));
 eq("7  a chip drag that loses its pointer cannot freeze page turning",

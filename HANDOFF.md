@@ -93,7 +93,7 @@ saying something is fixed — because every round-trip to you is slow.
   **notebook → sections → pages**. Notes never touch the repo.
 - Local folder on the PC:
   `…\files_v12ofhtml_16aug26_7pm\margin-pwa_2026-08-16_v7\margin-pwa_2026-08-16_v7`
-- Current build: **b141** — always confirm with `var BUILD` in `index.html`
+- Current build: **b142** — always confirm with `var BUILD` in `index.html`
   and `git log`; do not trust a number once time has passed.
 
 ### How to verify without the tablet (the core discipline)
@@ -122,7 +122,7 @@ layers, both in `tests/`:
   (button, hold-still, double-tap) go through ONE gate (`eraserPress`), ONE
   clock (`PRESS_ONE_MS`), ONE memory (`eraserReturn`). Don't give any of them a
   private clock again.
-- **Chips (b141):** a chip is a **scrollbar-style seek**. During a drag it
+- **Chips (b142):** a chip is a **scrollbar-style seek**. During a drag it
   scrolls through the already-rendered peek band like a finger
   (`driveChipScroll`) and lets the ordinary `pageHandover` swap at the join —
   that is what shows the grey divider and avoids the freeze. `pageHandover`
@@ -137,7 +137,7 @@ layers, both in `tests/`:
 - **Repo hygiene:** never blind `git add -A` — `.gitignore` keeps the user's
   personal `*.docx/*.pdf` out of a public repo, and a blind add leaked two once.
 
-### Current focus and open items (2026-08-19, at b141)
+### Current focus and open items (2026-08-20, at b142)
 - **Chips (mostly done):** freeze at page joins is gone, drag lands where you let
   go, section boundaries cross cleanly, the grey divider now shows during the
   crossing but **briefly** — the open question the user raised is whether to
@@ -172,6 +172,8 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
+- **b142** `3b265a5` — measured real chip-join geometry and preserved the same
+  screen seam through both-direction remounts; native-touch browser regression — *Codex*
 - **b141** `d3f5b4f` — chip drag crosses a join like a finger (peek band + normal
   handover): no freeze, grey divider shows during the crossing — *Claude Code*
 - **b140** `3a9d275` — chip drag seeks straight to the finger via a frame loop:
