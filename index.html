@@ -146,7 +146,7 @@
   .panegrip:hover::after, body.panedrag .panegrip::after{background:var(--live); opacity:1}
   body.railmin #railGrip, body.secmin #secGrip, body.listmin #listGrip{display:none}
   body.panedrag{cursor:col-resize; user-select:none}
-  .doc{flex:1}
+  .doc{flex:1; display:flex; flex-direction:column; min-height:0; min-width:0}
   /* a collapsed column is a thin strip with one button to open it again */
   body[data-view="note"].railmin #railPane{display:none}
   body[data-view="note"].secmin #secPane{display:none}
@@ -156,6 +156,8 @@
   body.railmin .rail .scroll,
   body.railmin .rail .recentwrap,
   body.railmin .rail .railfoot,
+  body.railmin .rail .railfootmin,
+  body.railmin .rail .foldchip,
   body.railmin .rail .panehead h2,
   body.railmin .rail .panehead #addGroup,
   body.railmin .rail .panehead #addNotebook{display:none}
@@ -1163,12 +1165,71 @@
     padding:0 4px; white-space:nowrap;
   }
   .notice.warn{background:var(--warnbg); border-bottom-color:var(--warnline); color:var(--warn)}
-  .recentwrap{flex:none; border-top:1px solid var(--rule); padding:6px 0 2px; max-height:200px; overflow-y:auto}
-  .recentwrap h3{
+  .recentwrap{flex:none; border-top:1px solid var(--rule); padding:6px 0 2px; max-height:200px; overflow-y:auto; position:relative}
+  .recentwrap h3, .railfoot h3{
     margin:4px 14px 4px; font-family:var(--mono); font-weight:400; font-size:9px;
     letter-spacing:.16em; text-transform:uppercase; color:var(--ink-2);
   }
   .recentwrap .row{min-height:40px; padding:7px 14px; border-bottom:0; font-size:13px}
+  .recenthead{display:flex; align-items:center; justify-content:space-between; gap:8px}
+  .recenthead h3{flex:1}
+  .foldmini{
+    flex:none; width:28px; height:24px; margin-right:8px; padding:0;
+    border:1px solid var(--rule); border-radius:3px; background:transparent; color:var(--ink-2);
+  }
+  .foldchip{
+    flex:none; margin:6px 10px; padding:7px 10px; font-family:var(--mono); font-size:10px;
+    letter-spacing:.12em; text-transform:uppercase; border:1px solid var(--rule);
+    border-radius:3px; background:transparent; color:var(--ink-2);
+  }
+  .rowgrip{
+    position:absolute; top:0; left:0; right:0; height:10px; z-index:4;
+    cursor:row-resize; touch-action:none;
+  }
+  .rowgrip::after{
+    content:""; position:absolute; left:22%; right:22%; top:3px; height:3px;
+    border-radius:2px; background:var(--rule); opacity:.55;
+  }
+  .rowgrip:hover::after{background:var(--live); opacity:1}
+  .railfootmin{flex:none; padding:4px 0 8px}
+  .homeboard{
+    flex:1; min-height:0; overflow:auto; padding:18px 22px 28px;
+    background:var(--bg);
+  }
+  .homebar{display:flex; align-items:center; gap:10px; margin-bottom:14px}
+  .homebar h2, .homesub{
+    margin:0; font-size:18px; font-weight:600; letter-spacing:.02em;
+  }
+  .homesub{margin:22px 0 12px}
+  .homegrid{
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(132px, 1fr));
+    gap:14px;
+  }
+  .homecard{
+    display:flex; flex-direction:column; align-items:stretch; gap:8px;
+    padding:0; border:0; background:transparent; text-align:left; cursor:pointer;
+  }
+  .homecard .cardface{
+    height:88px; border-radius:8px 8px 6px 6px; position:relative;
+    box-shadow:0 1px 0 var(--slab-2), 0 8px 18px rgba(0,0,0,.08);
+    overflow:hidden;
+  }
+  .homecard.folder .cardface{background:var(--panel); border:1px solid var(--rule)}
+  .homecard.folder .cardtab{
+    position:absolute; left:10px; top:0; width:42%; height:14px;
+    border-radius:0 0 8px 0; background:currentColor;
+  }
+  .homecard.book .cardface{
+    background:var(--panel); border:1px solid var(--rule); border-left-width:8px;
+  }
+  .homecard .cardname{
+    font-size:13px; line-height:1.25; color:var(--ink);
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .homecard .cardcount{font-family:var(--mono); font-size:10px; color:var(--ink-2)}
+  body[data-view="home"] #homeBoard{display:block}
+  body[data-view="home"] #docBlank{display:none !important}
+  body[data-view="home"] #docLive{display:none !important}
   .nborder{display:flex; flex-direction:column; gap:2px; flex:none}
   .nborder button{
     width:22px; height:16px; padding:0; line-height:1; font-size:10px;
@@ -1580,6 +1641,7 @@
     .pane{display:none}
     .rail{flex:1 1 auto; border-right:0}
     body[data-view="home"] #railPane{display:flex}
+    body[data-view="home"] #docPane{display:flex}
     body[data-view="notebook"] #listPane{display:flex; flex:1 1 auto; border-right:0}
     body[data-view="notebook"] #secPane{display:flex; flex:0 1 160px}
     body[data-view="note"] #secPane{display:flex; flex:0 1 140px}
@@ -1601,6 +1663,7 @@
     .pane{display:none}
     .rail,.list{flex:1 1 auto; border-right:0}
     body[data-view="home"] #railPane{display:flex}
+    body[data-view="home"] #docPane{display:flex}
     body[data-view="notebook"] #listPane{display:flex}
     body[data-view="trash"] #listPane{display:flex}
     body[data-view="search"] #listPane{display:flex}
@@ -1640,8 +1703,9 @@
 <body data-view="home" data-save="idle">
 
 <div class="chrometabs" id="chromeTabs" hidden>
+  <button type="button" class="chromenew" id="chromeHome" title="Home — folders and notebooks" aria-label="Home" data-help="Shows the folder and notebook home. Open notebooks stay in their tabs.">⌂</button>
   <div class="chromestrip" id="chromeStrip"></div>
-  <button type="button" class="chromenew" id="chromeNew" title="New notebook" aria-label="New notebook" data-help="Opens a new notebook as a new tab, like a new tab in Chrome.">+</button>
+  <button type="button" class="chromenew" id="chromeNew" title="Open another notebook" aria-label="Open another notebook" data-help="Goes to the home of folders and notebooks so you can open another, without closing the ones already open.">+</button>
 </div>
 <div class="tabundo" id="tabUndo" hidden>
   <span id="tabUndoText">Notebook closed.</span>
@@ -1662,7 +1726,9 @@
     <button class="ghost" id="helpBtn" title="Keyboard shortcuts">?</button>
     <span id="buildTag"></span>
     <span class="state" id="saveState"><i class="lamp"></i><span id="saveWord">ready</span></span>
-    <button class="ghost" id="syncChip" hidden title="Sync">Sync</button>
+    <button class="ghost" id="syncChip" title="Copy now">Sync</button>
+    <button class="ghost" id="fullScrBtn" title="Full screen this window">Full</button>
+    <button class="ghost" id="topTabsBtn" title="Show or hide notebook tabs" aria-pressed="false">Tabs</button>
     <button class="ghost" id="themeBtn">Dark</button>
     <button class="ghost" id="captureBtn" title="New scratch note in Inbox">Quick</button>
     <button class="ghost" id="switchBtn" title="Jump to any note (Ctrl+K)">Jump</button>
@@ -1721,10 +1787,19 @@
     <div class="tagrow recentsearch" id="recentSearch" hidden></div>
     <div class="scroll" id="notebookList"></div>
     <div class="recentwrap" id="recentWrap" hidden>
-      <h3>Recently opened</h3>
+      <div class="rowgrip" id="recentGrip" title="Drag to make recently opened taller or shorter"></div>
+      <div class="recenthead">
+        <h3>Recently opened</h3>
+        <button type="button" class="foldmini" id="recentHide" title="Hide recently opened" aria-label="Hide recently opened">&minus;</button>
+      </div>
       <div id="recentList"></div>
     </div>
-    <div class="railfoot">
+    <button type="button" class="foldchip" id="recentShow" hidden title="Show recently opened">Recent</button>
+    <div class="railfoot" id="railFoot">
+      <div class="recenthead">
+        <h3>Lists</h3>
+        <button type="button" class="foldmini" id="railFootHide" title="Hide weak topics and the other lists" aria-label="Hide lists">&minus;</button>
+      </div>
       <button type="button" class="row" id="weakRow">
         <i class="swatch star">&#9888;</i>
         <span class="rowmain"><span class="rowtitle">Weak topics</span></span>
@@ -1750,6 +1825,9 @@
         <span class="rowmain"><span class="rowtitle">Recently deleted</span></span>
         <span class="count" id="trashCount">0</span>
       </button>
+    </div>
+    <div class="railfootmin" id="railFootMin" hidden>
+      <button type="button" class="foldchip" id="railFootShow" title="Show weak topics and the other lists">Lists</button>
     </div>
     <div class="panegrip" id="railGrip" title="Drag to make the notebook list wider or narrower"></div>
   </aside>
@@ -1810,6 +1888,18 @@
   </section>
 
   <section class="pane doc" id="docPane" aria-label="Note">
+    <div class="homeboard" id="homeBoard" hidden>
+      <div class="homebar">
+        <h2 id="homeTitle">Folders</h2>
+        <button type="button" class="ghost" id="homeAll" hidden>All folders</button>
+        <span class="grow"></span>
+        <button type="button" class="ghost" id="homeAddGroup">Folder</button>
+        <button type="button" class="ghost" id="homeAddNb">Notebook</button>
+      </div>
+      <div class="homegrid" id="homeFolders"></div>
+      <h2 class="homesub" id="homeBooksTitle">Notebooks</h2>
+      <div class="homegrid" id="homeBooks"></div>
+    </div>
     <div class="blank" id="docBlank">
       <span class="mk">No note open</span>
       <p>Pick a note on the left, or start a new one.</p>
@@ -2733,7 +2823,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b146";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b147";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4753,7 +4843,13 @@ var MarginCore = (function(){
   function localMetaKey(k){
     if (!k) return true;
     if (k === "deviceId" || k === "lastBackup" || k === "backupSnooze") return true;
+    if (k === "lastHash" || k === "openNotebooks" || k === "recentNotebooks") return true;
+    if (k === "secPlace" || k === "gFold" || k === "nbFold" || k === "sFold") return true;
+    if (k === "pageInkDepth" || k === "pageExtra") return true;
     if (String(k).indexOf("sync") === 0) return true;
+    if (String(k).indexOf("place:") === 0) return true;
+    if (String(k).indexOf("nplace:") === 0) return true;
+    if (String(k).indexOf("zoom:") === 0) return true;
     return false;
   }
   function setMeta(k, v){
@@ -5304,7 +5400,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     groups: [], gFold: {}, marks: [],
     sections: [], sFold: {}, sectionId: null, secPlace: {},
     workId: null, workRec: null, workByNote: {},
-    dirty: false, saving: false
+    dirty: false, saving: false, homeGroupId: null
   };
 
   /* ---------------- routing ----------------
@@ -5339,6 +5435,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       (route.noteId && route.workId ? "/w/" + route.workId : "");
     if (location.hash === h) return render();
     if (replace) history.replaceState(null, "", h); else location.hash = h;
+    C.setMeta("lastHash", h);
     if (replace) render();
   }
 
@@ -5558,7 +5655,85 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
 
     drawLevel("", 0);
+    paintHomeBoard();
   }
+
+  /* Full-page folders and notebooks, like the Samsung Notes home. Open
+     notebooks stay in their tabs; this only changes what the big pane shows. */
+  function paintHomeBoard(){
+    var board = $("homeBoard");
+    if (!board) return;
+    var home = state.view === "home";
+    board.hidden = !home;
+    if (!home) return;
+    var folderHost = $("homeFolders"), bookHost = $("homeBooks");
+    if (!folderHost || !bookHost) return;
+    folderHost.textContent = "";
+    bookHost.textContent = "";
+    var gid = state.homeGroupId || "";
+    var here = gid ? state.groups.filter(function(g){ return g.id === gid; })[0] : null;
+    if ($("homeTitle")) $("homeTitle").textContent = here ? here.name : "Folders";
+    if ($("homeAll")) $("homeAll").hidden = !here;
+    if ($("homeBooksTitle")) $("homeBooksTitle").textContent = here ? "Notebooks in this folder" : "Notebooks";
+
+    var folders = (state.groups || []).filter(function(g){
+      return (g.parentId || "") === gid;
+    });
+    folders.forEach(function(g){
+      var nBooks = (state.notebooks || []).filter(function(nb){ return nb.groupId === g.id; }).length;
+      var nKids = (state.groups || []).filter(function(x){ return x.parentId === g.id; }).length;
+      var card = document.createElement("button");
+      card.type = "button";
+      card.className = "homecard folder";
+      card.style.color = SWATCH[g.colour] || SWATCH.slate;
+      var face = document.createElement("span"); face.className = "cardface";
+      var tab = document.createElement("span"); tab.className = "cardtab";
+      face.appendChild(tab);
+      var name = document.createElement("span"); name.className = "cardname"; name.textContent = g.name;
+      var count = document.createElement("span"); count.className = "cardcount";
+      count.textContent = (nBooks + nKids) + "";
+      card.appendChild(face); card.appendChild(name); card.appendChild(count);
+      card.addEventListener("click", function(){
+        state.homeGroupId = g.id;
+        paintHomeBoard();
+      });
+      card.addEventListener("contextmenu", function(ev){ ev.preventDefault(); openGroupDialog(g); });
+      folderHost.appendChild(card);
+    });
+    if (!folders.length){
+      folderHost.innerHTML = here
+        ? ""
+        : '<div class="empty">No folders yet. Tap <b>Folder</b> to make one.</div>';
+    }
+
+    var books = (state.notebooks || []).filter(function(nb){
+      return (nb.groupId || "") === gid;
+    });
+    books.forEach(function(nb){
+      var card = document.createElement("button");
+      card.type = "button";
+      card.className = "homecard book";
+      var face = document.createElement("span");
+      face.className = "cardface";
+      face.style.borderLeftColor = SWATCH[nb.colour] || SWATCH.slate;
+      var name = document.createElement("span"); name.className = "cardname"; name.textContent = nb.name;
+      var count = document.createElement("span"); count.className = "cardcount";
+      count.textContent = (state.counts && state.counts[nb.id] != null) ? state.counts[nb.id] : "";
+      card.appendChild(face); card.appendChild(name); card.appendChild(count);
+      card.addEventListener("click", function(){ flush(); go({ nbId: nb.id }); });
+      card.addEventListener("contextmenu", function(ev){ ev.preventDefault(); openNbDialog(nb); });
+      bookHost.appendChild(card);
+    });
+    if (!books.length){
+      bookHost.innerHTML = '<div class="empty">No notebooks here. Tap <b>Notebook</b> to make one.</div>';
+    }
+  }
+  if ($("homeAll")) $("homeAll").addEventListener("click", function(){
+    state.homeGroupId = null;
+    paintHomeBoard();
+  });
+  if ($("homeAddGroup")) $("homeAddGroup").addEventListener("click", function(){ openGroupDialog(null); });
+  if ($("homeAddNb")) $("homeAddNb").addEventListener("click", function(){ openNbDialog(null); });
 
   function applyPanes(){
     var inBook = !!state.nbId;
@@ -5989,7 +6164,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   function paintDoc(){
-    var live = $("docLive"), blank = $("docBlank");
+    var live = $("docLive"), blank = $("docBlank"), board = $("homeBoard");
+    if (state.view === "home"){
+      if (live) live.hidden = true;
+      if (blank) blank.style.display = "none";
+      if (board) board.hidden = false;
+      paintHomeBoard();
+      return;
+    }
+    if (board) board.hidden = true;
     if (!state.note){
       live.hidden = true; blank.style.display = "flex";
       return;
@@ -6451,13 +6634,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     state.notebooks.forEach(function(nb){ if (nb.id === id) hit = nb; });
     return hit;
   }
+  function pruneOpenNbs(){
+    /* Until notebooks have loaded, every id looks deleted. Pruning then
+       wiped the open set on a Chrome reload. */
+    if (!state.notebooks || !state.notebooks.length) return;
+    var alive = openNbs.filter(function(id){ return !!nbById(id); });
+    if (alive.length !== openNbs.length){ openNbs = alive; saveOpenNbs(); }
+  }
   function paintTabs(){
     var strip = $("nbTabStrip"), wrap = $("nbTabs");
     if (!strip || !wrap) return;
-    /* drop any notebook that has since been deleted rather than showing a
-       tab that leads nowhere */
-    var alive = openNbs.filter(function(id){ return !!nbById(id); });
-    if (alive.length !== openNbs.length){ openNbs = alive; saveOpenNbs(); }
+    pruneOpenNbs();
+    var alive = openNbs.filter(function(id){
+      return !state.notebooks.length || !!nbById(id);
+    });
 
     strip.textContent = "";
     /* the in-panel strip hides when the Chrome-like top tabs are on, so you
@@ -6465,6 +6655,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     wrap.hidden = !!cfg.chromeTabs || alive.length < 2;
     alive.forEach(function(id){
       var nb = nbById(id);
+      if (!nb) return;
       var tab = document.createElement("div");
       tab.className = "nbtab";
       tab.setAttribute("role", "button");
@@ -6529,14 +6720,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     paintOpenList();
   });
 
-  /* Chrome-like tabs across the top. Toggled from the shortcuts bar so the
-     side list never has to open. Drag left/right to reorder, × to close
-     (with Undo), + for a new notebook. */
+  /* Chrome-like tabs across the top. Toggled from the top bar (and the
+     shortcuts bar). Drag left/right to reorder, × to close (with Undo).
+     Home and + both go to the folders/notebooks board; they do not close
+     open tabs, and + does not make a new notebook. */
   var chromeDrag = null;
   function setChromeTabs(on){
     cfg.chromeTabs = !!on;
     saveCfg();
     if ($("jumpTabs")) $("jumpTabs").setAttribute("aria-pressed", on ? "true" : "false");
+    if ($("topTabsBtn")) $("topTabsBtn").setAttribute("aria-pressed", on ? "true" : "false");
     paintTabs();
   }
   function paintChromeTabs(){
@@ -6619,9 +6812,38 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   if ($("chromeNew")) $("chromeNew").addEventListener("click", function(e){
     e.preventDefault(); e.stopPropagation();
-    /* the dialog is a window of its own — do not open the side list */
-    openNbDialog(null);
+    /* pick another notebook at home; do not make a new one (that is + in the list) */
+    flush();
+    go({});
+    hint("Open notebooks stay in their tabs. Tap one to open it beside them.");
   });
+  if ($("chromeHome")) $("chromeHome").addEventListener("click", function(e){
+    e.preventDefault(); e.stopPropagation();
+    flush();
+    go({});
+  });
+  if ($("topTabsBtn")) $("topTabsBtn").addEventListener("click", function(){
+    setChromeTabs(!cfg.chromeTabs);
+  });
+  function paintFullScrBtn(){
+    var b = $("fullScrBtn");
+    if (!b) return;
+    var on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.textContent = on ? "Exit" : "Full";
+  }
+  if ($("fullScrBtn")) $("fullScrBtn").addEventListener("click", function(){
+    var root = document.documentElement;
+    if (document.fullscreenElement || document.webkitFullscreenElement){
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } else {
+      var req = root.requestFullscreen || root.webkitRequestFullscreen;
+      if (req) req.call(root).catch(function(){});
+      else hint("This browser will not full-screen the page. Use the browser's own full-screen.");
+    }
+  });
+  document.addEventListener("fullscreenchange", paintFullScrBtn);
+  document.addEventListener("webkitfullscreenchange", paintFullScrBtn);
   if ($("tabUndoBtn")) $("tabUndoBtn").addEventListener("click", function(e){
     e.preventDefault();
     undoCloseNotebook();
@@ -8920,7 +9142,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     lockList: false,
     lassoContain: "partial", /* partial: a piece inside is enough; full: wholly inside */
     jumpBar: true,     /* the floating shortcuts bar (home / open / places) */
-    chromeTabs: false, /* Chrome-like notebook tabs across the top */
+    chromeTabs: true,  /* Chrome-like notebook tabs across the top */
+    recentFold: false, /* hide the recently-opened list */
+    railFootFold: false, /* hide weak / working / starred / trash */
+    recentH: 160,      /* height of the recently-opened list */
     jumpMin: false,
     jumpPos: null,
     favTools: ["pen_ink", "pen_blue", "pen_red", "hl_amber", "eraser", "lasso", "undo"],
@@ -9003,6 +9228,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof buildFavBar === "function") buildFavBar();
     if (typeof buildJumpBar === "function") buildJumpBar();
     if (typeof applyPanes === "function") applyPanes();
+    if (typeof applyRailFolds === "function") applyRailFolds();
+    if ($("topTabsBtn")) $("topTabsBtn").setAttribute("aria-pressed", cfg.chromeTabs ? "true" : "false");
     if (cfg.wakeLock) requestWake();
   }
 
@@ -14471,17 +14698,30 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   /* ---- 12. recently opened, which was tracked but never shown ---- */
+  function applyRailFolds(){
+    var recFold = cfg.recentFold === true;
+    var footFold = cfg.railFootFold === true;
+    if ($("recentShow")) $("recentShow").hidden = !recFold;
+    if ($("railFoot")) $("railFoot").hidden = footFold;
+    if ($("railFootMin")) $("railFootMin").hidden = !footFold;
+    var wrap = $("recentWrap");
+    if (wrap && !wrap.hidden && !recFold){
+      var h = Number(cfg.recentH) || 160;
+      wrap.style.maxHeight = Math.max(72, Math.min(360, h)) + "px";
+    }
+  }
   function paintRecent(){
     var host = $("recentList");
     if (!host) return;
     var ids = state.recent || [];
     host.textContent = "";
-    if (!ids.length){ $("recentWrap").hidden = true; return; }
+    if (!ids.length){ $("recentWrap").hidden = true; applyRailFolds(); return; }
     var byId = {};
     (state.allNotes || []).forEach(function(n){ byId[n.id] = n; });
     var rows = ids.map(function(id){ return byId[id]; }).filter(Boolean).slice(0, 6);
-    if (!rows.length){ $("recentWrap").hidden = true; return; }
-    $("recentWrap").hidden = false;
+    if (!rows.length){ $("recentWrap").hidden = true; applyRailFolds(); return; }
+    $("recentWrap").hidden = cfg.recentFold === true;
+    applyRailFolds();
     rows.forEach(function(n){
       var b = document.createElement("button");
       b.type = "button"; b.className = "row";
@@ -14494,6 +14734,43 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       host.appendChild(b);
     });
   }
+  if ($("recentHide")) $("recentHide").addEventListener("click", function(){
+    cfg.recentFold = true; saveCfg(); paintRecent();
+  });
+  if ($("recentShow")) $("recentShow").addEventListener("click", function(){
+    cfg.recentFold = false; saveCfg(); paintRecent();
+  });
+  if ($("railFootHide")) $("railFootHide").addEventListener("click", function(){
+    cfg.railFootFold = true; saveCfg(); applyRailFolds();
+  });
+  if ($("railFootShow")) $("railFootShow").addEventListener("click", function(){
+    cfg.railFootFold = false; saveCfg(); applyRailFolds();
+  });
+  (function wireRecentGrip(){
+    var grip = $("recentGrip"), wrap = $("recentWrap");
+    if (!grip || !wrap) return;
+    var drag = null;
+    grip.addEventListener("pointerdown", function(e){
+      if (e.button && e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      drag = { y: e.clientY, h: wrap.getBoundingClientRect().height };
+      try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    grip.addEventListener("pointermove", function(e){
+      if (!drag) return;
+      var h = drag.h + (e.clientY - drag.y);
+      h = Math.max(72, Math.min(360, h));
+      wrap.style.maxHeight = h + "px";
+      cfg.recentH = Math.round(h);
+    });
+    function end(){
+      if (!drag) return;
+      drag = null;
+      saveCfg();
+    }
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+  })();
 
   /* ---- 13. reordering notebooks ----
      Arrows rather than drag: on a tablet a long drag inside a scrolling list
@@ -18260,11 +18537,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     if (el) el.textContent = line;
     if (chip){
-      var on = syncReady();
-      chip.hidden = !on;
-      if (on){
-        chip.textContent = sync.busy ? "Sync\u2026" : (sync.lastErr ? "Retry" : "Synced");
-        chip.title = line;
+      chip.hidden = false;
+      if (!syncReady()){
+        chip.textContent = "Sync";
+        chip.title = "Turn on copy: paste the password in Settings.";
+        chip.classList.remove("on");
+      } else {
+        chip.textContent = sync.busy ? "Sync\u2026" : (sync.lastErr ? "Retry" : "Sync");
+        chip.title = line + " Tap to copy now.";
         chip.classList.toggle("on", !sync.lastErr && !sync.busy && !!sync.lastOk);
       }
     }
@@ -18509,8 +18789,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
   if ($("syncChip")) $("syncChip").addEventListener("click", function(){
     if (!syncReady()) return openSyncSettings();
-    if (sync.lastErr) syncOnce();
-    else openSyncSettings();
+    syncOnce().then(function(){
+      if (sync.lastErr) say("Could not copy: " + sync.lastErr + ". Notes on this device are still safe.");
+      else hint("Copied.");
+    });
   });
   document.addEventListener("visibilitychange", function(){
     if (document.visibilityState === "visible") scheduleSync(800);
@@ -18566,7 +18848,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (document.visibilityState === "hidden") flush();
   });
   window.addEventListener("pagehide", flush);
-  window.addEventListener("hashchange", function(){ flush(); render(); });
+  window.addEventListener("hashchange", function(){
+    flush();
+    C.setMeta("lastHash", location.hash || "#/");
+    render();
+  });
 
   /* ---------------- boot ---------------- */
   C.open().then(function(){
@@ -18637,7 +18923,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (cfg.theme && cfg.theme !== "system") applyThemePref();
     else if (dark === null) applyThemePref();
     else applyTheme(dark);
-    return render();
+    return C.getMeta("lastHash", "").then(function(h){
+      var cur = location.hash || "";
+      if ((!cur || cur === "#" || cur === "#/") && h && h.length > 2 && h !== "#/"){
+        history.replaceState(null, "", h);
+      }
+      return render();
+    });
   }).then(function(){
     paintRecent();
     setTimeout(function(){ backupCheck(); storageCheck(); }, 900);
