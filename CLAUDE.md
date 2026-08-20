@@ -514,10 +514,11 @@ built from scratch.**
   crossing should no longer start short. Ask the user to confirm on the
   tablet.
 - **Sync (see `SYNC-PLAN.md` + `HANDOFF.md`).** Phase 0 backup is b143.
-  Phase 1 wiring is b144: Settings URL+password in IndexedDB, never in the
-  repo; `sync-client.js` is loaded by the app (commit it with `index.html` +
-  `sw.js` when it changes); erases write `removed`; opening a note never
-  waits on the network. Photos/audio bytes still do not sync.
+  Phase 1 wiring is b144, harden slice b145: Settings URL+password in
+  IndexedDB, never in the repo; header Sync chip; incremental push + retry
+  backoff; `sync-client.js` is loaded by the app (commit it with
+  `index.html` + `sw.js` when it changes); erases write `removed`; opening a
+  note never waits on the network. Photos/audio bytes still do not sync.
 
 ## Working style expected of you (Claude Code, Grok, or otherwise)
 

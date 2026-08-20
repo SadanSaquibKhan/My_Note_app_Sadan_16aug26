@@ -34,22 +34,23 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b144**. Notes can copy between the tablet and the computer
-  once you paste the server address and password in Settings (Backups and
-  menus). Sync is off until you do that. Class recordings still do not copy.
-  Daily backup is still notes-only (b143). Chip scrolling and the S Pen eraser
-  were not touched.
+- Current build: **b145**. Notes can copy between the tablet and the computer
+  once you paste the password in Settings (Backups and menus). A **Sync**
+  button appears at the top when it is on. If the network drops, it waits
+  longer each try instead of hammering. Class recordings still do not copy.
+  Chip scrolling and the S Pen eraser were not touched.
 - **Waiting on you:** on BOTH the tablet and the computer, Settings → Backups
-  and menus → paste the server address and the password → Save and test. Then
-  write a sentence on one device and check the other after about a minute.
+  and menus → paste the password (address can stay filled) → Save and test.
+  Then write a sentence on one device and check the other after about a minute.
 - Still rough: pictures do not copy yet (only their empty slot). Grey
   page-divider during a chip drag is brief; lasso on typed text still has
   some reports.
 - **Sync (Phase 0 + Phase 1 shipped).** Server:
   `https://margin-sync.khanssk89.workers.dev`. Password is NOT in the app —
   each device stores it locally. Ink erases now leave a `removed` map so a
-  stroke wiped on one device does not come back from the other. Next: photos
-  via R2 (Phase 3), hardening (Phase 4). Audio stays manual.
+  stroke wiped on one device does not come back from the other. First
+  hardening slice is b145. Next: photos via R2 (Phase 3, needs you to make a
+  bucket). Audio stays manual.
 
 **The golden rule for every AI (so nothing breaks silently).** After any change:
 run the tests in the `tests/` folder, bump the build number with the script
@@ -99,7 +100,7 @@ saying something is fixed — because every round-trip to you is slow.
   **notebook → sections → pages**. Notes never touch the repo.
 - Local folder on the PC:
   `…\files_v12ofhtml_16aug26_7pm\margin-pwa_2026-08-16_v7\margin-pwa_2026-08-16_v7`
-- Current build: **b144** — always confirm with `var BUILD` in `index.html`
+- Current build: **b145** — always confirm with `var BUILD` in `index.html`
   and `git log`; do not trust a number once time has passed.
 
 ### How to verify without the tablet (the core discipline)
@@ -143,19 +144,20 @@ layers, both in `tests/`:
 - **Repo hygiene:** never blind `git add -A` — `.gitignore` keeps the user's
   personal `*.docx/*.pdf` out of a public repo, and a blind add leaked two once.
 
-### Current focus and open items (2026-08-20, at b144)
+### Current focus and open items (2026-08-20, at b145)
 - **Phase 0 backup (shipped b143, restore confirmed):** daily Data button is
   **Save notes (no recordings)**. User restored in incognito: notes came back,
   audio did not (expected).
-- **Sync Phase 1 (shipped b144):** Settings → Backups has server URL + password
-  fields, stored in IndexedDB (`syncUrl`/`syncKey`), **never committed**.
-  Sync is off until both are set. Timer ~45s and on save. Pull then push
-  through `SyncCore`. Service worker skips other hosts so a pull cannot be
-  poisoned with `index.html`. Ink erases write `removed[strokeId]=erasedAt`.
-  Live two-device test: `node tests/synclive.mjs`. Password file is on the PC
-  only. App ship for this feature is `index.html` + `sw.js` + `sync-client.js`.
-- **Sync not done:** photos still light-only (empty slot on the other device)
-  until R2. Opening a note never waits on the network. Full plan: `SYNC-PLAN.md`.
+- **Sync Phase 1 (b144) + harden slice (b145):** Settings URL+password in
+  IndexedDB, never committed. Header **Sync** chip when on. Incremental push
+  (`syncPushSince`) so a 45s tick does not re-send the whole library. Failed
+  tries back off 8s → 3 min cap. Pull does not refresh the open page while
+  you are writing, drawing, or dragging a chip. Password-only save fills the
+  known public server URL. Live test: `node tests/synclive.mjs`.
+- **Sync not done:** photos still light-only until R2 (needs the user to
+  create an R2 bucket). Opening a note never waits on the network. Full
+  plan: `SYNC-PLAN.md`. Still waiting on the user to paste the password on
+  both devices.
 - **Chips (mostly done):** freeze at page joins is gone, drag lands where you let
   go, section boundaries cross cleanly, the grey divider now shows during the
   crossing but **briefly** — the open question the user raised is whether to
@@ -178,6 +180,8 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
+- **b145** `44f958d` — sync hardening: visible Sync chip, retry backoff, incremental
+  push, don't yank the page while writing. — *Grok Build*
 - **b144** `a3cd605` — wire light sync: Settings URL+password (never in the public app),
   pull/push via the live Worker, ink erase tombstones. User pastes the
   password on each device. — *Grok Build*

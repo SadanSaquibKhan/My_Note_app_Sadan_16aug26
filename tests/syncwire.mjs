@@ -32,6 +32,9 @@ eq("loads sync-client.js", /<script src="sync-client\.js">/.test(html));
 eq("pull folds with SyncCore.mergeRecord",
    /Core\.mergeRecord\(local, incoming\)/.test(html) || /SyncCore\.mergeRecord/.test(html));
 eq("push uses SyncCore.changedSince", /SyncCore\.changedSince\(map/.test(html));
+eq("push is incremental, not a full dump every time",
+   /changedSince\(map, sync\.pushSince \|\| 0\)/.test(html) &&
+   !/changedSince\(map, -1\)/.test(html));
 eq("dumps local stores through dumpLightMap", /function dumpLightMap\(/.test(html));
 eq("service worker caches the helper as extra, not shell",
    /sync-client\.js/.test(sw) && /const EXTRA[\s\S]*sync-client\.js/.test(sw));
@@ -43,7 +46,13 @@ eq("opening a note is not gated on syncOnce",
    !/function openPage[\s\S]{0,400}syncOnce/.test(html));
 eq("a failed sync does not throw into boot",
    /function syncOnce\(\)\{[\s\S]*?\.catch\(function\(e\)\{\s*sync\.lastErr/.test(html));
-eq("timer is ~45s", /scheduleSync\(45000\)/.test(html));
+eq("ordinary cadence is ~45s", /if \(n <= 0\) return 45000;/.test(html));
+eq("failed tries wait longer, capped",
+   /Math\.min\(ms \* 2, 180000\)/.test(html));
+eq("a header chip shows sync state", /id="syncChip"/.test(html));
+eq("password-only fill uses the public server address, not a baked secret",
+   /if \(!url && key\) url = SYNC_HINT_URL;/.test(html) &&
+   !/SYNC_KEY\s*=/.test(html));
 
 console.log("ink tombstones:");
 eq("eraseAt records gone ids",
@@ -70,6 +79,15 @@ eq("pages with no removed still work (missing means {})",
   const incoming = { strokes: [{ id: "s1" }], removed: {} };
   eq("local extra strokes must be pushed", A.inkHasLocalExtras(merged, incoming) === true);
   eq("identical ink does not bump", A.inkHasLocalExtras(incoming, incoming) === false);
+}
+
+{
+  const src = grab("syncRetryWait");
+  const A = new Function(src + "\n return { syncRetryWait };")();
+  eq("first failure retries in 8s", A.syncRetryWait(1) === 8000);
+  eq("second failure doubles", A.syncRetryWait(2) === 16000);
+  eq("success cadence is 45s", A.syncRetryWait(0) === 45000);
+  eq("wait is capped", A.syncRetryWait(20) === 180000);
 }
 
 if (bad) console.log("\n" + bad + " failed");
