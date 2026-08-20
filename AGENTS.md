@@ -514,12 +514,11 @@ built from scratch.**
   as soon as the current page opens (`warmNeighbourInk`), so the first
   crossing should no longer start short. Ask the user to confirm on the
   tablet.
-- **Sync (see `SYNC-PLAN.md` + `HANDOFF.md`).** Phase 0 audio-less backup
-  shipped in b143. Next: wire `index.html` to the live Worker using
-  `SyncCore` — **only after the user confirms a restore on the tablet**.
-  Never hardcode `SYNC_KEY` (public GitHub Pages). Ink erases must start
-  recording a `removed` map (stroke id → erasedAt) so `mergeInk` does not
-  resurrect them. Offline-first: never block opening a note on the network.
+- **Sync (see `SYNC-PLAN.md` + `HANDOFF.md`).** Phase 0 backup is b143.
+  Phase 1 wiring is b144: Settings URL+password in IndexedDB, never in the
+  repo; `sync-client.js` is loaded by the app (commit it with `index.html` +
+  `sw.js` when it changes); erases write `removed`; opening a note never
+  waits on the network. Photos/audio bytes still do not sync.
 
 ## Working style expected of you (Claude Code, Grok, or otherwise)
 

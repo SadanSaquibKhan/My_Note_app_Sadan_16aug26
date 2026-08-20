@@ -34,22 +34,22 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b143**. Daily backup is now **notes only** (no class
-  recordings in the file), so a large audio library can still be saved. Chip
-  scrolling and the S Pen eraser are unchanged and working.
-- **Waiting on you:** confirm a restore of that notes backup on the tablet
-  (see “What to test” under b143 in the Build log). Do not start wiring sync
-  until that restore is confirmed.
-- Still rough / next up after restore: **Sync Phase 1** — wire the app to the
-  already-live server. Also open: grey page-divider during a chip drag is brief;
-  lasso on typed text still has some reports.
-- **Sync (Phase 0 shipped in b143; client not wired yet):** design in
-  `SYNC-PLAN.md`. Merge brain (`sync-client.js` + `tests/sync.js`) and the
-  Cloudflare Worker + D1 server are live at
-  `https://margin-sync.khanssk89.workers.dev`. The app is NOT wired to it yet.
-  Next: Settings field for server URL + key (never hardcode the key — public
-  GitHub Pages), then push/pull using `SyncCore`. Ink erases must start leaving
-  a `removed` map. The sync password is saved on the PC, out of the repo.
+- Current build: **b144**. Notes can copy between the tablet and the computer
+  once you paste the server address and password in Settings (Backups and
+  menus). Sync is off until you do that. Class recordings still do not copy.
+  Daily backup is still notes-only (b143). Chip scrolling and the S Pen eraser
+  were not touched.
+- **Waiting on you:** on BOTH the tablet and the computer, Settings → Backups
+  and menus → paste the server address and the password → Save and test. Then
+  write a sentence on one device and check the other after about a minute.
+- Still rough: pictures do not copy yet (only their empty slot). Grey
+  page-divider during a chip drag is brief; lasso on typed text still has
+  some reports.
+- **Sync (Phase 0 + Phase 1 shipped).** Server:
+  `https://margin-sync.khanssk89.workers.dev`. Password is NOT in the app —
+  each device stores it locally. Ink erases now leave a `removed` map so a
+  stroke wiped on one device does not come back from the other. Next: photos
+  via R2 (Phase 3), hardening (Phase 4). Audio stays manual.
 
 **The golden rule for every AI (so nothing breaks silently).** After any change:
 run the tests in the `tests/` folder, bump the build number with the script
@@ -99,7 +99,7 @@ saying something is fixed — because every round-trip to you is slow.
   **notebook → sections → pages**. Notes never touch the repo.
 - Local folder on the PC:
   `…\files_v12ofhtml_16aug26_7pm\margin-pwa_2026-08-16_v7\margin-pwa_2026-08-16_v7`
-- Current build: **b143** — always confirm with `var BUILD` in `index.html`
+- Current build: **b144** — always confirm with `var BUILD` in `index.html`
   and `git log`; do not trust a number once time has passed.
 
 ### How to verify without the tablet (the core discipline)
@@ -143,20 +143,19 @@ layers, both in `tests/`:
 - **Repo hygiene:** never blind `git add -A` — `.gitignore` keeps the user's
   personal `*.docx/*.pdf` out of a public repo, and a blind add leaked two once.
 
-### Current focus and open items (2026-08-20, at b143)
-- **Phase 0 backup (shipped b143, waiting on tablet restore):** daily Data
-  button is **Save notes (no recordings)**. It packs writing, handwriting and
-  pictures, skips audio *bytes* (keeps the small record: length, page, when),
-  writes the file as many small strings (`bundleToFileBlob`) instead of one
-  giant `JSON.stringify`, and import **keeps local audio/picture bytes** if
-  the file left them out (`keepLocalBytes`). Tests: `node tests/backup.mjs
-  index.html`. Do **not** start Phase 1 until the user confirms a restore.
-- **Sync Phase 1 (next, after restore):** wire `index.html` to
-  `https://margin-sync.khanssk89.workers.dev` using `SyncCore.mergeRecord` /
-  `mergeInk` / `lightBody`. Settings field for URL + key stored per device in
-  IndexedDB/localStorage — **never commit `SYNC_KEY`**. Timer ~30–60s and on
-  save. Offline-first. Ink erases need a `removed` map on the page-ink asset.
-  Two-tab live-server test before asking the user. Full plan: `SYNC-PLAN.md`.
+### Current focus and open items (2026-08-20, at b144)
+- **Phase 0 backup (shipped b143, restore confirmed):** daily Data button is
+  **Save notes (no recordings)**. User restored in incognito: notes came back,
+  audio did not (expected).
+- **Sync Phase 1 (shipped b144):** Settings → Backups has server URL + password
+  fields, stored in IndexedDB (`syncUrl`/`syncKey`), **never committed**.
+  Sync is off until both are set. Timer ~45s and on save. Pull then push
+  through `SyncCore`. Service worker skips other hosts so a pull cannot be
+  poisoned with `index.html`. Ink erases write `removed[strokeId]=erasedAt`.
+  Live two-device test: `node tests/synclive.mjs`. Password file is on the PC
+  only. App ship for this feature is `index.html` + `sw.js` + `sync-client.js`.
+- **Sync not done:** photos still light-only (empty slot on the other device)
+  until R2. Opening a note never waits on the network. Full plan: `SYNC-PLAN.md`.
 - **Chips (mostly done):** freeze at page joins is gone, drag lands where you let
   go, section boundaries cross cleanly, the grey divider now shows during the
   crossing but **briefly** — the open question the user raised is whether to
@@ -179,6 +178,9 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
+- **b144** `a3cd605` — wire light sync: Settings URL+password (never in the public app),
+  pull/push via the live Worker, ink erase tombstones. User pastes the
+  password on each device. — *Grok Build*
 - **b143** `c90bce0` — audio-less daily backup (notes + handwriting + pictures;
   class recordings left out so a ~15GB library can still be saved). Restore
   keeps recordings already on the device. Confirm restore on the tablet before

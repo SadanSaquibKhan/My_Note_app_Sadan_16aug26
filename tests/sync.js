@@ -197,5 +197,27 @@ console.log("9. merge is commutative — order of the two versions does not matt
   eq("mergeInk is order-independent", deepEq(inkIds(SyncCore.mergeInk(p, q)), inkIds(SyncCore.mergeInk(q, p))));
 }
 
+console.log("");
+console.log("10. the live server stores body as a JSON string — pull must parse it:");
+{
+  var local = {};
+  var rows = [{
+    store: "notes", id: "n1", updated_at: 50, deleted: 0, device: "A",
+    body: JSON.stringify({ id: "n1", title: "from string", lastEdited: 50 })
+  }];
+  var res = SyncCore.applyPull(local, rows);
+  eq("string body is parsed, not treated as empty", res.map["notes/n1"] && res.map["notes/n1"].title === "from string");
+}
+
+console.log("");
+console.log("11. working-sheet strokes merge the same way as page ink:");
+{
+  var a = { id: "pr1", strokes: [{ id: "sA", t: 1 }], lastEdited: 10 };
+  var b = { id: "pr1", strokes: [{ id: "sB", t: 2 }], lastEdited: 11 };
+  eq("a practice record counts as ink", SyncCore.isInk(a) === true);
+  eq("both sides' working strokes survive",
+     inkIds(SyncCore.mergeRecord(a, b)).join(",") === "sA,sB");
+}
+
 process.exitCode = bad ? 1 : 0;
 console.log(bad ? "\n" + bad + " FAILED" : "\nall sync-merge checks passed");
