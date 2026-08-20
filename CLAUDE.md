@@ -9,6 +9,13 @@ this file plus the code itself should be enough to keep working exactly the
 way it has been worked on so far, without the user having to re-explain
 anything.
 
+**Also read `HANDOFF.md`** in this folder — it is the shared running log for
+the three tools that take turns on this repo (Claude Code, Grok Build, Codex):
+a plain-English summary for the user, the current state, and a build-by-build
+history. **After you ship a build, add one line to its Build log** and update
+its "Where things stand" note. This file (`CLAUDE.md`) holds the deep, durable
+invariants; `HANDOFF.md` holds the live state and who-did-what.
+
 ## What this is
 
 **Margin** — a single-file, offline-first note-taking PWA built for a
