@@ -47,9 +47,12 @@
     return out;
   }
 
-  /* True if this record carries page ink we should merge stroke-by-stroke. */
+  /* True if this record carries page ink we should merge stroke-by-stroke.
+     Working sheets store strokes on the practice record (no kind:"page"). */
   function isInk(r) {
-    return !!r && (r.kind === "page" || r.kind === "ink") && Array.isArray(r.strokes);
+    if (!r || !Array.isArray(r.strokes)) return false;
+    if (r.kind === "image" || r.kind === "audio" || r.kind === "file") return false;
+    return true;
   }
 
   /* Merge two versions of ONE page-ink record. Order does not matter
@@ -143,7 +146,11 @@
     (rows || []).forEach(function (row) {
       if (!row || !row.store || row.id == null) return;
       var key = row.store + "/" + row.id;
-      var incoming = (row.body && typeof row.body === "object") ? row.body : {};
+      var incoming = row.body;
+      if (typeof incoming === "string") {
+        try { incoming = JSON.parse(incoming); } catch (e) { incoming = {}; }
+      }
+      if (!incoming || typeof incoming !== "object") incoming = {};
       // rebuild the scalar clocks the record layer expects
       if (incoming.lastEdited == null && row.updated_at != null && !row.deleted)
         incoming.lastEdited = row.updated_at;

@@ -1,7 +1,7 @@
 /* Margin service worker.
    Cache-first for the shell: once installed the app never needs the network.
    Bump CACHE when you upload a new index.html or the old one will be served. */
-const CACHE = "margin-2026-08-16-v143";
+const CACHE = "margin-2026-08-16-v144";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest",
                "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png"];
 /* The PDF reader is 1.4MB and only matters the first time you import a PDF,
@@ -9,7 +9,7 @@ const SHELL = ["./", "./index.html", "./manifest.webmanifest",
    it IS cached once fetched, so importing works with no network afterwards.
    Kept out of SHELL deliberately: a failed fetch of these would otherwise
    fail addAll() and leave the whole app uninstalled. */
-const EXTRA = ["./pdf.min.js", "./pdf.worker.min.js"];
+const EXTRA = ["./pdf.min.js", "./pdf.worker.min.js", "./sync-client.js"];
 
 self.addEventListener("install", e => {
   e.waitUntil(
@@ -28,6 +28,9 @@ self.addEventListener("activate", e => {
 });
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
+  /* Sync talks to another host. Caching those replies (or falling back to
+     index.html when they fail) would poison a pull with the app's own HTML. */
+  if (new URL(e.request.url).origin !== self.location.origin) return;
   e.respondWith(
     caches.match(e.request, { ignoreSearch: true }).then(hit => hit || fetch(e.request).then(res => {
       const copy = res.clone();

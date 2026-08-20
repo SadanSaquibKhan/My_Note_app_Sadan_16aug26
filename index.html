@@ -2455,6 +2455,23 @@
           <p class="hint">Shown once when you open the app, with Save backup and Later.</p>
         </div>
         <div class="field">
+          <label>Sync between this tablet and the computer</label>
+          <p class="hint">Off until you paste the server address and the password
+          once. They stay on this device only &mdash; never in the public app.
+          Notes, handwriting and structure copy across. Class recordings stay
+          on the device that made them.</p>
+          <label for="syncUrl">Server address</label>
+          <input type="url" id="syncUrl" autocomplete="off" spellcheck="false"
+                 placeholder="https://margin-sync.khanssk89.workers.dev">
+          <label for="syncKey" style="margin-top:8px;display:block">Password</label>
+          <input type="password" id="syncKey" autocomplete="off" spellcheck="false">
+          <div class="stack" style="margin-top:8px">
+            <button type="button" class="btn primary" id="syncSave">Save and test</button>
+            <button type="button" class="btn" id="syncNow">Sync now</button>
+          </div>
+          <p class="hint" id="syncStat">Sync is off.</p>
+        </div>
+        <div class="field">
           <label for="setHold">How long a press opens the spot menu <b id="holdOut"></b></label>
           <input type="range" id="setHold" min="300" max="1400" step="100">
         </div>
@@ -2621,6 +2638,9 @@
         the two and merge them by hand. The other three settings pick one copy
         and discard the other. Opening a notes-only file never throws away
         recordings already on this device.</p>
+        <p class="hint">To copy notes to the computer automatically, open
+        Settings &rarr; Backups and menus, paste the server address and
+        password, then Save and test. Sync stays off until you do that.</p>
       </div>
       <div class="field">
         <label>Storage</label>
@@ -2711,7 +2731,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b143";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b144";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4725,7 +4745,23 @@ var MarginCore = (function(){
   function getMeta(k, dflt){
     return getOne("meta", k).then(function(r){ return (r && "v" in r) ? r.v : dflt; });
   }
-  function setMeta(k, v){ return putOne("meta", {k:k, v:v}); }
+  /* These stay on this device: identity, the sync password, the pull cursor,
+     backup nag state. Syncing them would make two devices fight and would
+     put the password on the server. */
+  function localMetaKey(k){
+    if (!k) return true;
+    if (k === "deviceId" || k === "lastBackup" || k === "backupSnooze") return true;
+    if (String(k).indexOf("sync") === 0) return true;
+    return false;
+  }
+  function setMeta(k, v){
+    var rec = {k:k, v:v};
+    /* Device-only keys must not grow a lastEdited or they would look like
+       something to sync. Everything else gets a clock so a later pull can
+       last-writer-wins it. */
+    if (!localMetaKey(k)) rec.lastEdited = Date.now();
+    return putOne("meta", rec);
+  }
   function allMeta(){
     return getAll("meta").then(function(rows){
       var o = {};
@@ -5094,6 +5130,89 @@ var MarginCore = (function(){
       });
   }
 
+  var SYNC_STORES = ["notebooks","notes","sections","groups","practices","assets"];
+
+  function stripBlobs(r){
+    if (!r || typeof r !== "object") return r;
+    var out = {};
+    Object.keys(r).forEach(function(k){
+      if (k === "blob" || k === "orig") return;
+      out[k] = r[k];
+    });
+    return out;
+  }
+
+  /* Every light record this device holds, keyed "store/id", blobs stripped.
+     The sync loop pushes this through SyncCore.changedSince. */
+  function dumpLightMap(){
+    var jobs = SYNC_STORES.map(function(s){
+      return getAll(s).then(function(rows){ return { store:s, rows:rows }; });
+    });
+    jobs.push(getAll("meta").then(function(rows){ return { store:"meta", rows:rows }; }));
+    return Promise.all(jobs).then(function(parts){
+      var map = {};
+      parts.forEach(function(part){
+        (part.rows || []).forEach(function(r){
+          if (!r) return;
+          if (part.store === "meta"){
+            if (localMetaKey(r.k)) return;
+            var rec = {
+              id: r.k, k: r.k, v: r.v,
+              lastEdited: r.lastEdited || 1,
+              editedOn: r.editedOn || _device
+            };
+            map["meta/" + r.k] = rec;
+            return;
+          }
+          if (!r.id) return;
+          map[part.store + "/" + r.id] = stripBlobs(r);
+        });
+      });
+      return map;
+    });
+  }
+
+  function getSynced(store, id){
+    if (store === "meta") return getOne("meta", id);
+    return getOne(store, id);
+  }
+
+  /* Write a merged record. Never replace a local audio/picture blob with
+     emptiness — light sync does not carry those bytes. */
+  function putSynced(store, rec){
+    if (!rec) return Promise.resolve(null);
+    if (store === "meta"){
+      var k = rec.k || rec.id;
+      if (localMetaKey(k)) return Promise.resolve(null);
+      return putOne("meta", {
+        k: k, v: rec.v,
+        lastEdited: rec.lastEdited, editedOn: rec.editedOn
+      });
+    }
+    if (store === "assets"){
+      return getOne("assets", rec.id).then(function(mine){
+        if (mine) rec = keepLocalBytes(mine, rec);
+        return putOne("assets", rec);
+      });
+    }
+    return putOne(store, rec);
+  }
+
+  /* After a stroke-merge, if THIS device still has strokes or erases the
+     incoming copy did not, the merged body must be pushed. The server is
+     last-writer-wins on the whole row, so we bump lastEdited or the extra
+     strokes never leave the tablet. */
+  function inkHasLocalExtras(merged, incoming){
+    if (!merged || !Array.isArray(merged.strokes)) return false;
+    incoming = incoming || {};
+    var inIds = {};
+    (incoming.strokes || []).forEach(function(s){ if (s && s.id != null) inIds[s.id] = 1; });
+    if ((merged.strokes || []).some(function(s){ return s && s.id != null && !inIds[s.id]; }))
+      return true;
+    var inRm = incoming.removed || {};
+    return Object.keys(merged.removed || {}).some(function(id){ return inRm[id] == null; });
+  }
+
   return {
     DB_NAME:DB_NAME, DB_VERSION:DB_VERSION, FORMAT:FORMAT, TRASH_DAYS:TRASH_DAYS,
     COLOURS:COLOURS, SORTS:SORTS,
@@ -5153,12 +5272,16 @@ var MarginCore = (function(){
     cleanStrokes:cleanStrokes, wordCountText:wordCountText, inkDepth:inkDepth,
     packAssetForExport:packAssetForExport, bundleJsonParts:bundleJsonParts,
     bundleToFileBlob:bundleToFileBlob, keepLocalBytes:keepLocalBytes,
-    exportBundle:exportBundle, importBundle:importBundle, validBundle:validBundle
+    exportBundle:exportBundle, importBundle:importBundle, validBundle:validBundle,
+    localMetaKey:localMetaKey, dumpLightMap:dumpLightMap,
+    getSynced:getSynced, putSynced:putSynced, inkHasLocalExtras:inkHasLocalExtras,
+    stripBlobs:stripBlobs, SYNC_STORES:SYNC_STORES
   };
 })();
 if (typeof module === "object" && module.exports) module.exports = MarginCore;
 </script>
 
+<script src="sync-client.js"></script>
 <script id="ui">
 (function(){
   "use strict";
@@ -5284,6 +5407,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       markSaved();
       paintFoot();
       broadcastChange();
+      if (typeof scheduleSync === "function") scheduleSync(2000);
       return refreshLists();
     }).catch(function(e){
       state.saving = false;
@@ -7036,8 +7160,21 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function makeSurface(name, cfg){
     var S = {
       name: name, scroller: cfg.scroller, canvas: cfg.canvas,
-      strokes: [], undo: [], redo: [],
+      strokes: [], removed: {}, undo: [], redo: [],
       save: cfg.save, dirty: false, raf: 0, drawing: null, saveTimer: null
+    };
+    /* Erase tombstones: stroke id → when it was erased. Sync merge is a
+       union of strokes minus this map, so without it an erase on one device
+       comes back from the other device's older copy. Pages that never had
+       `removed` still work — missing means {}. */
+    S.markGone = function(ids){
+      S.removed = S.removed || {};
+      var now = Date.now();
+      (ids || []).forEach(function(id){ if (id != null) S.removed[String(id)] = now; });
+    };
+    S.markBack = function(ids){
+      S.removed = S.removed || {};
+      (ids || []).forEach(function(id){ if (id != null) delete S.removed[String(id)]; });
     };
 
     function zoom(){ return (name === "note") ? state.zoom : 1; }
@@ -7104,7 +7241,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       clearTimeout(S.saveTimer);
       if (!S.dirty) return Promise.resolve();
       S.dirty = false;
-      return S.save(S.strokes).then(function(){ markSaved(); paintFoot(); })
+      return S.save(S.strokes, S.removed || {}).then(function(){ markSaved(); paintFoot(); })
               .catch(function(e){ say("Could not save the writing: " + e.message); });
     };
 
@@ -7372,6 +7509,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (!hit.length) return;
       var gone = {};
       hit.forEach(function(h){ gone[h.s.id] = 1; S.drawing.removed.push(h); });
+      S.markGone(Object.keys(gone));
       S.strokes = S.strokes.filter(function(s){ return !gone[s.id]; });
       S.redraw();
     };
@@ -7380,6 +7518,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (!S.undo.length) return;
       var op = S.undo.pop();
       op.undoneAt = nextRedoSeq();
+      if (op.t === "del" || op.t === "clear")
+        S.markBack((op.ss || []).map(function(x){ return x && x.s && x.s.id; }));
+      if (op.t === "add" && op.s) S.markGone([op.s.id]);
       S.strokes = C.revertOp(S.strokes, op);
       if (op.t === "lasso" && typeof lassoReplayEls === "function")
         lassoReplayEls(op.before);
@@ -7390,6 +7531,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (!S.redo.length) return;
       var op = S.redo.pop();
       op.seq = nextSeq();
+      if (op.t === "del" || op.t === "clear")
+        S.markGone((op.ss || []).map(function(x){ return x && x.s && x.s.id; }));
+      if (op.t === "add" && op.s) S.markBack([op.s.id]);
       S.strokes = C.applyOp(S.strokes, op);
       if (op.t === "lasso" && typeof lassoReplayEls === "function")
         lassoReplayEls(op.after);
@@ -7399,7 +7543,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     S.clear = function(){
       if (!S.strokes.length) return;
       S.undo.push(tagOp({ t:"del", ss: S.strokes.map(function(s,i){ return {i:i, s:s}; }) }));
-      S.redo = []; clearTextRedo(); S.strokes = []; S.redraw(); S.queueSave(); paintInkTools(); paintGlobalUndo();
+      S.redo = []; clearTextRedo();
+      S.markGone(S.strokes.map(function(s){ return s.id; }));
+      S.strokes = []; S.redraw(); S.queueSave(); paintInkTools(); paintGlobalUndo();
     };
 
     S.scroller.addEventListener("scroll", S.queueRedraw, { passive: true });
@@ -7904,11 +8050,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* ---- mounting the note's page layer ---- */
   var noteSurface = makeSurface("note", {
     scroller: $("paper"), canvas: $("inkLayer"),
-    save: function(strokes){
+    save: function(strokes, removed){
       var nid = state.noteId;
       if (!nid) return Promise.resolve();
       return C.getPageInk(nid, { create:true }).then(function(a){
-        return C.saveAsset(a.id, { strokes: strokes });
+        return C.saveAsset(a.id, { strokes: strokes, removed: removed || {} });
       }).then(function(){ return C.bumpNote(nid); }).then(function(n){
         if (n && state.note && state.note.id === n.id) state.note = n;
       });
@@ -7919,6 +8065,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var inkReady = Promise.resolve();
   function loadNoteInk(){
     noteSurface.strokes = [];
+    noteSurface.removed = {};
     if (!state.noteId){
       noteSurface.undo = []; noteSurface.redo = [];
       noteSurface.redraw();
@@ -7929,6 +8076,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     inkReady = C.getPageInk(nid).then(function(a){
       if (state.noteId !== nid) return;
       noteSurface.strokes = (a && a.strokes) || [];
+      noteSurface.removed = (a && a.removed) || {};
       restorePageUndo(nid);
       growForInk();
       noteSurface.redraw();
@@ -8251,9 +8399,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   var pracSurface = makeSurface("practice", {
     scroller: $("pracPaper"), canvas: $("pracInk"),
-    save: function(strokes){
+    save: function(strokes, removed){
       if (!prac.rec) return Promise.resolve();
-      return C.savePractice(prac.rec.id, { strokes: strokes });
+      return C.savePractice(prac.rec.id, { strokes: strokes, removed: removed || {} });
     }
   });
   wireSurface(pracSurface);
@@ -8287,6 +8435,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       setSnap(prac.snap === "full" ? "full" : "half");
       $("pracText").innerHTML = prac.rec.html || "";
       pracSurface.strokes = prac.rec.strokes || [];
+      pracSurface.removed = prac.rec.removed || {};
       pracSurface.undo = []; pracSurface.redo = [];
       ink.active = "practice";
       if (typeof hydrateImages === "function") hydrateImages();
@@ -8325,7 +8474,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     clearTimeout(prac.saveTimer);
     if (!prac.rec) return Promise.resolve();
     var id = prac.rec.id;
-    return C.savePractice(id, { html: $("pracText").innerHTML, strokes: pracSurface.strokes })
+    return C.savePractice(id, { html: $("pracText").innerHTML, strokes: pracSurface.strokes, removed: pracSurface.removed || {} })
              .then(function(r){ if (prac.rec && prac.rec.id === id) prac.rec = r; })
              .catch(function(){});
   }
@@ -8346,6 +8495,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       prac.rec = prac.pages[i];
       $("pracText").innerHTML = prac.rec.html || "";
       pracSurface.strokes = prac.rec.strokes || [];
+      pracSurface.removed = prac.rec.removed || {};
       pracSurface.undo = []; pracSurface.redo = [];
       if (typeof hydrateImages === "function") hydrateImages();
       pracSurface.redraw();
@@ -8929,6 +9079,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     cfgBeforeReset = null;
     $("setReset").textContent = "Reset all";
     paintCfgCount();
+    if (typeof fillSyncFields === "function") fillSyncFields();
     $("setDlg").showModal();
   }
 
@@ -10960,6 +11111,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       S.undo.push(tagOp({ t:"del", ss: S.strokes.map(function(s,i){ return {i:i, s:s}; })
                                           .filter(function(x){ return ids[x.s.id]; }) }));
       S.redo = []; clearTextRedo();
+      S.markGone(Object.keys(ids));
       S.strokes = S.strokes.filter(function(s){ return !ids[s.id]; });
     }
     (lasso.pickedEls || []).forEach(function(el){
@@ -18064,6 +18216,218 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     this.value = "";
   });
 
+  /* ---------------- sync (light data only) ----------------
+     Off until the user pastes a server address and password into Settings.
+     Those stay in this device's IndexedDB — they are never in the public
+     page. Opening a note never waits on the network. */
+  var sync = { url: "", key: "", since: 0, busy: false, timer: null, lastOk: 0, lastErr: "" };
+
+  function syncReady(){
+    return !!(sync.url && sync.key && typeof SyncCore !== "undefined");
+  }
+  function paintSync(){
+    var el = $("syncStat");
+    if (!el) return;
+    if (!sync.url || !sync.key){
+      el.textContent = "Sync is off. Paste the server address and password, then Save and test.";
+      return;
+    }
+    if (typeof SyncCore === "undefined"){
+      el.textContent = "Sync helper did not load. Check the network, then reopen the app.";
+      return;
+    }
+    if (sync.lastErr){
+      el.textContent = "Last try failed: " + sync.lastErr +
+        (sync.lastOk ? " (last ok " + C.relTime(sync.lastOk) + ")" : "") +
+        ". Notes on this device are still safe.";
+      return;
+    }
+    el.textContent = sync.lastOk
+      ? "Sync is on. Last ok " + C.relTime(sync.lastOk) + "."
+      : "Sync is on. Waiting for the first copy.";
+  }
+  function fillSyncFields(){
+    if ($("syncUrl") && document.activeElement !== $("syncUrl")) $("syncUrl").value = sync.url || "";
+    if ($("syncKey") && document.activeElement !== $("syncKey")) $("syncKey").value = sync.key || "";
+    paintSync();
+  }
+  function loadSyncCreds(){
+    return Promise.all([
+      C.getMeta("syncUrl", ""),
+      C.getMeta("syncKey", ""),
+      C.getMeta("syncPullSince", 0),
+      C.getMeta("syncLastOk", 0)
+    ]).then(function(r){
+      sync.url = String(r[0] || "").replace(/\/+$/, "");
+      sync.key = String(r[1] || "");
+      sync.since = Number(r[2]) || 0;
+      sync.lastOk = Number(r[3]) || 0;
+      fillSyncFields();
+    });
+  }
+  function saveSyncCreds(){
+    var url = ($("syncUrl") && $("syncUrl").value || "").trim().replace(/\/+$/, "");
+    var key = ($("syncKey") && $("syncKey").value || "").trim();
+    sync.url = url;
+    sync.key = key;
+    return Promise.all([
+      C.setMeta("syncUrl", url),
+      C.setMeta("syncKey", key)
+    ]).then(function(){
+      paintSync();
+      if (!syncReady()){
+        sync.lastErr = "";
+        paintSync();
+        say("Sync is off on this device until both the address and the password are saved.");
+        return;
+      }
+      return syncPing().then(function(){
+        say("Sync can reach the server. Notes will copy in the background.");
+        scheduleSync(400);
+      }).catch(function(e){
+        sync.lastErr = (e && e.message) ? e.message : String(e);
+        paintSync();
+        say("Could not reach the server: " + sync.lastErr + ". Notes on this device are still safe.");
+      });
+    });
+  }
+  function syncPing(){
+    return syncFetch("/pull?since=0&device=" + encodeURIComponent(C.deviceId() || "")).then(function(){
+      sync.lastErr = "";
+      sync.lastOk = Date.now();
+      C.setMeta("syncLastOk", sync.lastOk);
+      paintSync();
+    });
+  }
+  function syncFetch(path, opts){
+    opts = opts || {};
+    return fetch(sync.url + path, {
+      method: opts.method || "GET",
+      headers: { "x-margin-key": sync.key, "content-type": "application/json" },
+      body: opts.body != null ? JSON.stringify(opts.body) : undefined
+    }).then(function(res){
+      return res.text().then(function(t){
+        var j = null;
+        try { j = t ? JSON.parse(t) : {}; } catch (e) { j = {}; }
+        if (!res.ok) throw new Error((j && j.error) || ("HTTP " + res.status));
+        return j;
+      });
+    });
+  }
+  function scheduleSync(ms){
+    if (!syncReady()) return;
+    clearTimeout(sync.timer);
+    sync.timer = setTimeout(function(){ syncOnce(); }, ms == null ? 45000 : ms);
+  }
+
+  function parsePullBody(row){
+    if (!row) return row;
+    var body = row.body;
+    if (typeof body === "string"){
+      try { body = JSON.parse(body); } catch (e) { body = {}; }
+    }
+    row.body = (body && typeof body === "object") ? body : {};
+    return row;
+  }
+
+  function applyPulledRows(rows){
+    var Core = typeof SyncCore !== "undefined" ? SyncCore : null;
+    if (!Core) return Promise.resolve({ applied: 0, cfg: false, notes: [] });
+    var cfgHit = false;
+    var noteHits = [];
+    var list = (rows || []).map(parsePullBody);
+    return list.reduce(function(p, row){
+      return p.then(function(){
+        if (!row || !row.store || row.id == null) return;
+        var incoming = row.body || {};
+        if (!incoming.id) incoming.id = row.id;
+        if (incoming.lastEdited == null && row.updated_at != null && !row.deleted)
+          incoming.lastEdited = row.updated_at;
+        if (row.deleted && incoming.deletedAt == null) incoming.deletedAt = row.updated_at;
+        return C.getSynced(row.store, row.id).then(function(mine){
+          var local = mine;
+          if (row.store === "meta" && mine)
+            local = { id: mine.k, k: mine.k, v: mine.v, lastEdited: mine.lastEdited || 0, editedOn: mine.editedOn };
+          var merged = Core.mergeRecord(local, incoming);
+          if (C.inkHasLocalExtras(merged, incoming)){
+            merged.lastEdited = Date.now();
+            merged.editedOn = C.deviceId();
+          }
+          return C.putSynced(row.store, merged).then(function(){
+            if (row.store === "meta" && (row.id === "cfg" || incoming.k === "cfg")) cfgHit = true;
+            if (row.store === "notes") noteHits.push(row.id);
+          });
+        });
+      });
+    }, Promise.resolve()).then(function(){
+      return { applied: list.length, cfg: cfgHit, notes: noteHits };
+    });
+  }
+
+  function syncOnce(){
+    if (!syncReady() || sync.busy) return Promise.resolve();
+    if (typeof navigator !== "undefined" && navigator.onLine === false){
+      scheduleSync(45000);
+      return Promise.resolve();
+    }
+    sync.busy = true;
+    var device = C.deviceId() || "";
+    var flushNotes = (typeof flush === "function") ? flush() : Promise.resolve();
+    var flushInkP = (typeof flushInk === "function") ? flushInk() : Promise.resolve();
+    return Promise.all([flushNotes, flushInkP]).then(function(){
+      return syncFetch("/pull?since=" + encodeURIComponent(sync.since || 0) +
+                       "&device=" + encodeURIComponent(device));
+    }).then(function(pulled){
+      return applyPulledRows(pulled && pulled.records).then(function(info){
+        var now = (pulled && pulled.now) || Date.now();
+        sync.since = now;
+        C.setMeta("syncPullSince", now);
+        return info;
+      });
+    }).then(function(info){
+      return C.dumpLightMap().then(function(map){
+        var recs = SyncCore.changedSince(map, -1);
+        if (!recs.length) return info;
+        return syncFetch("/push", { method: "POST", body: { records: recs } }).then(function(){
+          return info;
+        });
+      });
+    }).then(function(info){
+      sync.lastErr = "";
+      sync.lastOk = Date.now();
+      C.setMeta("syncLastOk", sync.lastOk);
+      paintSync();
+      if (info && info.cfg && typeof loadCfg === "function") loadCfg();
+      if (info && info.notes && info.notes.length && !state.dirty &&
+          !(noteSurface && noteSurface.drawing) && typeof render === "function"){
+        var open = state.noteId;
+        if (open && info.notes.indexOf(open) >= 0) render();
+        else if (typeof refreshLists === "function") refreshLists();
+      } else if (typeof refreshLists === "function"){
+        refreshLists();
+      }
+    }).catch(function(e){
+      sync.lastErr = (e && e.message) ? e.message : String(e);
+      paintSync();
+    }).then(function(){
+      sync.busy = false;
+      scheduleSync(45000);
+    });
+  }
+
+  if ($("syncSave")) $("syncSave").addEventListener("click", function(){ saveSyncCreds(); });
+  if ($("syncNow")) $("syncNow").addEventListener("click", function(){
+    if (!syncReady()) return say("Paste the server address and password first, then Save and test.");
+    syncOnce().then(function(){
+      if (!sync.lastErr) say("Sync finished.");
+      else say("Sync could not finish: " + sync.lastErr + ". Notes on this device are still safe.");
+    });
+  });
+  document.addEventListener("visibilitychange", function(){
+    if (document.visibilityState === "visible") scheduleSync(800);
+  });
+  window.addEventListener("online", function(){ scheduleSync(500); });
+
   /* ---------------- keyboard ----------------
      The standard, expected set. Shortcuts that edit or format are held back
      while a dialog field is focused, so Ctrl+B in the link box types a letter
@@ -18189,6 +18553,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     paintRecent();
     setTimeout(function(){ backupCheck(); storageCheck(); }, 900);
     setTimeout(checkViewport, 2600);
+    return loadSyncCreds().then(function(){ scheduleSync(8000); });
   }).catch(function(e){
     var msg = (e && e.message) ? e.message : String(e);
     if (e && e.code === "BLOCKED") showBlocked(msg);
