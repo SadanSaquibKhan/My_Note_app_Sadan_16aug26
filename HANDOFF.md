@@ -169,6 +169,26 @@ layers, both in `tests/`:
 - **Sync not done:** very large pictures / crop-originals may still skip;
   R2 later if the library grows. Opening a note never waits on the network.
   Full plan: `SYNC-PLAN.md`.
+- **Sync bug-hunt (2026-08-20) — confirmed findings still OPEN after b151:**
+  1. **Cursor wedge at scale (HIGH):** the pull is `updated_at > ? ORDER BY
+     updated_at ASC LIMIT 5000` with no tiebreak, and the client cursor is a
+     single `updated_at`. If ever >5000 rows share one timestamp (realistic:
+     `bumpImagesForSync` stamps every image with one `now`, so hundreds of pasted
+     screenshots become thousands of chunks at one ms), the pull returns the same
+     first 5000 forever and the cursor pins — that device receives nothing new
+     again and tail pictures stay "missing". Fix: keyset pagination — Worker
+     `ORDER BY updated_at, id` + cursor `(updated_at,id)` + a client loop while a
+     page returns exactly LIMIT; and/or stagger bulk-stamp timestamps. Needs a
+     Worker redeploy. Not urgent while the library is small. Modelled in
+     `tests/syncpix.js`.
+  2. **Lasso move/scale/recolor of an existing stroke does not propagate (MED):**
+     mergeInk keeps a stroke by id but "keeps either" geometry, so a moved stroke
+     can lose to the old copy and devices diverge. Fix: stamp a modified time on
+     the stroke when a lasso op changes it, and have mergeInk keep the newer.
+  3. **Pulled ink for the currently-open page isn't always re-loaded (MED):** a
+     merge that changes the open page's ink can be overwritten by the next local
+     save. Fix: after a pull touches the open note, reload its surface strokes.
+  (b151 fixed the HIGH "undo-of-erase reverted by sync" finding.)
 - **Chips (mostly done):** freeze at page joins is gone, drag lands where you let
   go, section boundaries cross cleanly, the grey divider now shows during the
   crossing but **briefly** — the open question the user raised is whether to
@@ -191,6 +211,10 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
+- **b151** `a1e180a` — un-erasing (Undo of an erase) no longer vanishes after sync:
+  each un-erase records a `restored` stamp that beats the erase tombstone, per
+  stroke id, in both the app and sync-client.js mergeInk. Found by a sync bug-hunt
+  (silent handwriting loss). tests/sync.js covers erase→undo→re-erase. — *Claude Code*
 - **b150** `01a1517` — "Erase all handwriting" button in the eraser options
   (reuses the undoable S.clear; one Undo restores). Opens from the floating
   favourites bar's eraser. — *Claude Code*

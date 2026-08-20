@@ -152,6 +152,37 @@ console.log("5. an erase on one device is respected everywhere (no zombie stroke
 }
 
 console.log("");
+console.log("5b. UNDOing an erase brings the stroke back on BOTH devices (no silent loss):");
+{
+  // The bug the sync hunt found: `removed` was grow-only, so once an erase had
+  // synced, undoing it could not survive a merge — the tombstone unioned back and
+  // dropped the restored stroke again on every device. A `restored` stamp later
+  // than the erase now wins, per stroke id.
+  var s = makeServer(), A = makeDevice("A"), B = makeDevice("B");
+  A.put("assets", { id:"ink_p", noteId:"p", kind:"page", strokes:[{id:"s0",t:1},{id:"s1",t:2}], removed:{}, restored:{}, lastEdited:5 });
+  syncBoth(A, B, s);
+  // A erases s1 at t=10 and syncs, so the tombstone reaches B and the server
+  A.put("assets", { id:"ink_p", noteId:"p", kind:"page", strokes:[{id:"s0",t:1}], removed:{s1:10}, restored:{}, lastEdited:10 });
+  syncBoth(A, B, s);
+  eq("after erase + sync, s1 is gone on both", deepEq(inkIds(A.get("assets","ink_p")),["s0"]) && deepEq(inkIds(B.get("assets","ink_p")),["s0"]));
+  // A presses Undo at t=20: s1 back, restored stamped later than the erase
+  A.put("assets", { id:"ink_p", noteId:"p", kind:"page", strokes:[{id:"s0",t:1},{id:"s1",t:2}], removed:{}, restored:{s1:20}, lastEdited:20 });
+  syncBoth(A, B, s);
+  eq("the un-erased s1 SURVIVES on A (was silently lost before)", deepEq(inkIds(A.get("assets","ink_p")),["s0","s1"]));
+  eq("and it comes back on B too", deepEq(inkIds(B.get("assets","ink_p")),["s0","s1"]));
+  /* both devices show the same INK. (The removed/restored bookkeeping maps can lag
+     by one push here because this harness does not model the app's
+     inkHasLocalExtras lastEdited-bump that reconciles same-clock map differences;
+     what matters — and what the old grow-only removed-set got wrong — is that the
+     visible strokes agree and the restored stroke is not dropped.) */
+  eq("both devices show the same strokes", deepEq(inkIds(A.get("assets","ink_p")), inkIds(B.get("assets","ink_p"))));
+  // and a LATER re-erase (t=30) still wins over the restore (t=20)
+  A.put("assets", { id:"ink_p", noteId:"p", kind:"page", strokes:[{id:"s0",t:1}], removed:{s1:30}, restored:{s1:20}, lastEdited:30 });
+  syncBoth(A, B, s);
+  eq("re-erasing after the restore hides s1 again on both", deepEq(inkIds(A.get("assets","ink_p")),["s0"]) && deepEq(inkIds(B.get("assets","ink_p")),["s0"]));
+}
+
+console.log("");
 console.log("6. syncing again with nothing new changes nothing (idempotent):");
 {
   var s = makeServer(), A = makeDevice("A"), B = makeDevice("B");
