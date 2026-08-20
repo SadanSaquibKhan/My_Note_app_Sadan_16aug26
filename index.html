@@ -2630,7 +2630,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b137";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b138";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -3326,6 +3326,7 @@ var MarginCore = (function(){
       return strokes.filter(function(s){ return !gone[s.id]; });
     }
     if (op.t === "clear") return [];
+    if (op.t === "lasso") return lassoReplayStrokes(strokes, op.after && op.after.strokes);
     return strokes;
   }
   function revertOp(strokes, op){
@@ -3338,7 +3339,15 @@ var MarginCore = (function(){
       });
       return out;
     }
+    if (op.t === "lasso") return lassoReplayStrokes(strokes, op.before && op.before.strokes);
     return strokes;
+  }
+  /* a lasso move/scale/recolour replaces the caught strokes in place, by id */
+  function lassoReplayStrokes(strokes, copies){
+    if (!copies || !copies.length) return strokes;
+    var by = {};
+    copies.forEach(function(s){ if (s && s.id) by[s.id] = JSON.parse(JSON.stringify(s)); });
+    return (strokes || []).map(function(s){ return by[s.id] ? by[s.id] : s; });
   }
 
   /* a short window of text around the first match, for search results */
@@ -6807,6 +6816,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           }
           if (lassoInCatch(p.x, p.y)){
             lassoBarBusy(true);
+            lasso.undoBefore = (typeof lassoCapture === "function") ? lassoCapture() : null;
             S.drawing = { moving:true, last:p };     /* drag what is already caught */
             hideLassoStyle();
             return;
@@ -6935,7 +6945,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         lassoFinish(S, poly);
         return;
       }
-      if (d.moving || d.scaling){ S.queueSave(); markDirty(); return; }
+      if (d.moving || d.scaling){
+        if (typeof lassoCommit === "function") lassoCommit(S, lasso.undoBefore);
+        lasso.undoBefore = null;
+        S.queueSave(); markDirty(); return;
+      }
       if (d.erasing){
         if (d.removed.length){ S.undo.push(tagOp({ t:"del", ss:d.removed })); S.redo = []; clearTextRedo(); S.queueSave(); }
         paintInkTools();
@@ -7059,6 +7073,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var op = S.undo.pop();
       op.undoneAt = nextRedoSeq();
       S.strokes = C.revertOp(S.strokes, op);
+      if (op.t === "lasso" && typeof lassoReplayEls === "function")
+        lassoReplayEls(op.before);
       S.redo.push(op); S.redraw(); S.queueSave(); paintInkTools(); paintGlobalUndo();
       if (state.noteId && S.name === "note") parkPageUndo(state.noteId);
     };
@@ -7067,6 +7083,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var op = S.redo.pop();
       op.seq = nextSeq();
       S.strokes = C.applyOp(S.strokes, op);
+      if (op.t === "lasso" && typeof lassoReplayEls === "function")
+        lassoReplayEls(op.after);
       S.undo.push(op); S.redraw(); S.queueSave(); paintInkTools(); paintGlobalUndo();
       if (state.noteId && S.name === "note") parkPageUndo(state.noteId);
     };
@@ -7167,9 +7185,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!poly || poly.length < 4) return;
     ctx.save();
     if (selected){
-      /* After a catch: a clean box with eight handles, like Samsung Notes.
-         The freehand path is snapped to this box so dragging a corner
-         resizes what you see. */
+      /* After a catch: a clean box with four corner handles. Corners keep
+         the aspect; anywhere else on the catch is a move. */
       var b = C.polyBounds(poly);
       if (!b){ ctx.restore(); return; }
       ctx.setLineDash([]);
@@ -9984,20 +10001,34 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return !(lb.maxX < b.minX || lb.minX > b.maxX || lb.maxY < b.minY || lb.minY > b.maxY);
   }
   function lassoHandlePts(b){
-    var mx = (b.minX + b.maxX) / 2, my = (b.minY + b.maxY) / 2;
+    /* four corners only. Edge handles on a small catch sat in the middle of
+       the words, so a drag meant as a move started a resize. */
     return [
-      { k:"nw", x:b.minX, y:b.minY }, { k:"n", x:mx, y:b.minY }, { k:"ne", x:b.maxX, y:b.minY },
-      { k:"e", x:b.maxX, y:my }, { k:"se", x:b.maxX, y:b.maxY }, { k:"s", x:mx, y:b.maxY },
-      { k:"sw", x:b.minX, y:b.maxY }, { k:"w", x:b.minX, y:my }
+      { k:"nw", x:b.minX, y:b.minY }, { k:"ne", x:b.maxX, y:b.minY },
+      { k:"se", x:b.maxX, y:b.maxY }, { k:"sw", x:b.minX, y:b.maxY }
     ];
+  }
+  function lassoHandlePad(b){
+    var z = zoomOf(lasso.surface) || 1;
+    var w = Math.max(1, b.maxX - b.minX), h = Math.max(1, b.maxY - b.minY);
+    /* 28 screen pixels on a large box; never more than a fifth of the short
+       side, or the four corners swallow a small catch and every drag resizes. */
+    var want = 28 / z;
+    var cap = Math.min(w, h) * 0.20;
+    return Math.max(8 / z, Math.min(want, cap));
   }
   function lassoHitHandle(px, py){
     if (!lasso.poly) return null;
     var b = C.polyBounds(lasso.poly);
     if (!b) return null;
-    var z = zoomOf(lasso.surface) || 1;
-    /* at least 36 screen pixels — a corner on glass is easy to miss */
-    var pad = Math.max(36 / z, 22);
+    var w = Math.max(1, b.maxX - b.minX), h = Math.max(1, b.maxY - b.minY);
+    /* the middle of the catch is always a move, even if a corner pad would
+       reach it on a tiny box */
+    var insetX = Math.max(w * 0.28, 6), insetY = Math.max(h * 0.28, 6);
+    if (px > b.minX + insetX && px < b.maxX - insetX &&
+        py > b.minY + insetY && py < b.maxY - insetY)
+      return null;
+    var pad = lassoHandlePad(b);
     var hs = lassoHandlePts(b);
     for (var i = 0; i < hs.length; i++){
       if (Math.abs(px - hs[i].x) <= pad && Math.abs(py - hs[i].y) <= pad) return hs[i].k;
@@ -10060,11 +10091,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     var w = bar.offsetWidth || 220, h = bar.offsetHeight || 44;
     var off = cfg.lassoPopOff || { dx: 0, dy: 0 };
-    /* Clear of the eight handles (36 screen px out from the outline). The
-       bar used to sit on the north corners, so a tap meant for a handle
-       landed on the bar and nothing moved — minus then "unlocked" resize
-       only because it shrank the box out from under the pill.
-       Prefer the right of the catch, then left, then below, then above. */
+    /* Clear of the four corner handles (about 28 screen px). The bar used
+       to sit on the north corners, so a tap meant for a handle landed on
+       the bar and nothing moved. Prefer the right of the catch, then left,
+       then below, then above. */
     var GAP = 48;
     var boxTop = y, boxBot = y + (lasso.boxH || 0);
     var minX = x - 40, maxX = x + 40;
@@ -10081,9 +10111,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     function padHits(l, t){
       var hs = [
-        [minX, boxTop], [maxX, boxTop], [minX, boxBot], [maxX, boxBot],
-        [(minX + maxX) / 2, boxTop], [(minX + maxX) / 2, boxBot],
-        [minX, (boxTop + boxBot) / 2], [maxX, (boxTop + boxBot) / 2]
+        [minX, boxTop], [maxX, boxTop], [minX, boxBot], [maxX, boxBot]
       ];
       for (var i = 0; i < hs.length; i++){
         var hx = hs[i][0], hy = hs[i][1];
@@ -10305,12 +10333,120 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (imgs) bits.push(imgs + (imgs === 1 ? " picture" : " pictures"));
     if (words) bits.push(words + (words === 1 ? " block" : " blocks"));
     $("lassoCount").textContent = bits.join(" · ") || "";
+    (lasso.pickedEls || []).forEach(function(el){ lassoEnsureUid(el); });
     lassoSnapBox();
     S.redraw();
     requestAnimationFrame(function(){ placeLassoPop(); });
     if ($("lassoPaste")) $("lassoPaste").disabled = !inkClip.length && !(typeof elClip !== "undefined" && elClip.length);
   }
   function dropBounds(list){ dropBoundsOf(list); }
+  function lassoEnsureUid(el){
+    if (!el) return "";
+    var u = el.getAttribute("data-lasso-uid");
+    if (!u){
+      u = (typeof C.newId === "function") ? C.newId("lu") : ("lu_" + Date.now() + "_" + Math.random());
+      el.setAttribute("data-lasso-uid", u);
+    }
+    return u;
+  }
+  function lassoCapture(){
+    var S = lasso.surface;
+    var ids = {};
+    (lasso.picked || []).forEach(function(s){ if (s && s.id) ids[s.id] = 1; });
+    var strokes = [];
+    if (S && S.strokes){
+      S.strokes.forEach(function(s){
+        if (ids[s.id]) strokes.push(JSON.parse(JSON.stringify(s)));
+      });
+    }
+    var els = (lasso.pickedEls || []).map(function(el){
+      return {
+        uid: lassoEnsureUid(el),
+        lassoX: el.getAttribute("data-lasso-x") || "",
+        lassoY: el.getAttribute("data-lasso-y") || "",
+        left: el.style.left || "",
+        top: el.style.top || "",
+        fontSize: el.style.fontSize || "",
+        color: el.style.color || "",
+        fontWeight: el.style.fontWeight || "",
+        fontStyle: el.style.fontStyle || "",
+        textDecoration: el.style.textDecoration || "",
+        backgroundColor: el.style.backgroundColor || "",
+        position: el.style.position || "",
+        width: el.style.width || "",
+        free: el.getAttribute("data-free") || "",
+        dx: el.getAttribute("data-x") || "",
+        dy: el.getAttribute("data-y") || "",
+        pct: el.getAttribute("data-pct") || ""
+      };
+    });
+    return {
+      strokes: strokes,
+      els: els,
+      poly: lasso.poly ? lasso.poly.slice() : null,
+      drawn: lasso.drawn ? lasso.drawn.slice() : null
+    };
+  }
+  function lassoFindUid(uid){
+    if (!uid) return null;
+    var host = (typeof lassoHost === "function" && lassoHost()) || document;
+    try { return host.querySelector('[data-lasso-uid="' + uid + '"]'); }
+    catch (e){ return null; }
+  }
+  function lassoReplayEls(shot){
+    if (!shot) return;
+    (shot.els || []).forEach(function(rec){
+      var el = lassoFindUid(rec.uid);
+      if (!el) return;
+      function put(attr, v){
+        if (v) el.setAttribute(attr, v); else el.removeAttribute(attr);
+      }
+      put("data-lasso-x", rec.lassoX);
+      put("data-lasso-y", rec.lassoY);
+      put("data-free", rec.free);
+      put("data-x", rec.dx);
+      put("data-y", rec.dy);
+      put("data-pct", rec.pct);
+      el.style.left = rec.left || "";
+      el.style.top = rec.top || "";
+      el.style.fontSize = rec.fontSize || "";
+      el.style.color = rec.color || "";
+      el.style.fontWeight = rec.fontWeight || "";
+      el.style.fontStyle = rec.fontStyle || "";
+      el.style.textDecoration = rec.textDecoration || "";
+      el.style.backgroundColor = rec.backgroundColor || "";
+      el.style.position = rec.position || "";
+      el.style.width = rec.width || "";
+      if (el.classList && el.classList.contains("imgblock") && typeof applyImagePlace === "function")
+        applyImagePlace(el);
+    });
+    if (shot.poly) lasso.poly = shot.poly.slice();
+    if (shot.drawn) lasso.drawn = shot.drawn.slice();
+    else if (shot.poly) lasso.drawn = null;
+    var S = lasso.surface;
+    if (S && shot.strokes && shot.strokes.length){
+      var ids = {};
+      shot.strokes.forEach(function(s){ ids[s.id] = 1; });
+      lasso.picked = S.strokes.filter(function(s){ return ids[s.id]; });
+    }
+    if (typeof placeLassoPop === "function") placeLassoPop();
+  }
+  function lassoCommit(S, before){
+    if (!S || !before) return;
+    var after = lassoCapture();
+    try {
+      if (JSON.stringify(before) === JSON.stringify(after)) return;
+    } catch (e) {}
+    S.undo.push(tagOp({
+      t: "lasso",
+      before: before,
+      after: after,
+      ss: (before.strokes || []).map(function(s, i){ return { i: i, s: s }; })
+    }));
+    S.redo = [];
+    if (typeof clearTextRedo === "function") clearTextRedo();
+    if (typeof paintGlobalUndo === "function") paintGlobalUndo();
+  }
   function lassoMoveFig(fig, dx, dy){
     var S = lasso.surface || noteSurface;
     var host = (S.name === "practice" ? $("pracText") : $("body"));
@@ -10366,6 +10502,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   function lassoBeginScale(S, handle, p){
     hideLassoStyle();
+    if (!lasso.undoBefore) lasso.undoBefore = lassoCapture();
     var b = C.polyBounds(lasso.poly);
     lasso.scaleOrig = {
       handle: handle,
@@ -10393,18 +10530,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     S.drawing = { scaling:true, last:p };
   }
   function lassoBoxFromHandle(ob, handle, p){
-    var b = { minX:ob.minX, minY:ob.minY, maxX:ob.maxX, maxY:ob.maxY };
-    if (handle.indexOf("n") >= 0) b.minY = p.y;
-    if (handle.indexOf("s") >= 0) b.maxY = p.y;
-    if (handle.indexOf("w") >= 0) b.minX = p.x;
-    if (handle.indexOf("e") >= 0) b.maxX = p.x;
-    if (b.maxX - b.minX < 16){
-      if (handle.indexOf("w") >= 0) b.minX = b.maxX - 16; else b.maxX = b.minX + 16;
+    var w0 = Math.max(1, ob.maxX - ob.minX), h0 = Math.max(1, ob.maxY - ob.minY);
+    var ax, ay, sx, sy;
+    if (handle === "se"){ ax = ob.minX; ay = ob.minY; sx = 1; sy = 1; }
+    else if (handle === "nw"){ ax = ob.maxX; ay = ob.maxY; sx = -1; sy = -1; }
+    else if (handle === "ne"){ ax = ob.minX; ay = ob.maxY; sx = 1; sy = -1; }
+    else if (handle === "sw"){ ax = ob.maxX; ay = ob.minY; sx = -1; sy = 1; }
+    else {
+      /* leftover edge handle: still lock aspect from the box centre */
+      ax = (ob.minX + ob.maxX) / 2; ay = (ob.minY + ob.maxY) / 2;
+      sx = handle.indexOf("w") >= 0 ? -1 : 1;
+      sy = handle.indexOf("n") >= 0 ? -1 : 1;
     }
-    if (b.maxY - b.minY < 16){
-      if (handle.indexOf("n") >= 0) b.minY = b.maxY - 16; else b.maxY = b.minY + 16;
-    }
-    return b;
+    var dw = sx * (p.x - ax), dh = sy * (p.y - ay);
+    var s = Math.max(dw / w0, dh / h0, 16 / w0, 16 / h0);
+    var nw = w0 * s, nh = h0 * s;
+    var minX = sx > 0 ? ax : ax - nw;
+    var minY = sy > 0 ? ay : ay - nh;
+    return { minX: minX, minY: minY, maxX: minX + nw, maxY: minY + nh };
   }
   function lassoMapPt(x, y, ob, nb){
     var sx = (nb.maxX - nb.minX) / Math.max(1, ob.maxX - ob.minX);
@@ -10621,6 +10764,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var S = lasso.surface; if (!S || !lassoHas()) return;
     var b = C.polyBounds(lasso.poly);
     if (!b) return;
+    lasso.undoBefore = lassoCapture();
     lassoBeginScale(S, "se", { x: b.maxX, y: b.maxY });
     lassoScaleTo({
       x: b.minX + (b.maxX - b.minX) * f,
@@ -10628,6 +10772,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
     lasso.scaleOrig = null;
     S.drawing = null;   /* do not leave the catch stuck in resize */
+    lassoCommit(S, lasso.undoBefore);
+    lasso.undoBefore = null;
     S.queueSave();
   }
   $("lassoDone").addEventListener("click", lassoClear);
@@ -10671,12 +10817,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   function lassoRecolour(c){
     var S = lasso.surface; if (!S) return;
+    var before = lassoCapture();
     var ids = {}; lasso.picked.forEach(function(s){ ids[s.id] = 1; });
     S.strokes.forEach(function(s){ if (ids[s.id]) s.colour = c; });
     (lasso.pickedEls || []).forEach(function(el){
       if (el.classList && el.classList.contains("imgblock")) return;
       el.style.color = inkHex(c);
     });
+    lassoCommit(S, before);
     S.redraw(); S.queueSave(); markDirty();
   }
   function lassoFmtText(how){
@@ -10684,6 +10832,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return !(el.classList && el.classList.contains("imgblock"));
     });
     if (!els.length){ hint("No typed words in this selection."); return; }
+    var S = lasso.surface;
+    var before = S ? lassoCapture() : null;
     els.forEach(function(el){
       if (how === "bold") el.style.fontWeight = (el.style.fontWeight === "700" || el.style.fontWeight === "bold") ? "" : "700";
       else if (how === "italic") el.style.fontStyle = el.style.fontStyle === "italic" ? "" : "italic";
@@ -10693,6 +10843,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         el.style.backgroundColor = on ? "" : "#fff3bf";
       }
     });
+    if (S) lassoCommit(S, before);
     markDirty(); flush();
   }
   if ($("lassoStyle")) $("lassoStyle").addEventListener("click", function(){
@@ -16013,11 +16164,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function lassoWeight(f){
     var S = lasso.surface;
     if (!S || !lasso.picked.length) return;
+    var before = lassoCapture();
     var ids = {};
     lasso.picked.forEach(function(s){ ids[s.id] = 1; });
     S.strokes.forEach(function(s){
       if (ids[s.id]) s.width = Math.max(0.6, Math.min(20, s.width * f));
     });
+    lassoCommit(S, before);
     S.redraw(); S.queueSave();
   }
   $("lassoThicker").addEventListener("click", function(){ lassoWeight(1.4); });
