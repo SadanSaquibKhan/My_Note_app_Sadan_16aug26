@@ -2703,7 +2703,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b140";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b141";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -14815,6 +14815,41 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (dir > 0) p.scrollTop = pageScrollFor(vis, 1) + t * peekPx;
     else p.scrollTop = Math.max(0, pageScrollFor(vis, 0) - t * peekPx);
   }
+  /* Move the SCROLL the way a finger does, from where the chip sits, without
+     mounting anything. Inside the mounted page it is a plain scroll; a little
+     past either end it over-scrolls into the neighbour's already-rendered peek
+     band — which is what shows the grey page-join strip and the neighbour's
+     content continuously. When that over-scroll crosses the same 40%/60% line a
+     finger uses, the ordinary scroll-driven pageHandover swaps the page and
+     re-anchors it, so nothing freezes and nothing jumps. Returns false when the
+     chip is pointing further than one page away (the peeks only cover the
+     immediate neighbours), so the caller can seek straight there instead. */
+  function driveChipScroll(list, prog){
+    var p = $("paper");
+    if (!p || prog == null) return false;
+    var vis = visualNoteId();
+    var band = vis ? pageBand(list, vis) : null;
+    if (!band) return false;
+    if (prog >= band.lo && prog <= band.hi){
+      landOnPage((prog - band.lo) / Math.max(1e-6, band.hi - band.lo), vis);
+      return true;
+    }
+    /* The crossing is spread over a comfortable slice of chip travel — wider
+       than the anti-shiver stick — so the neighbour's peek and the grey join
+       between the two pages are actually ON SCREEN long enough to see as you
+       drag through, instead of flashing past in a single frame. The
+       scroll-driven handover swaps the page partway through this slice. */
+    var reveal = Math.max(pageStick(band.lo, band.hi), (band.hi - band.lo) * 0.20);
+    if (prog > band.hi && prog <= band.hi + reveal){
+      driveChipPeek(vis, 1, (prog - band.hi) / reveal);
+      return true;
+    }
+    if (prog < band.lo && prog >= band.lo - reveal){
+      driveChipPeek(vis, -1, (band.lo - prog) / reveal);
+      return true;
+    }
+    return false;   /* more than a neighbour away — caller seeks directly */
+  }
   function revealChipJoin(list, prog, vis, frac){
     var p = $("paper");
     if (!p || !vis || prog == null){ landOnPage(frac, vis); return; }
@@ -14901,22 +14936,25 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      has already passed, and never sits frozen waiting on a load it no longer
      wants. */
   function chipSeek(force){
-    if (!chipDrag || !chipDrag.want || !chipDrag.want.note) return;
-    var place = chipDrag.want;
+    if (!chipDrag || chipDrag.prog == null) return;
     var vis = visualNoteId();
-    /* Inside the page on screen this is a plain scroll and follows every frame.
-       Judged by what is MOUNTED, never state.noteId: while a page is on its way
-       those two disagree, and scrolling on the strength of the new one moves
-       the old page by the new page's measurements. */
+    var list = chipDrag.list;
+    /* A swap is mid-flight: let finishHandover settle it before touching the
+       scroll again, or the two fight and it shivers. */
+    if (typeof swapping === "function" && swapping()) return;
+    /* Near the page on screen — within it, or a short over-scroll into an
+       adjacent peek — drive the scroll like a finger and let the ordinary
+       handover swap the page. This is what shows the grey join and never
+       freezes: the neighbour is already on screen as a peek, so there is no
+       mount to wait on at the crossing. */
+    if (!chipLoading() && driveChipScroll(list, chipDrag.prog)) return;
+    /* Further than a neighbour away (a fast flick): the peeks do not reach that
+       far, so seek straight to the target page, one load at a time. */
+    var place = chipDrag.want;
+    if (!place || !place.note) return;
     if (vis && place.note.id === vis){ landOnPage(place.frac, vis); return; }
-    /* A different page. Only one load may be in flight — otherwise a drag can
-       stack three page loads, each landing on top of the last. */
     if (chipLoading()) return;
-    if (typeof swapping === "function" && swapping()){
-      handover.queued = { id: place.note.id, frac: place.frac };
-      return;
-    }
-    if (chipDrag.pendingId === place.note.id) return;   /* already asked for */
+    if (chipDrag.pendingId === place.note.id) return;
     chipDrag.pendingId = place.note.id;
     chipDrag.lastSeek = Date.now();
     chipLand = { id: place.note.id, frac: place.frac };
@@ -15320,10 +15358,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (document.body.classList.contains("drawing")) return;
     if (ink.active && ink.surfaces && ink.surfaces[ink.active] &&
         ink.surfaces[ink.active].drawing) return;
-    /* A chip drag says which page you are on outright. Letting the
-       scroll-driven swap fire as well puts two things in charge of that at
-       the same moment, and they argue across the join — the bounce. */
-    if (chipDrag) return;
+    /* A chip drag now scrolls the page the same way a finger does, over-scrolling
+       into the neighbour's peek band, and it WANTS this same swap to fire when
+       that peek crosses the line — that is how the grey join shows and the page
+       turns without a freeze. The one time it must stay out is while the chip is
+       mounting a far page directly (a fast flick past the neighbours): then a
+       scroll-driven swap and the direct load would argue. */
+    if (chipDrag && typeof chipLoading === "function" && chipLoading()) return;
     /* A carried-over fling used to skip this wait, so the next peek could
        satisfy the line on the first frame of the new page and turn again.
        The join is one turn. The leftover speed continues after settle. */
