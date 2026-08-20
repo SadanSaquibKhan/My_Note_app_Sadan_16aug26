@@ -2733,7 +2733,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b145";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b146";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -6801,6 +6801,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     p.then(function(s){
       $("secDlg").close();
       if (s && s.id) state.sectionId = s.id;
+      if (typeof scheduleSync === "function") scheduleSync(800);
       return refreshLists();
     }).catch(dbFail("Could not save the section"));
   });
@@ -6810,6 +6811,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
                  "”? Its pages stay in the notebook, unfiled.")) return;
     C.deleteSection(secEditing.id).then(function(){
       $("secDlg").close();
+      if (typeof scheduleSync === "function") scheduleSync(800);
       return refreshLists();
     }).catch(function(e){ say("Could not delete the section: " + e.message); });
   });
@@ -18278,13 +18280,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       C.getMeta("syncKey", ""),
       C.getMeta("syncPullSince", 0),
       C.getMeta("syncLastOk", 0),
-      C.getMeta("syncPushSince", 0)
+      C.getMeta("syncPushSince", 0),
+      C.getMeta("syncCursorRev", 0)
     ]).then(function(r){
       sync.url = String(r[0] || "").replace(/\/+$/, "");
       sync.key = String(r[1] || "");
       sync.since = Number(r[2]) || 0;
       sync.lastOk = Number(r[3]) || 0;
       sync.pushSince = Number(r[4]) || 0;
+      /* b146: the old cursor used the server's "now", which skipped Sec4.
+         One full pull brings missed sections/pages, then we track by the
+         newest row we actually saw. */
+      if ((Number(r[5]) || 0) < 1){
+        sync.since = 0;
+        return Promise.all([
+          C.setMeta("syncPullSince", 0),
+          C.setMeta("syncCursorRev", 1)
+        ]).then(function(){ fillSyncFields(); });
+      }
       fillSyncFields();
     });
   }
@@ -18360,10 +18373,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   function applyPulledRows(rows){
     var Core = typeof SyncCore !== "undefined" ? SyncCore : null;
-    if (!Core) return Promise.resolve({ applied: 0, cfg: false, notes: [] });
+    if (!Core) return Promise.resolve({ applied: 0, cfg: false, notes: [], sections: false });
     var cfgHit = false;
     var noteHits = [];
+    var secHit = false;
     var list = (rows || []).map(parsePullBody);
+    /* Parents before children: a page that lands before its section looks
+       unfiled, which is what happened with Sec4 on the tablet. */
+    var storeOrd = { notebooks:0, groups:1, sections:2, notes:3, practices:4, assets:5, meta:6 };
+    list.sort(function(a, b){
+      var da = storeOrd[a && a.store] != null ? storeOrd[a.store] : 9;
+      var db = storeOrd[b && b.store] != null ? storeOrd[b.store] : 9;
+      if (da !== db) return da - db;
+      return (Number(a && a.updated_at) || 0) - (Number(b && b.updated_at) || 0);
+    });
     return list.reduce(function(p, row){
       return p.then(function(){
         if (!row || !row.store || row.id == null) return;
@@ -18384,11 +18407,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           return C.putSynced(row.store, merged).then(function(){
             if (row.store === "meta" && (row.id === "cfg" || incoming.k === "cfg")) cfgHit = true;
             if (row.store === "notes") noteHits.push(row.id);
+            if (row.store === "sections" || row.store === "notebooks") secHit = true;
           });
         });
       });
     }, Promise.resolve()).then(function(){
-      return { applied: list.length, cfg: cfgHit, notes: noteHits };
+      return { applied: list.length, cfg: cfgHit, notes: noteHits, sections: secHit };
     });
   }
 
@@ -18405,13 +18429,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var flushNotes = (typeof flush === "function") ? flush() : Promise.resolve();
     var flushInkP = (typeof flushInk === "function") ? flushInk() : Promise.resolve();
     return Promise.all([flushNotes, flushInkP]).then(function(){
-      return syncFetch("/pull?since=" + encodeURIComponent(sync.since || 0) +
+      var pullSince = Math.max(0, (sync.since || 0) - 120000);
+      return syncFetch("/pull?since=" + encodeURIComponent(pullSince) +
                        "&device=" + encodeURIComponent(device));
     }).then(function(pulled){
       return applyPulledRows(pulled && pulled.records).then(function(info){
-        var now = (pulled && pulled.now) || Date.now();
-        sync.since = now;
-        C.setMeta("syncPullSince", now);
+        /* Never jump the cursor to the server's wall clock. Records are
+           stamped with the device's lastEdited, so "now" on the server can
+           sit AHEAD of a section that has not been pushed yet. The next
+           pull then skips that section and the page arrives unfiled — that
+           is what happened with Sec4. Advance only to the newest row we
+           actually received; an empty pull leaves the cursor where it was. */
+        var maxAt = sync.since || 0;
+        (pulled && pulled.records || []).forEach(function(r){
+          var t = Number(r.updated_at) || 0;
+          if (t > maxAt) maxAt = t;
+        });
+        if (maxAt !== sync.since){
+          sync.since = maxAt;
+          C.setMeta("syncPullSince", maxAt);
+        }
         return info;
       });
     }).then(function(info){
@@ -18440,7 +18477,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           var open = state.noteId;
           if (open && info.notes.indexOf(open) >= 0) render();
           else if (typeof refreshLists === "function") refreshLists();
-        } else if (typeof refreshLists === "function"){
+        } else if ((info.sections || (info.notes && info.notes.length)) &&
+                   typeof refreshLists === "function"){
           refreshLists();
         }
       }
