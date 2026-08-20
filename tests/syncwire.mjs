@@ -53,6 +53,16 @@ eq("a header chip shows sync state", /id="syncChip"/.test(html));
 eq("password-only fill uses the public server address, not a baked secret",
    /if \(!url && key\) url = SYNC_HINT_URL;/.test(html) &&
    !/SYNC_KEY\s*=/.test(html));
+eq("pull cursor is the newest row received, not server now",
+   /Never jump the cursor to the server's wall clock/.test(html) &&
+   /maxAt !== sync\.since/.test(html) &&
+   !/sync\.since = now;/.test(html));
+eq("a too-high cursor is reset once so missed sections arrive",
+   /syncCursorRev/.test(html) && /sync\.since = 0;/.test(html));
+eq("sections are applied before notes",
+   /storeOrd = \{ notebooks:0, groups:1, sections:2, notes:3/.test(html));
+eq("creating a section schedules a copy",
+   /secSave"\)\.addEventListener[\s\S]{0,900}scheduleSync\(800\)/.test(html));
 
 console.log("ink tombstones:");
 eq("eraseAt records gone ids",

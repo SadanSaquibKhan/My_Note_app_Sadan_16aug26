@@ -210,6 +210,17 @@ console.log("10. the live server stores body as a JSON string — pull must pars
 }
 
 console.log("");
+console.log("11b. a page must not lose its section when the section row is late:");
+{
+  /* the tablet showed S4P1 unfiled because the section never landed. The
+     note itself must keep sectionId so when Sec4 arrives it files itself. */
+  var page = { id: "p", title: "S4P1", sectionId: "sc4", lastEdited: 20, html: "<p>x</p>" };
+  var later = { id: "p", title: "S4P1", sectionId: "sc4", lastEdited: 21, html: "<p>xy</p>" };
+  var m = SyncCore.mergeRecord(page, later);
+  eq("sectionId survives last-writer-wins on the page", m.sectionId === "sc4");
+}
+
+console.log("");
 console.log("11. working-sheet strokes merge the same way as page ink:");
 {
   var a = { id: "pr1", strokes: [{ id: "sA", t: 1 }], lastEdited: 10 };

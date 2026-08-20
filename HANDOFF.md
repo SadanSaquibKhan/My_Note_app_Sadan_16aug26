@@ -34,7 +34,7 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b145**. Notes can copy between the tablet and the computer
+- Current build: **b146**. Notes can copy between the tablet and the computer
   once you paste the password in Settings (Backups and menus). A **Sync**
   button appears at the top when it is on. If the network drops, it waits
   longer each try instead of hammering. Class recordings still do not copy.
@@ -100,7 +100,7 @@ saying something is fixed — because every round-trip to you is slow.
   **notebook → sections → pages**. Notes never touch the repo.
 - Local folder on the PC:
   `…\files_v12ofhtml_16aug26_7pm\margin-pwa_2026-08-16_v7\margin-pwa_2026-08-16_v7`
-- Current build: **b145** — always confirm with `var BUILD` in `index.html`
+- Current build: **b146** — always confirm with `var BUILD` in `index.html`
   and `git log`; do not trust a number once time has passed.
 
 ### How to verify without the tablet (the core discipline)
@@ -144,16 +144,17 @@ layers, both in `tests/`:
 - **Repo hygiene:** never blind `git add -A` — `.gitignore` keeps the user's
   personal `*.docx/*.pdf` out of a public repo, and a blind add leaked two once.
 
-### Current focus and open items (2026-08-20, at b145)
+### Current focus and open items (2026-08-20, at b146)
 - **Phase 0 backup (shipped b143, restore confirmed):** daily Data button is
   **Save notes (no recordings)**. User restored in incognito: notes came back,
   audio did not (expected).
-- **Sync Phase 1 (b144) + harden slice (b145):** Settings URL+password in
-  IndexedDB, never committed. Header **Sync** chip when on. Incremental push
-  (`syncPushSince`) so a 45s tick does not re-send the whole library. Failed
-  tries back off 8s → 3 min cap. Pull does not refresh the open page while
-  you are writing, drawing, or dragging a chip. Password-only save fills the
-  known public server URL. Live test: `node tests/synclive.mjs`.
+- **Sync Phase 1 (b144) + harden (b145) + section cursor fix (b146):**
+  Settings URL+password in IndexedDB. Header **Sync** chip. Incremental push.
+  **b146:** pull cursor is the newest *received* `updated_at`, never server
+  `now`. That `now` skip is why Sec4 stayed on the server but the tablet
+  showed S4P1 unfiled. One-time `syncCursorRev=1` resets the cursor so the
+  missed section is pulled. Apply order is notebooks/groups/sections then
+  notes. Creating a section schedules a copy.
 - **Sync not done:** photos still light-only until R2 (needs the user to
   create an R2 bucket). Opening a note never waits on the network. Full
   plan: `SYNC-PLAN.md`. Still waiting on the user to paste the password on
@@ -180,6 +181,8 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
+- **b146** `fafc823` — pull cursor no longer uses server "now", so a new section is not
+  skipped while its page arrives unfiled (Sec4). One re-pull on upgrade. — *Grok Build*
 - **b145** `44f958d` — sync hardening: visible Sync chip, retry backoff, incremental
   push, don't yank the page while writing. — *Grok Build*
 - **b144** `a3cd605` — wire light sync: Settings URL+password (never in the public app),
