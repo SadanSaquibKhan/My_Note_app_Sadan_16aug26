@@ -63,6 +63,10 @@ eq("sections are applied before notes",
    /storeOrd = \{ notebooks:0, groups:1, sections:2, notes:3/.test(html));
 eq("creating a section schedules a copy",
    /secSave"\)\.addEventListener[\s\S]{0,900}scheduleSync\(800\)/.test(html));
+eq("picture bytes ride as imgdata chunks",
+   /function attachImageBytes/.test(html) && /store: "imgdata"/.test(html));
+eq("pictures that went as empty slots are bumped once",
+   /syncBytesRev/.test(html) && /bumpImagesForSync/.test(html));
 
 console.log("ink tombstones:");
 eq("eraseAt records gone ids",

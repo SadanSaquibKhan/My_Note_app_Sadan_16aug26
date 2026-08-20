@@ -520,7 +520,8 @@ built from scratch.**
   IndexedDB, never in the repo; header Sync chip; incremental push + retry
   backoff; `sync-client.js` is loaded by the app (commit it with
   `index.html` + `sw.js` when it changes); erases write `removed`; opening a
-  note never waits on the network. Photos/audio bytes still do not sync.
+  note never waits on the network. Pictures copy as small `imgdata` chunks
+  (b148). Audio bytes still do not sync.
   Device-local meta (`openNotebooks`, `lastHash`, `place:*`, `sync*`) must
   not LWW across devices. `pruneOpenNbs` must not run until notebooks have
   loaded, or a Chrome reload wipes the open tabs. Home (`go({})`) does not
@@ -528,6 +529,15 @@ built from scratch.**
 
 ## Working style expected of you (Claude Code, Grok, or otherwise)
 
+- **Small builds.** One shipped build is 1–3 *related* changes (same bug or
+  same feature), then bump, commit, push. Then start the next cluster without
+  waiting for a reply when the user already gave a list. Do not pile Home +
+  sync + pictures + settings into one update — the tablet cannot tell which
+  change broke.
+- **Latest build first.** Every message to the user starts with
+  **Latest shipped: bN — one plain sentence of what to test.** Name any older
+  build they should still try. They test on the tablet while the next build
+  is being written.
 - Explanations to the user: short, plain, concrete "what to do next."
 - Prefer fixing root causes over patching symptoms — several of the bugs
   above (the scroll jump especially) went through multiple shallow fixes

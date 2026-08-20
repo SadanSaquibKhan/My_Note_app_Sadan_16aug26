@@ -34,28 +34,22 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b147**. Notes can copy between the tablet and the computer
-  once you paste the password in Settings (Backups and menus). **Sync**,
-  **Full**, and **Tabs** sit in the top-right tools. Home and **+** on the
-  notebook tab strip open a folders-and-notebooks board without closing
-  open notebooks. Reloading Chrome keeps those tabs and the page you were
-  on. Class recordings still do not copy. Chip scrolling and the S Pen
-  eraser were not touched.
-- **Waiting on you:** close the app and reopen; confirm **b147** in Settings.
-  Reload Chrome with two notebooks open and check the tabs and page are
-  still there. Tap Home, then +, then a notebook. Try Sync, Full, and Tabs.
-  Fold Recently opened and Lists with −, bring them back with the chips,
-  drag the thin bar above Recently opened to resize it. If Sec4 was missing
-  on the tablet, it should file after this build copies again.
-- Still rough: pictures do not copy yet (only their empty slot). Grey
-  page-divider during a chip drag is brief; lasso on typed text still has
-  some reports.
-- **Sync (Phase 0 + Phase 1 shipped).** Server:
+- Current build: **b148**. Pictures now copy between the computer and the
+  tablet (not class recordings). A picture you insert should stay after a
+  reload. **b147** is still live for Home / tabs / reload-keeps-place if
+  you have not tried those yet.
+- **Waiting on you:** close and reopen; confirm **b148** in Settings. Put
+  a picture on the computer, tap Sync, then Sync on the tablet — the
+  picture should appear, not “This picture is missing.” Put a picture on
+  the tablet, Sync both sides, reload the tablet: it should still be there.
+- Still rough: very large pictures or Uncrop-originals may still skip;
+  class recordings do not copy. Grey page-divider during a chip drag is
+  brief; lasso on typed text still has some reports.
+- **Sync (Phase 0 + Phase 1 shipped, pictures in b148).** Server:
   `https://margin-sync.khanssk89.workers.dev`. Password is NOT in the app —
   each device stores it locally. Ink erases now leave a `removed` map so a
-  stroke wiped on one device does not come back from the other. First
-  hardening slice is b145. Next: photos via R2 (Phase 3, needs you to make a
-  bucket). Audio stays manual.
+  stroke wiped on one device does not come back from the other. Audio stays
+  manual.
 
 **The golden rule for every AI (so nothing breaks silently).** After any change:
 run the tests in the `tests/` folder, bump the build number with the script
@@ -81,6 +75,8 @@ saying something is fixed — because every round-trip to you is slow.
    `node tests/nest.js index.html`, the relevant `tests/*.mjs`, and
    `tests/shapes3.mjs`, then `python tests/bump.py <this-folder> <N>`.
 3. **On departure (every shipped build):**
+   - One build is 1–3 related changes only. Then bump, commit, push, and
+     start the next cluster. Tell the user **Latest shipped: bN** first.
    - Add one line to the **Build log** at the bottom of this file:
      `bN <hash> — one-sentence what-changed — (which AI)`.
    - Update the "Where things stand" line in Part 1 if the current focus moved.
@@ -105,7 +101,7 @@ saying something is fixed — because every round-trip to you is slow.
   **notebook → sections → pages**. Notes never touch the repo.
 - Local folder on the PC:
   `…\files_v12ofhtml_16aug26_7pm\margin-pwa_2026-08-16_v7\margin-pwa_2026-08-16_v7`
-- Current build: **b147** — always confirm with `var BUILD` in `index.html`
+- Current build: **b148** — always confirm with `var BUILD` in `index.html`
   and `git log`; do not trust a number once time has passed.
 
 ### How to verify without the tablet (the core discipline)
@@ -149,7 +145,7 @@ layers, both in `tests/`:
 - **Repo hygiene:** never blind `git add -A` — `.gitignore` keeps the user's
   personal `*.docx/*.pdf` out of a public repo, and a blind add leaked two once.
 
-### Current focus and open items (2026-08-20, at b147)
+### Current focus and open items (2026-08-20, at b148)
 - **Phase 0 backup (shipped b143, restore confirmed):** daily Data button is
   **Save notes (no recordings)**. User restored in incognito: notes came back,
   audio did not (expected).
@@ -165,10 +161,12 @@ layers, both in `tests/`:
   load. `lastHash` restores the page. Home/`+` show the folder board and
   do not close tabs. `+` does not create a notebook. Top bar: Sync, Full,
   Tabs. Recently opened and Weak/working lists fold; recent resizes by drag.
-- **Sync not done:** photos still light-only until R2 (needs the user to
-  create an R2 bucket). Opening a note never waits on the network. Full
-  plan: `SYNC-PLAN.md`. Still waiting on the user to paste the password on
-  both devices.
+  **b148:** inserted pictures copy as small `imgdata` chunks (no Worker
+  change). A missing slot is a label, not a wipe of nested pictures. Local
+  blobs are kept when a light pull has none. Audio still does not copy.
+- **Sync not done:** very large pictures / crop-originals may still skip;
+  R2 later if the library grows. Opening a note never waits on the network.
+  Full plan: `SYNC-PLAN.md`.
 - **Chips (mostly done):** freeze at page joins is gone, drag lands where you let
   go, section boundaries cross cleanly, the grey divider now shows during the
   crossing but **briefly** — the open question the user raised is whether to
@@ -191,6 +189,8 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
+- **b148** `a062d2c` — Pictures copy between devices; a tablet picture no longer
+  vanishes on reload; missing slot no longer eats the next picture. — *Grok Build*
 - **b147** `3233b3e` — Home folder grid, top Sync/Full/Tabs, tab-strip Home/+, keep open
   notebooks and place on Chrome reload, collapsible recent/lists. — *Grok Build*
 - **b146** `fafc823` — pull cursor no longer uses server "now", so a new section is not
