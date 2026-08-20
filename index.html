@@ -2703,7 +2703,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b139";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b140";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -14736,7 +14736,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      the chip sat still and then jumped. Twenty-two per cent of the current
      page is a short drag past the join — enough to pull the neighbour onto
      the screen, not enough that a resting hand can shiver across it. */
-  var CHIP_STICK = 0.22;
+  /* A small dead zone around the join so a hand resting exactly on a page
+     boundary cannot flip back and forth across it. Small on purpose: with the
+     seek going straight to the target now, a big stick only makes the current
+     page sit at its clamped edge (frozen) while you drag through the dead zone
+     before the neighbour is reached. Six per cent of the page is enough to stop
+     a shiver, short enough that the crossing feels immediate. */
+  var CHIP_STICK = 0.06;
   function pageBand(list, id){
     var tot = listVirtual(list), acc = 0;
     if (!tot) return null;
@@ -14879,64 +14885,52 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     try { flush(); } catch (e) {}
     return true;
   }
+  /* A chip is a SEEK, like a scrollbar: where the chip sits is where you are,
+     page and all. It used to try to animate through every page it passed —
+     pull the neighbour's preview in, hand the swap to the finger's re-anchor,
+     then do the same for the next page. That needs one whole page mount per
+     page crossed, and a mount is far slower than a drag: while the mount was in
+     flight chipSeek returned early, so the view FROZE on a stale page while the
+     label ran on ahead, and when the mount finally landed the app was a page or
+     two behind the finger and lurched to catch up, then froze again. That
+     freeze / count-ahead / jump staircase is what you saw, and it could never
+     keep pace with a normal-speed drag.
+     Now it seeks straight to whatever page the finger is pointing at, one load
+     at a time, and a frame loop (chipChase) keeps re-aiming at the LATEST
+     target — so it always heads for where your finger is now, never a page it
+     has already passed, and never sits frozen waiting on a load it no longer
+     wants. */
   function chipSeek(force){
     if (!chipDrag || !chipDrag.want || !chipDrag.want.note) return;
     var place = chipDrag.want;
     var vis = visualNoteId();
-    var list = chipDrag.list;
-    /* Inside the page that is actually on the screen this is a plain scroll and
-       can follow every single move. Judged by what is mounted, never by
-       state.noteId: while a page is on its way those two disagree, and
-       scrolling on the strength of the new one moves the old page by the new
-       page's measurements. */
-    if (vis && place.note.id === vis){
-      revealChipJoin(list, chipDrag.prog, vis, place.frac);
-      return;
-    }
-    var vi = listIndexOf(list, vis), wi = listIndexOf(list, place.note.id);
-    var neighbor = (vi >= 0 && wi >= 0 && Math.abs(wi - vi) === 1);
-    if (neighbor){
-      var dir = wi > vi ? 1 : -1;
-      var band = pageBand(list, vis);
-      var stick = band ? pageStick(band.lo, band.hi) : 0.04;
-      var t = 1;
-      if (band && dir > 0 && chipDrag.prog != null)
-        t = (chipDrag.prog - band.hi) / Math.max(1e-6, stick);
-      if (band && dir < 0 && chipDrag.prog != null)
-        t = (band.lo - chipDrag.prog) / Math.max(1e-6, stick);
-      driveChipPeek(vis, dir, t);
-      /* Do not remount until the preview has crossed the same line a finger
-         uses. Letting go mid-join leaves the join on screen rather than
-         jump-loading the neighbour at its heading. */
-      if (!chipPeekReady(dir)) return;
-    }
-    if (!force){
-      if (chipLoading()) return;                                 /* one at a time */
-      if (typeof swapping === "function" && swapping()) return;
-      if (Date.now() - (chipDrag.lastSeek || 0) < CHIP_SEEK_MS) return;
-    }
-    /* already asked for and still coming: do not ask again */
-    if (chipDrag.pendingId === place.note.id && chipLoading()) return;
-    chipDrag.lastSeek = Date.now();
-    chipDrag.pendingId = place.note.id;
+    /* Inside the page on screen this is a plain scroll and follows every frame.
+       Judged by what is MOUNTED, never state.noteId: while a page is on its way
+       those two disagree, and scrolling on the strength of the new one moves
+       the old page by the new page's measurements. */
+    if (vis && place.note.id === vis){ landOnPage(place.frac, vis); return; }
+    /* A different page. Only one load may be in flight — otherwise a drag can
+       stack three page loads, each landing on top of the last. */
+    if (chipLoading()) return;
     if (typeof swapping === "function" && swapping()){
       handover.queued = { id: place.note.id, frac: place.frac };
       return;
     }
-    /* If the neighbour preview is already on screen from driveChipPeek,
-       hand the swap to the same re-anchor the finger uses. A raw restore
-       of chipLand after a remount is the sudden jump at the join. */
-    if (neighbor && typeof armChipHandover === "function" && armChipHandover(place.note.id)){
-      chipLand = null;
-    } else if (neighbor){
-      /* peek not ready enough to re-anchor — do not jump-load */
-      chipDrag.pendingId = vis;
-      return;
-    } else {
-      chipLand = { id: place.note.id, frac: place.frac };
-    }
+    if (chipDrag.pendingId === place.note.id) return;   /* already asked for */
+    chipDrag.pendingId = place.note.id;
+    chipDrag.lastSeek = Date.now();
+    chipLand = { id: place.note.id, frac: place.frac };
     if (typeof openPage === "function") openPage(place.note, true);
     else go({ nbId: state.nbId, noteId: place.note.id }, true);
+  }
+  /* While a chip is held, keep aiming at the newest target every frame. This is
+     what makes a fast multi-page drag continuous instead of a staircase: the
+     moment one load lands, the next frame heads straight for wherever the finger
+     is now, coalescing past every page it already skipped. */
+  function chipChase(){
+    if (!chipDrag) return;
+    chipSeek(false);
+    chipDrag.raf = requestAnimationFrame(chipChase);
   }
   function wireNavChip(id, kind){
     var el = $(id);
@@ -14955,6 +14949,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       document.body.classList.add("chipdrag");
       try { el.setPointerCapture(e.pointerId); } catch (err) {}
       el.classList.add("on");
+      /* keep re-aiming at the latest target every frame for as long as it is held */
+      if (typeof chipChase === "function") chipChase();
     });
     el.addEventListener("pointermove", function(e){
       if (!chipDrag || chipDrag.kind !== kind) return;
