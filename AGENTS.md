@@ -56,16 +56,17 @@ This is the most important working pattern in this project. Since no one on
 the AI side has the physical tablet, an extensive Node.js test discipline
 compensates:
 
-- Test scripts live in `C:\Users\khans\AppData\Local\Temp\mtest\` (a scratch
-  folder, **not** part of the repo — it doesn't survive between machines, so
-  a fresh session may need to recreate individual test files, but the
-  *pattern* below should always be followed).
-- **`check.js index.html`** — syntax-checks every inline `<script>` block.
+- Test scripts live in **`tests/`** in this repo (next to `index.html`).
+  Run them from the repo root, e.g. `node tests/check.js index.html`.
+  An old scratch copy may still exist at
+  `C:\Users\khans\AppData\Local\Temp\mtest\` on this PC — do not commit that
+  folder; `tests/` is the shared suite every tool must use.
+- **`node tests/check.js index.html`** — syntax-checks every inline `<script>` block.
   Run this after every edit, no exceptions.
-- **`ids.js index.html`** — confirms every `$("someId")` call in the JS
+- **`node tests/ids.js index.html`** — confirms every `$("someId")` call in the JS
   resolves to a real element in the markup, and flags duplicate ids. Has a
   running list of "newly added elements" to extend when you add ids.
-- **`nest.js index.html`** — confirms every HTML tag opens and closes in the
+- **`node tests/nest.js index.html`** — confirms every HTML tag opens and closes in the
   right order (catches a dangling `</div>` before it ships as a visual bug —
   this exact thing caused a "grey half-screen" bug once).
 - A growing family of **`*.mjs` unit-test files**, one per feature area
@@ -98,17 +99,19 @@ compensates:
 Every shipped change follows this exact sequence:
 
 1. Make the edit(s) in `index.html` (and `sw.js` if needed).
-2. Run `check.js`, `ids.js`, `nest.js`, and every relevant `*.mjs` suite
-   (including `shapes3.mjs` as a general regression check — shape
+2. Run `node tests/check.js index.html`, `node tests/ids.js index.html`,
+   `node tests/nest.js index.html`, and every relevant `tests/*.mjs` suite
+   (including `tests/shapes3.mjs` as a general regression check — shape
    recognition is easy to break silently).
-3. Bump the build number: there's a `bump.py <folder> <N>` script that sets
+3. Bump the build number: `python tests/bump.py <this-folder> <N>` sets
    `BUILD = "v12 · 2026-08-16 · bN"` inside `index.html` and
    `CACHE = "margin-2026-08-16-vN"` inside `sw.js`, and verifies the two
    match. **Never hand-edit these — they drifted out of sync repeatedly
    before this script existed**, which meant the tablet kept serving a stale
    cached copy after a "fix" that never actually reached it.
-4. `git add -A index.html sw.js` — **only these two files**, never a blind
-   `git add -A` of everything. See "Do not touch" below for why.
+4. For an **app** change: `git add index.html sw.js` only. For a **docs/tests**
+   change you may also add `AGENTS.md`, `CLAUDE.md`, and `tests/`. Never a
+   blind `git add -A` of everything. See "Do not touch" below for why.
 5. Commit with a message that explains *why*, ending
    `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>` (or whichever
    model actually made the change).
@@ -143,8 +146,9 @@ FAILING check means the bug it describes is gone. Its count going *up* is good.
 - `pdf.min.js` / `pdf.worker.min.js` are vendored pdf.js, loaded lazily and
   cached via the service worker's `EXTRA` list (best-effort — a failure to
   cache them must not break install).
-- Never commit anything from the `mtest` scratch folder; it's outside the
-  repo entirely.
+- Never commit the Windows Temp `mtest` scratch folder. The real suite is
+  `tests/` in this repo. Do not commit `node_modules`, `*.bak`, or personal
+  documents.
 
 ## Architecture, by the numbers
 
@@ -298,13 +302,44 @@ handler goes first). Further rules learned the hard way:
 - `listProgress` returns **-1** for "this page is not in this list", which is
   not the same as 0 ("you are at the top"). `sectionPageList` follows the open
   page's own section, not whichever section the panel happens to show.
+- `CHIP_STICK` is **22% of the current page's share of the track**, not 4% of
+  the whole notebook. Four per cent of a 20-page book was almost a whole page,
+  so the chip sat still and then jumped.
+- A chip drag onto a **neighbour** must overscroll the current page into that
+  neighbour's peek (`driveChipPeek`) and remount only once `chipPeekReady`
+  says the peek has crossed the same 40%/60% lines finger-scrolling uses.
+  Remounting earlier, then `landOnPage(0)`, is the sudden jump at the join:
+  frac 0 means "head at the top of the screen", but at the join the head is
+  still halfway down. After a neighbour swap, skip `landOnPage` until the
+  chip has travelled further into the new page.
+- Neighbour remounts go through `openPage(n, true)` so `render()` runs on
+  this turn. Waiting on hashchange left the finger on a page that had already
+  gone.
+- Lasso hit-tests (`elPageBox`, `lassoInCatch`, `lassoHitHandle`,
+  `pageToClient`) must call a file-scope `zoom()` / `zoomOf()`. The only
+  `zoom()` used to live inside `makeSurface`, so a corner tap threw and
+  nothing moved — minus then "unlocked" resize by shrinking the box. The
+  popup bar must sit **beside** the catch (right, then left, then below),
+  never on the north handles. `lasso.drawn` travels with move/scale or the
+  old words stay a ghost hit-zone.
+- The two chips **overlap by about half** when they share a row (blue at
+  `right:40px`, grey at `right:8px`) so they can sit on the screen edge
+  instead of out in the writing. Labels are short: `"S2  3/6"` and `"3/12"`.
+  After `CHIP_TUCK_MS` (1100ms) of not touching either, both tuck toward the
+  edge by `CHIP_TUCK_FRAC` of their own width (~half still showing). Touching
+  a tucked chip wakes **only that one**; a tap on a tucked chip must not also
+  jump to the start/end of the list (that jump is for a tap on one already
+  out). `placeChip` composes tuck X with `translateY(-50%)` via
+  `applyChipXform`. Left-handed layout mirrors to the left edge.
 
 **The finger crossing a join.** `fingerPanMove` scrolls to `pan.top` minus how
 far the finger has travelled; the swap rewrites `scrollTop`, so that sum then
 describes a page that is gone and the next twitch throws the page ~900px. Any
 code that moves the scroll under a finger that is still down **must rebase the
-pan** (`rebasePan()`), and must cancel the throw (`pan.noGlide`) — momentum
-gathered on the page you left must not be spent on the page you arrived at.
+pan** (`rebasePan()`). Do not zero `pan.vx`/`vy` or set `pan.noGlide` there —
+that is the "momentum dies at the join". A running fling is stopped only so
+its frame can be restarted after the re-anchor (`handover.glideCarry` at 0.7).
+The old dump-to-the-heading was stale `pan.top`, not the leftover speed.
 The backward target is computed **once** before the settle loop: `pageBottom`
 keeps moving for several frames as bands hydrate, so re-reading it each frame
 moved the target ~200px under the correction chasing it.
@@ -375,6 +410,13 @@ to a user-chosen subset of tools. All bars:
 - Finger-scroll over an unselected picture must scroll: `touch-action:pan-y`
   plus a pending-tap (`imgPend`) that cancels on vertical move.
 - Rough working uses the same page ruling and can take pasted pictures.
+- **Working sheets must rise from the bottom of the screen and slide
+  back down out of sight when closed** — that motion is wanted, not a
+  leftover. `#pracSheet` is a fixed bottom overlay (`openPractice` /
+  `closePractice`), not a page in `pageOrder`. Do not put working areas
+  back into the main notebook scroll. Pen, lasso, pictures and scroll
+  inside the sheet stay the same as a normal page. Named chips on the
+  parent page (`span.pracpin`, e.g. S1P2w3) open and hide that overlay.
 - A second floating **shortcuts bar** (`jumpBar`) sits on the opposite side
   of the screen: Home (notebook list, current notebook stays open), Open
   (notebooks already open), Places (this notebook's sections + every
@@ -425,6 +467,19 @@ built from scratch.**
   visibly the moment they swap.
 
 ## Open items as of the last session
+
+- **Selecting a picture must not raise the keyboard or jump the caret.**
+  User report (do not ignore next time this file is touched): tapping a
+  picture turns typing on and dumps the caret at the first line of a blank
+  page — on a normal page and in a working area. `selectImage` must not go
+  through `handOverToTyping` / `setTypingEnabled(true)` / `typeAt`. Not
+  started; user said remember, not now (b135+).
+- **Working sheet motion:** coming up from the bottom, and going back
+  down until it disappears, is the wanted open/close. Do not replace
+  that with a hard show/hide or with a page in the notebook list. User
+  said remember, not now (b136). If the slide ever feels missing, restore
+  the bottom-sheet animation on `#pracSheet`, do not rebuild working as
+  in-flow pages.
 
 - Attachments/recordings/maths currently render as a small placeholder
   label (`peekstub`) inside page previews rather than being fully rendered
