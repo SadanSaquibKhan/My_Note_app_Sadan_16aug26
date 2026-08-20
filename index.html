@@ -2595,8 +2595,9 @@
       <div class="field">
         <label>Backup</label>
         <div class="stack">
-          <button type="button" class="btn primary" id="exportBtn">Save backup file</button>
+          <button type="button" class="btn primary" id="exportBtn">Save notes (no recordings)</button>
           <button type="button" class="btn" id="exportNbBtn">Save just this notebook</button>
+          <button type="button" class="btn" id="exportFullBtn">Save everything including recordings</button>
           <button type="button" class="btn" id="importBtn">Open a backup file</button>
           <label for="importMode" style="margin-top:8px;display:block">If a note exists in both</label>
           <select id="importMode">
@@ -2607,12 +2608,19 @@
           </select>
         </div>
         <p class="hint" id="dataStat"></p>
+        <p class="hint">Use <b>Save notes</b> every day. It keeps your writing,
+        handwriting and pictures, and leaves class recordings out so the file
+        stays small enough to save even when you have many hours of audio.
+        Recordings stay on this device. <b>Save everything including
+        recordings</b> is only for a small library &mdash; a big audio library
+        can make that one fail.</p>
         <p class="hint"><b>Keep both</b> never loses writing: where a page was
         edited on both devices, yours stays exactly as it is and the other
         device's copy arrives beside it, marked &ldquo;from&hellip;&rdquo; and
         sitting next to its twin in the page order so it is easy to compare
         the two and merge them by hand. The other three settings pick one copy
-        and discard the other.</p>
+        and discard the other. Opening a notes-only file never throws away
+        recordings already on this device.</p>
       </div>
       <div class="field">
         <label>Storage</label>
@@ -2703,7 +2711,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b142";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b143";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4728,30 +4736,115 @@ var MarginCore = (function(){
 
   /* ---------- export / import ---------- */
 
-  function exportBundle(){
+  /* Copy one asset into a backup file. skipAudio leaves the sound out so a
+     15GB library can still be saved; the record of the recording still goes
+     (length, which page, when) so a restore knows it existed. Pictures and
+     handwriting always go. Blobs themselves never go in JSON — they are
+     already encoded as `data` / `origData` by the caller. */
+  function packAssetForExport(a, data, origData, skipAudio){
+    var c = {};
+    Object.keys(a || {}).forEach(function(k){
+      if (k === "blob" || k === "orig" || k === "data" || k === "origData") return;
+      c[k] = a[k];
+    });
+    if (skipAudio && a && a.kind === "audio"){
+      c.blobOmitted = true;
+      return c;
+    }
+    if (data) c.data = data;
+    if (origData) c.origData = origData;
+    return c;
+  }
+
+  function encodeAsset(a, skipAudio){
+    if (!a) return Promise.resolve(a);
+    /* The 15GB crash was here: every class recording was base64'd into one
+       JSON string. Skipping audio bytes is the whole point of a notes backup. */
+    if (skipAudio && a.kind === "audio"){
+      return Promise.resolve(packAssetForExport(a, null, null, true));
+    }
+    if (!a.blob && !a.orig){
+      return Promise.resolve(packAssetForExport(a, null, null, false));
+    }
+    /* `orig` is the pristine copy kept when a picture is cropped. It is a
+       Blob like `blob` is, and JSON.stringify turns a Blob into {}, so it
+       has to be encoded here too. Left alone it would import as an empty
+       object and Uncrop would then replace a good picture with nothing. */
+    return Promise.all([blobToData(a.blob), blobToData(a.orig)]).then(function(d){
+      return packAssetForExport(a, d[0], d[1], false);
+    });
+  }
+
+  /* One asset at a time so a large library does not spike all the pictures
+     into memory at once. */
+  function encodeAssets(list, skipAudio){
+    var out = [];
+    return (list || []).reduce(function(p, a){
+      return p.then(function(){
+        return encodeAsset(a, skipAudio).then(function(c){ out.push(c); });
+      });
+    }, Promise.resolve()).then(function(){ return out; });
+  }
+
+  /* Build the backup as many small strings instead of one giant stringify.
+     JSON.stringify of a 15GB object is what ran the tablet out of memory. */
+  function bundleJsonParts(b){
+    var parts = ["{"], first = true;
+    function field(key, val){
+      if (val === undefined) return;
+      parts.push((first ? "" : ",") + JSON.stringify(key) + ":" + JSON.stringify(val));
+      first = false;
+    }
+    field("app", b.app);
+    field("format", b.format);
+    field("schema", b.schema);
+    field("exportedAt", b.exportedAt);
+    field("exportedBy", b.exportedBy);
+    field("partial", b.partial);
+    field("audioOmitted", b.audioOmitted);
+    field("notebooks", b.notebooks || []);
+    field("notes", b.notes || []);
+    field("practices", b.practices || []);
+    field("groups", b.groups || []);
+    field("sections", b.sections || []);
+    field("meta", b.meta || {});
+    parts.push((first ? "" : ",") + '"assets":[');
+    (b.assets || []).forEach(function(a, i){
+      if (i) parts.push(",");
+      parts.push(JSON.stringify(a));
+    });
+    parts.push("]}");
+    return parts;
+  }
+  function bundleToFileBlob(b){
+    return new Blob(bundleJsonParts(b), { type: "application/json" });
+  }
+
+  /* A notes-only backup leaves audio (and sometimes pictures) as metadata
+     without bytes. Opening that file must not wipe a sound this device
+     already has. */
+  function keepLocalBytes(mine, incoming){
+    if (!mine || !incoming) return incoming;
+    if (mine.blob && !incoming.blob) incoming.blob = mine.blob;
+    if (mine.orig && !incoming.orig) incoming.orig = mine.orig;
+    return incoming;
+  }
+
+  function exportBundle(opts){
+    opts = opts || {};
+    var skipAudio = !!opts.skipAudio;
     return Promise.all([
       getAll("notebooks"), getAll("notes"), getAll("practices"), getAll("assets"), allMeta(),
       getAll("groups"), getAll("sections")
     ]).then(function(r){
-      return Promise.all(r[3].map(function(a){
-        if (!a.blob && !a.orig) return Promise.resolve(a);
-        /* `orig` is the pristine copy kept when a picture is cropped. It is a
-           Blob like `blob` is, and JSON.stringify turns a Blob into {}, so it
-           has to be encoded here too. Left alone it would import as an empty
-           object and Uncrop would then replace a good picture with nothing. */
-        return Promise.all([blobToData(a.blob), blobToData(a.orig)]).then(function(d){
-          var c = {}; Object.keys(a).forEach(function(k){ c[k] = a[k]; });
-          c.blob = null; c.data = d[0];
-          c.orig = null; c.origData = d[1];
-          return c;
-        });
-      })).then(function(assets){ r[3] = assets; return r; });
+      return encodeAssets(r[3], skipAudio).then(function(assets){ r[3] = assets; return r; });
     }).then(function(r){
       var meta = r[4];
       delete meta.deviceId;   /* never inherit another machine's identity */
       return {
         app: "margin", format: FORMAT, schema: DB_VERSION,
         exportedAt: Date.now(), exportedBy: _device,
+        audioOmitted: skipAudio,
         notebooks: r[0], notes: r[1], practices: r[2],
         assets: r[3],     /* ink lives here; images join it at stage 4 */
         groups: r[5] || [],
@@ -4783,8 +4876,11 @@ var MarginCore = (function(){
       });
   }
 
-  /* a backup of a single subject, for handing over or archiving */
-  function exportNotebook(nbId){
+  /* a backup of a single subject, for handing over or archiving.
+     Same default as the daily notes backup: leave recordings out. */
+  function exportNotebook(nbId, opts){
+    opts = opts || {};
+    var skipAudio = opts.skipAudio !== false;
     return Promise.all([getNotebook(nbId), getAll("notes"), sectionsIn(nbId, {includeDeleted:true})]).then(function(r){
       if (!r[0]) throw new Error("No notebook " + nbId);
       var notes = r[1].filter(function(n){ return n.notebookId === nbId; });
@@ -4793,16 +4889,11 @@ var MarginCore = (function(){
       return Promise.all([getAll("practices"), getAll("assets")]).then(function(rr){
         var pracs = rr[0].filter(function(p){ return ids[p.noteId]; });
         var assets = rr[1].filter(function(a){ return ids[a.noteId]; });
-        return Promise.all(assets.map(function(a){
-          if (!a.blob) return Promise.resolve(a);
-          return blobToData(a.blob).then(function(d){
-            var c = {}; Object.keys(a).forEach(function(k){ c[k] = a[k]; });
-            c.blob = null; c.data = d; return c;
-          });
-        })).then(function(withData){
+        return encodeAssets(assets, skipAudio).then(function(withData){
           return {
             app: "margin", format: FORMAT, schema: DB_VERSION, partial: true,
             exportedAt: Date.now(), exportedBy: _device,
+            audioOmitted: skipAudio,
             notebooks: [r[0]], notes: notes, practices: pracs, assets: withData,
             sections: r[2] || [], groups: [], meta: {}
           };
@@ -4953,6 +5044,7 @@ var MarginCore = (function(){
                          : (mode === "mine" || mode === "both") ? false
                          : (x.lastEdited || 0) > (mine.lastEdited || 0);
               if (takeIt && (x.lastEdited || 0) !== (mine.lastEdited || 0) || (takeIt && mode === "theirs")){
+                if (i === 3) x = keepLocalBytes(mine, x);
                 write[i].push(x);
                 if (x.deletedAt && !mine.deletedAt) res.deleted++; else res.updated++;
               } else {
@@ -5059,6 +5151,8 @@ var MarginCore = (function(){
     SYMBOLS:SYMBOLS, symbolFor:symbolFor, putRaw:putOne,
     readingTime:readingTime, looksLikeURL:looksLikeURL,
     cleanStrokes:cleanStrokes, wordCountText:wordCountText, inkDepth:inkDepth,
+    packAssetForExport:packAssetForExport, bundleJsonParts:bundleJsonParts,
+    bundleToFileBlob:bundleToFileBlob, keepLocalBytes:keepLocalBytes,
     exportBundle:exportBundle, importBundle:importBundle, validBundle:validBundle
   };
 })();
@@ -13809,7 +13903,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       list.forEach(function(a, i){
         var b = document.createElement("button");
         b.type = "button"; b.className = "ghost";
-        b.textContent = "\u25B6 " + (i + 1) + " \u00B7 " + Math.round(a.dur) + "s";
+        b.textContent = (a.blob ? "\u25B6 " : "") + (i + 1) + " \u00B7 " + Math.round(a.dur) + "s" +
+          (a.blob ? "" : " (not on this device)");
         b.addEventListener("click", function(){ playAudio(a, 0); });
         $("audioList").appendChild(b);
       });
@@ -13817,6 +13912,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   function playAudio(asset, at){
+    if (!asset || !asset.blob){
+      say("This recording is not on this device. The notes backup does not include class audio.");
+      return;
+    }
     if (play.audio){ play.audio.pause(); play.audio = null; }
     var url = URL.createObjectURL(asset.blob);
     var au = new Audio(url);
@@ -16751,9 +16850,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("exportNbBtn").addEventListener("click", function(){
     var nbId = state.nbId || state.nbLast;
     if (!nbId) return say("Open a notebook first.");
-    flush().then(function(){ return C.exportNotebook(nbId); }).then(function(b){
+    flush().then(function(){ return C.exportNotebook(nbId, { skipAudio: true }); }).then(function(b){
       var name = (b.notebooks[0].name || "notebook").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-");
-      download(JSON.stringify(b), name + "_" + b.notes.length + "notes_" + C.stamp() + "_v" + C.FORMAT + ".json");
+      download(C.bundleToFileBlob(b), name + "_" + b.notes.length + "notes_" + C.stamp() + "_v" + C.FORMAT + ".json");
     }).catch(function(e){ say(e.message); });
   });
 
@@ -17882,8 +17981,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
 
   /* ---------------- data ---------------- */
-  function download(text, name){
-    var blob = new Blob([text], {type:"application/json"});
+  function download(data, name){
+    var blob = (typeof Blob !== "undefined" && data instanceof Blob)
+      ? data
+      : new Blob([data], {type:"application/json"});
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url; a.download = name;
@@ -17914,11 +18015,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("dataClose").addEventListener("click", function(){ $("dataDlg").close(); });
 
   $("exportBtn").addEventListener("click", function(){
-    flush().then(C.exportBundle).then(function(b){
-      download(JSON.stringify(b), "margin-backup_" + C.stamp() + "_v" + C.FORMAT + ".json");
+    flush().then(function(){ return C.exportBundle({ skipAudio: true }); }).then(function(b){
+      download(C.bundleToFileBlob(b), "margin-notes_" + C.stamp() + "_v" + C.FORMAT + ".json");
       return C.setMeta("lastBackup", Date.now());
     }).then(function(){
-      $("dataStat").textContent = "Last backup just now.";
+      $("dataStat").textContent = "Last notes backup just now. Recordings were left out on purpose.";
+    }).catch(function(e){ say("Backup failed: " + e.message); });
+  });
+
+  $("exportFullBtn").addEventListener("click", function(){
+    flush().then(function(){ return C.exportBundle({ skipAudio: false }); }).then(function(b){
+      download(C.bundleToFileBlob(b), "margin-backup_" + C.stamp() + "_v" + C.FORMAT + ".json");
+      return C.setMeta("lastBackup", Date.now());
+    }).then(function(){
+      $("dataStat").textContent = "Last full backup just now (includes recordings).";
     }).catch(function(e){ say("Backup failed: " + e.message); });
   });
 
@@ -17943,7 +18053,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
             r.skipped + " already current" +
             (r.conflicts ? ", and " + r.conflicts + " page" + (r.conflicts === 1 ? "" : "s") +
                            " kept as both copies — look for the ones marked " +
-                           "“from…” next to their twin." : "") + ".");
+                           "“from…” next to their twin." : "") +
+            (b.audioOmitted ? " Recordings were not in this file; any you already have on this device were kept." : "") +
+            ".");
         $("body").dataset.noteId = "";
         return render();
       }).catch(function(e){ say(e.message); });
