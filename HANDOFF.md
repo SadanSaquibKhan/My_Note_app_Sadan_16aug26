@@ -147,7 +147,8 @@ layers, both in `tests/`:
   across b129–b138; verify on the current build before more work (the user's
   build number in a report can be off by one — see the memory note).
 - **Finger scroll:** "better, not perfect." Lower priority than the chips.
-- **Backup + Sync (not started):** the current backup export crashes at ~15GB
+- **Backup + Sync (not started) — full plan in `SYNC-PLAN.md`.** In short: the
+  current backup export crashes at ~15GB
   because it base64s all audio into one file — fix that first (stream it / an
   audio-less export). Then sync: split audio from everything else. Notes, ink,
   sections, settings, photos are small — sync those online automatically
