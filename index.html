@@ -669,6 +669,9 @@
     line-height:1.5; padding:16px; text-align:center; color:var(--warn);
     background:var(--warnbg); border-color:var(--warnline);
   }
+  #body figure.imgblock .miss, #pracText figure.imgblock .miss{
+    display:block; padding:12px 8px; color:var(--warn);
+  }
   /* the storage-blocked cover */
   .blockwall{
     position:fixed; inset:0; z-index:90; display:flex;
@@ -2823,7 +2826,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b147";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b148";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4959,8 +4962,21 @@ var MarginCore = (function(){
      already has. */
   function keepLocalBytes(mine, incoming){
     if (!mine || !incoming) return incoming;
-    if (mine.blob && !incoming.blob) incoming.blob = mine.blob;
-    if (mine.orig && !incoming.orig) incoming.orig = mine.orig;
+    /* JSON.stringify turns a Blob into {}. Treating that as "bytes" would
+       replace a real picture with emptiness, which is how a picture that
+       existed on this device vanished after a reload. */
+    function real(b){
+      if (b == null || b === false) return false;
+      if (typeof b === "string") return b.length > 0;
+      if (typeof Blob !== "undefined" && b instanceof Blob) return b.size > 0;
+      if (typeof b === "object" && !Array.isArray(b) && Object.keys(b).length === 0) return false;
+      if (typeof b.size === "number") return b.size > 0;
+      return !!b;
+    }
+    if (real(mine.blob) && !real(incoming.blob)) incoming.blob = mine.blob;
+    if (real(mine.orig) && !real(incoming.orig)) incoming.orig = mine.orig;
+    if (incoming.blob && !real(incoming.blob)) incoming.blob = mine.blob || null;
+    if (incoming.orig && !real(incoming.orig)) incoming.orig = mine.orig || null;
     return incoming;
   }
 
@@ -5240,6 +5256,58 @@ var MarginCore = (function(){
     return out;
   }
 
+  /* D1 will not take a whole JPEG in one SQL bind (statement cap ~100KB),
+     so a picture travels as several small `imgdata` rows and is glued back
+     on pull. Audio never uses this path. */
+  var IMGDATA_CHUNK = 40000;
+  function imageDataChunks(assetId, dataUrl, updatedAt, device, chunk){
+    chunk = chunk || IMGDATA_CHUNK;
+    var s = dataUrl || "";
+    var n = Math.max(1, Math.ceil(s.length / chunk) || 1);
+    var out = [], i;
+    for (i = 0; i < n; i++){
+      out.push({
+        store: "imgdata",
+        id: assetId + ":" + i,
+        updated_at: updatedAt || 0,
+        deleted: 0,
+        device: device || null,
+        body: {
+          assetId: assetId,
+          i: i,
+          n: n,
+          data: s.slice(i * chunk, (i + 1) * chunk)
+        }
+      });
+    }
+    return out;
+  }
+  function joinImageData(parts){
+    if (!parts || !parts.length) return "";
+    var list = parts.slice().sort(function(a, b){ return (a.i || 0) - (b.i || 0); });
+    if (list[0].n && list.length !== list[0].n) return "";
+    var s = "", i;
+    for (i = 0; i < list.length; i++){
+      if ((list[i].i || 0) !== i) return "";
+      s += list[i].data || "";
+    }
+    return s;
+  }
+  function bumpImagesForSync(){
+    return getAll("assets").then(function(list){
+      var now = Date.now();
+      var write = (list || []).filter(function(a){
+        return a && a.kind === "image" && a.blob && !a.deletedAt;
+      }).map(function(a){
+        a.lastEdited = now;
+        a.editedOn = _device;
+        return a;
+      });
+      if (!write.length) return 0;
+      return putMany(["assets"], { assets: write }).then(function(){ return write.length; });
+    });
+  }
+
   /* Every light record this device holds, keyed "store/id", blobs stripped.
      The sync loop pushes this through SyncCore.changedSince. */
   function dumpLightMap(){
@@ -5373,7 +5441,9 @@ var MarginCore = (function(){
     exportBundle:exportBundle, importBundle:importBundle, validBundle:validBundle,
     localMetaKey:localMetaKey, dumpLightMap:dumpLightMap,
     getSynced:getSynced, putSynced:putSynced, inkHasLocalExtras:inkHasLocalExtras,
-    stripBlobs:stripBlobs, SYNC_STORES:SYNC_STORES
+    stripBlobs:stripBlobs, SYNC_STORES:SYNC_STORES,
+    imageDataChunks:imageDataChunks, joinImageData:joinImageData,
+    bumpImagesForSync:bumpImagesForSync, IMGDATA_CHUNK:IMGDATA_CHUNK
   };
 })();
 if (typeof module === "object" && module.exports) module.exports = MarginCore;
@@ -12484,8 +12554,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       tail.appendChild(document.createElement("br"));
       var sel = window.getSelection();
       if (sel && sel.rangeCount && host.contains(sel.anchorNode)){
-        var rr = sel.getRangeAt(0); rr.collapse(false);
-        rr.insertNode(tail); rr.insertNode(fig);
+        var node = sel.anchorNode;
+        var el = node && (node.nodeType === 1 ? node : node.parentElement);
+        var wrap = el && el.closest && el.closest("figure.imgblock");
+        /* A missing picture is still a figure. Inserting inside it meant the
+           next hydrate wiped the new picture when it rewrote that figure. */
+        if (wrap && host.contains(wrap)){
+          wrap.parentNode.insertBefore(fig, wrap.nextSibling);
+          wrap.parentNode.insertBefore(tail, fig.nextSibling);
+        } else {
+          var rr = sel.getRangeAt(0); rr.collapse(false);
+          rr.insertNode(tail); rr.insertNode(fig);
+        }
       } else { host.appendChild(fig); host.appendChild(tail); }
       return hydrateImages().then(function(){
         if (host.id === "pracText"){
@@ -12524,12 +12604,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return im;
   }
 
+  function unnestImageFigures(fig){
+    if (!fig || !fig.parentNode) return;
+    var extra = fig.querySelectorAll("figure.imgblock");
+    var i;
+    for (i = extra.length - 1; i >= 0; i--){
+      fig.parentNode.insertBefore(extra[i], fig.nextSibling);
+    }
+  }
   function hydrateImages(){
     Object.keys(imgUrls).forEach(function(k){ URL.revokeObjectURL(imgUrls[k]); });
     imgUrls = {};
     var figs = Array.prototype.slice.call(document.querySelectorAll("#body figure.imgblock, #pracText figure.imgblock"));
     return Promise.all(figs.map(function(fig){
       var id = fig.getAttribute("data-img");
+      /* Nested figures used to live inside a "missing" placeholder; rewriting
+         that placeholder as plain text deleted the picture you had just put
+         underneath it. Lift them out first. */
+      unnestImageFigures(fig);
       /* The box is claimed NOW, from the shape remembered on the figure, and
          the picture is poured into it when it arrives. Before this the figure
          was empty until the blob had decoded, so the page was short for a
@@ -12542,11 +12634,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       fig.classList.toggle("locked", fig.getAttribute("data-lock") === "1");
       var im = reserveBox(fig);
       return C.reviveAsset(id).then(function(){ return C.getAsset(id); }).then(function(a){
-        if (!a || !a.blob){
+        if (!a || typeof Blob === "undefined" || !(a.blob instanceof Blob) || !a.blob.size){
           fig.classList.add("missing");
-          fig.textContent = "This picture is missing.";
+          var miss = document.createElement("span");
+          miss.className = "miss";
+          miss.textContent = "This picture is missing.";
+          fig.appendChild(miss);
           return;
         }
+        fig.classList.remove("missing");
         var url = URL.createObjectURL(a.blob);
         imgUrls[id] = url;
         reserveBox(fig, a.w, a.h, im);
@@ -18561,7 +18657,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       C.getMeta("syncPullSince", 0),
       C.getMeta("syncLastOk", 0),
       C.getMeta("syncPushSince", 0),
-      C.getMeta("syncCursorRev", 0)
+      C.getMeta("syncCursorRev", 0),
+      C.getMeta("syncBytesRev", 0)
     ]).then(function(r){
       sync.url = String(r[0] || "").replace(/\/+$/, "");
       sync.key = String(r[1] || "");
@@ -18571,13 +18668,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       /* b146: the old cursor used the server's "now", which skipped Sec4.
          One full pull brings missed sections/pages, then we track by the
          newest row we actually saw. */
+      var jobs = [];
       if ((Number(r[5]) || 0) < 1){
         sync.since = 0;
-        return Promise.all([
-          C.setMeta("syncPullSince", 0),
-          C.setMeta("syncCursorRev", 1)
-        ]).then(function(){ fillSyncFields(); });
+        jobs.push(C.setMeta("syncPullSince", 0));
+        jobs.push(C.setMeta("syncCursorRev", 1));
       }
+      /* Pictures were pushed as empty slots. Bump them once so this device
+         sends the actual bytes. */
+      if ((Number(r[6]) || 0) < 1 && C.bumpImagesForSync){
+        jobs.push(C.bumpImagesForSync().then(function(){ return C.setMeta("syncBytesRev", 1); }));
+      }
+      if (jobs.length) return Promise.all(jobs).then(function(){ fillSyncFields(); });
       fillSyncFields();
     });
   }
@@ -18653,14 +18755,39 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   function applyPulledRows(rows){
     var Core = typeof SyncCore !== "undefined" ? SyncCore : null;
-    if (!Core) return Promise.resolve({ applied: 0, cfg: false, notes: [], sections: false });
+    if (!Core) return Promise.resolve({ applied: 0, cfg: false, notes: [], sections: false, assets: [] });
     var cfgHit = false;
     var noteHits = [];
+    var assetHits = [];
     var secHit = false;
+    var imgParts = {};
+    function finishImage(aid, more){
+      var key = "syncImg:" + aid;
+      return C.getMeta(key, []).then(function(arr){
+        arr = Array.isArray(arr) ? arr.slice() : [];
+        (more || []).forEach(function(p){
+          if (p && p.i != null) arr[p.i] = { i: p.i, n: p.n, data: p.data || "" };
+        });
+        var filled = [];
+        arr.forEach(function(p){ if (p) filled.push(p); });
+        var data = C.joinImageData(filled);
+        if (!data) return C.setMeta(key, arr);
+        return C.getAsset(aid).then(function(a){
+          if (!a) return C.setMeta(key, arr);
+          var blob = C.dataToBlob(data);
+          if (!blob) return C.setMeta(key, arr);
+          a.blob = blob;
+          return C.setMeta(key, []).then(function(){
+            return C.putSynced("assets", a).then(function(){ assetHits.push(aid); });
+          });
+        });
+      });
+    }
     var list = (rows || []).map(parsePullBody);
     /* Parents before children: a page that lands before its section looks
-       unfiled, which is what happened with Sec4 on the tablet. */
-    var storeOrd = { notebooks:0, groups:1, sections:2, notes:3, practices:4, assets:5, meta:6 };
+       unfiled, which is what happened with Sec4 on the tablet.
+       Picture bytes (imgdata) come after the asset row they belong to. */
+    var storeOrd = { notebooks:0, groups:1, sections:2, notes:3, practices:4, assets:5, meta:6, imgdata:7 };
     list.sort(function(a, b){
       var da = storeOrd[a && a.store] != null ? storeOrd[a.store] : 9;
       var db = storeOrd[b && b.store] != null ? storeOrd[b.store] : 9;
@@ -18671,6 +18798,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return p.then(function(){
         if (!row || !row.store || row.id == null) return;
         var incoming = row.body || {};
+        if (row.store === "imgdata"){
+          var aid = incoming.assetId || String(row.id).split(":")[0];
+          if (!aid) return;
+          if (!imgParts[aid]) imgParts[aid] = [];
+          imgParts[aid].push({
+            i: incoming.i, n: incoming.n, data: incoming.data || ""
+          });
+          return;
+        }
         if (!incoming.id) incoming.id = row.id;
         if (incoming.lastEdited == null && row.updated_at != null && !row.deleted)
           incoming.lastEdited = row.updated_at;
@@ -18687,13 +18823,51 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           return C.putSynced(row.store, merged).then(function(){
             if (row.store === "meta" && (row.id === "cfg" || incoming.k === "cfg")) cfgHit = true;
             if (row.store === "notes") noteHits.push(row.id);
+            if (row.store === "assets"){
+              assetHits.push(row.id);
+              return finishImage(row.id, []);
+            }
             if (row.store === "sections" || row.store === "notebooks") secHit = true;
           });
         });
       });
     }, Promise.resolve()).then(function(){
-      return { applied: list.length, cfg: cfgHit, notes: noteHits, sections: secHit };
+      var ids = Object.keys(imgParts);
+      return ids.reduce(function(p, aid){
+        return p.then(function(){ return finishImage(aid, imgParts[aid]); });
+      }, Promise.resolve());
+    }).then(function(){
+      return { applied: list.length, cfg: cfgHit, notes: noteHits, sections: secHit, assets: assetHits };
     });
+  }
+
+  function attachImageBytes(recs){
+    recs = recs || [];
+    var extra = [];
+    return recs.reduce(function(p, row){
+      return p.then(function(){
+        if (!row || row.store !== "assets") return;
+        return C.getAsset(row.id).then(function(a){
+          if (!a || a.kind !== "image" || !a.blob || a.deletedAt) return;
+          return C.blobToData(a.blob).then(function(data){
+            if (!data) return;
+            extra.push.apply(extra, C.imageDataChunks(
+              a.id, data, row.updated_at || a.lastEdited, row.device
+            ));
+          });
+        });
+      });
+    }, Promise.resolve()).then(function(){ return recs.concat(extra); });
+  }
+  function pushRecordBatches(recs){
+    var i = 0, BATCH = 40;
+    function next(){
+      if (i >= recs.length) return Promise.resolve();
+      var slice = recs.slice(i, i + BATCH);
+      i += BATCH;
+      return syncFetch("/push", { method: "POST", body: { records: slice } }).then(next);
+    }
+    return next();
   }
 
   function syncOnce(){
@@ -18736,11 +18910,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         /* Only what changed since the last successful push. A full dump every
            45s would keep growing as the library grows. */
         var recs = SyncCore.changedSince(map, sync.pushSince || 0);
-        if (!recs.length) return info;
-        return syncFetch("/push", { method: "POST", body: { records: recs } }).then(function(){
-          sync.pushSince = marked;
-          C.setMeta("syncPushSince", marked);
-          return info;
+        return attachImageBytes(recs).then(function(all){
+          if (!all.length) return info;
+          return pushRecordBatches(all).then(function(){
+            sync.pushSince = marked;
+            C.setMeta("syncPushSince", marked);
+            return info;
+          });
         });
       });
     }).then(function(info){
@@ -18757,6 +18933,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           var open = state.noteId;
           if (open && info.notes.indexOf(open) >= 0) render();
           else if (typeof refreshLists === "function") refreshLists();
+        } else if (info.assets && info.assets.length && typeof hydrateImages === "function"){
+          hydrateImages();
         } else if ((info.sections || (info.notes && info.notes.length)) &&
                    typeof refreshLists === "function"){
           refreshLists();
