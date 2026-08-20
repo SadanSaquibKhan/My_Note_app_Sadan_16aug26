@@ -82,6 +82,10 @@ eq("pages with no removed still work (missing means {})",
   eq("password meta is device-local", A.localMetaKey("syncKey") === true);
   eq("cursor meta is device-local", A.localMetaKey("syncPullSince") === true);
   eq("device id is device-local", A.localMetaKey("deviceId") === true);
+eq("open notebooks are device-local (reload must not fight the other device)",
+   A.localMetaKey("openNotebooks") === true);
+eq("where you were is device-local", A.localMetaKey("lastHash") === true &&
+   A.localMetaKey("place:nb1") === true);
   eq("cfg is allowed to sync", A.localMetaKey("cfg") === false);
   const stripped = A.stripBlobs({ id: "a", kind: "audio", blob: "HUGE", dur: 9, orig: "x" });
   eq("stripBlobs drops audio bytes", stripped.blob == null && stripped.orig == null && stripped.dur === 9);

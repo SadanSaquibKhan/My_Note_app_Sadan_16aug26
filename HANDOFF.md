@@ -34,14 +34,19 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b146**. Notes can copy between the tablet and the computer
-  once you paste the password in Settings (Backups and menus). A **Sync**
-  button appears at the top when it is on. If the network drops, it waits
-  longer each try instead of hammering. Class recordings still do not copy.
-  Chip scrolling and the S Pen eraser were not touched.
-- **Waiting on you:** on BOTH the tablet and the computer, Settings → Backups
-  and menus → paste the password (address can stay filled) → Save and test.
-  Then write a sentence on one device and check the other after about a minute.
+- Current build: **b147**. Notes can copy between the tablet and the computer
+  once you paste the password in Settings (Backups and menus). **Sync**,
+  **Full**, and **Tabs** sit in the top-right tools. Home and **+** on the
+  notebook tab strip open a folders-and-notebooks board without closing
+  open notebooks. Reloading Chrome keeps those tabs and the page you were
+  on. Class recordings still do not copy. Chip scrolling and the S Pen
+  eraser were not touched.
+- **Waiting on you:** close the app and reopen; confirm **b147** in Settings.
+  Reload Chrome with two notebooks open and check the tabs and page are
+  still there. Tap Home, then +, then a notebook. Try Sync, Full, and Tabs.
+  Fold Recently opened and Lists with −, bring them back with the chips,
+  drag the thin bar above Recently opened to resize it. If Sec4 was missing
+  on the tablet, it should file after this build copies again.
 - Still rough: pictures do not copy yet (only their empty slot). Grey
   page-divider during a chip drag is brief; lasso on typed text still has
   some reports.
@@ -100,7 +105,7 @@ saying something is fixed — because every round-trip to you is slow.
   **notebook → sections → pages**. Notes never touch the repo.
 - Local folder on the PC:
   `…\files_v12ofhtml_16aug26_7pm\margin-pwa_2026-08-16_v7\margin-pwa_2026-08-16_v7`
-- Current build: **b146** — always confirm with `var BUILD` in `index.html`
+- Current build: **b147** — always confirm with `var BUILD` in `index.html`
   and `git log`; do not trust a number once time has passed.
 
 ### How to verify without the tablet (the core discipline)
@@ -144,17 +149,22 @@ layers, both in `tests/`:
 - **Repo hygiene:** never blind `git add -A` — `.gitignore` keeps the user's
   personal `*.docx/*.pdf` out of a public repo, and a blind add leaked two once.
 
-### Current focus and open items (2026-08-20, at b146)
+### Current focus and open items (2026-08-20, at b147)
 - **Phase 0 backup (shipped b143, restore confirmed):** daily Data button is
   **Save notes (no recordings)**. User restored in incognito: notes came back,
   audio did not (expected).
-- **Sync Phase 1 (b144) + harden (b145) + section cursor fix (b146):**
+- **Sync Phase 1 (b144) + harden (b145) + section cursor fix (b146) +
+  laptop home/tabs (b147):**
   Settings URL+password in IndexedDB. Header **Sync** chip. Incremental push.
   **b146:** pull cursor is the newest *received* `updated_at`, never server
   `now`. That `now` skip is why Sec4 stayed on the server but the tablet
   showed S4P1 unfiled. One-time `syncCursorRev=1` resets the cursor so the
   missed section is pulled. Apply order is notebooks/groups/sections then
   notes. Creating a section schedules a copy.
+  **b147:** Chrome reload must not prune `openNotebooks` before notebooks
+  load. `lastHash` restores the page. Home/`+` show the folder board and
+  do not close tabs. `+` does not create a notebook. Top bar: Sync, Full,
+  Tabs. Recently opened and Weak/working lists fold; recent resizes by drag.
 - **Sync not done:** photos still light-only until R2 (needs the user to
   create an R2 bucket). Opening a note never waits on the network. Full
   plan: `SYNC-PLAN.md`. Still waiting on the user to paste the password on
@@ -181,6 +191,8 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
+- **b147** `3233b3e` — Home folder grid, top Sync/Full/Tabs, tab-strip Home/+, keep open
+  notebooks and place on Chrome reload, collapsible recent/lists. — *Grok Build*
 - **b146** `fafc823` — pull cursor no longer uses server "now", so a new section is not
   skipped while its page arrives unfiled (Sec4). One re-pull on upgrade. — *Grok Build*
 - **b145** `44f958d` — sync hardening: visible Sync chip, retry backoff, incremental

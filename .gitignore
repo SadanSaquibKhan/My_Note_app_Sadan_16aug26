@@ -11,3 +11,6 @@ Thumbs.db
 *.doc
 *.pdf
 v11_device_test_results_and_tablet_issues.md
+
+# Device password for the sync server. Never publish.
+margin-sync-key.txt

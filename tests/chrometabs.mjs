@@ -24,14 +24,17 @@ console.log("");
 console.log("chrome-like notebook tabs:");
 eq("a tabs toggle lives on the shortcuts bar", has(/id="jumpTabs"/));
 eq("the strip is outside the side panel", has(/id="chromeTabs"/) && has(/id="chromeStrip"/));
-eq("new-notebook plus exists", has(/id="chromeNew"/));
+eq("home and plus sit on the tab strip", has(/id="chromeHome"/) && has(/id="chromeNew"/));
+eq("plus opens home to pick another notebook, it does not create one",
+   has(/chromeNew"\)\.addEventListener[\s\S]{0,280}go\(\{\}\)/) &&
+   !/chromeNew"\)\.addEventListener[\s\S]{0,200}openNbDialog\(null\)/.test(html));
 eq("closing offers Undo", has(/function undoCloseNotebook/) && has(/id="tabUndoBtn"/));
 eq("latest three keep their jump colours",
    has(/var slot = recent3\.indexOf\(id\)/) && has(/jumpNbColour\(nb, slot\)/));
 eq("tabs can be dragged to reorder", has(/chromeDrag/) && has(/strip\.insertBefore\(tab/));
 eq("the in-panel strip hides when the top tabs are on",
    has(/wrap\.hidden = !!cfg\.chromeTabs \|\| alive\.length < 2/));
-eq("the setting is remembered", has(/chromeTabs: false/));
+eq("the setting is remembered", has(/chromeTabs: true/) || has(/chromeTabs: false/));
 eq("a click of the icon toggles without opening the side list",
    has(/setChromeTabs\(!cfg\.chromeTabs\)/));
 
