@@ -191,6 +191,9 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
+- **b150** `01a1517` — "Erase all handwriting" button in the eraser options
+  (reuses the undoable S.clear; one Undo restores). Opens from the floating
+  favourites bar's eraser. — *Claude Code*
 - **b149** `75847fa` — Full button gains a long-press lock (highlights when locked);
   only while locked, writing/typing auto-enters real Chrome full screen; short tap
   still toggles, "Exit" comes back, second long-press unlocks. cfg-guarded (cfg is
