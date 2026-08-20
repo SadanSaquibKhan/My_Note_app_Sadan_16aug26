@@ -111,6 +111,11 @@
     border:1px solid var(--rule); border-radius:3px;
   }
   .ghost:hover{border-color:var(--ink-2)}
+  /* The Full button long-pressed into its LOCKED state: from then on, starting
+     to write or type fills the screen on its own, until you unlock it. The
+     highlight is how you can see at a glance that it is locked. */
+  .ghost.fulllock{ color:var(--live); border-color:var(--live);
+    box-shadow:inset 0 0 0 1px var(--live); }
   .icon{
     flex:none; width:38px; height:38px; display:none; align-items:center; justify-content:center;
     background:transparent; border:1px solid var(--rule); border-radius:3px; font-size:17px; line-height:1;
@@ -2826,7 +2831,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b148";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b149";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -6895,23 +6900,85 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   if ($("topTabsBtn")) $("topTabsBtn").addEventListener("click", function(){
     setChromeTabs(!cfg.chromeTabs);
   });
+  function enterFull(){
+    var root = document.documentElement;
+    if (document.fullscreenElement || document.webkitFullscreenElement) return;
+    var req = root.requestFullscreen || root.webkitRequestFullscreen;
+    if (req) req.call(root).catch(function(){});
+    else hint("This browser will not full-screen the page. Use the browser's own full-screen.");
+  }
+  function exitFull(){
+    if (document.fullscreenElement || document.webkitFullscreenElement)
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  }
+  /* Auto full-screen the instant you start writing or typing — but ONLY when the
+     Full button has been long-pressed into its locked state. This is called from
+     the pen-down and the typing paths, both real user gestures, so the browser
+     allows requestFullscreen. Not locked: writing never forces full screen.
+     cfg is defined far below this line, so every read is guarded — touching it
+     before it exists at boot would throw and abort the rest of the script. */
+  function fullLocked(){ return !!(typeof cfg === "object" && cfg && cfg.fullLock); }
+  function maybeAutoFull(){
+    if (!fullLocked()) return;
+    enterFull();
+  }
   function paintFullScrBtn(){
     var b = $("fullScrBtn");
     if (!b) return;
     var on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    var lk = fullLocked();
     b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.classList.toggle("fulllock", lk);
+    /* Full when windowed, Exit when full — the clear way back out so the other
+       Chrome tabs come back. */
     b.textContent = on ? "Exit" : "Full";
+    b.title = lk
+      ? "Full screen \u2014 LOCKED: writing fills the screen. Long-press to unlock."
+      : "Full screen this window. Long-press to lock (auto full screen when you write).";
   }
-  if ($("fullScrBtn")) $("fullScrBtn").addEventListener("click", function(){
-    var root = document.documentElement;
-    if (document.fullscreenElement || document.webkitFullscreenElement){
-      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-    } else {
-      var req = root.requestFullscreen || root.webkitRequestFullscreen;
-      if (req) req.call(root).catch(function(){});
-      else hint("This browser will not full-screen the page. Use the browser's own full-screen.");
-    }
-  });
+  (function(){
+    var b = $("fullScrBtn");
+    if (!b) return;
+    /* Long-press to lock, short tap to toggle full screen — the same hold-vs-drag
+       feel as the jump-bar dots: a hold that stays still ~400ms flips the lock; a
+       quick tap does not, and a drag off the button cancels the hold. */
+    var LOCK_HOLD_MS = 400;
+    var holdT = 0, x0 = 0, y0 = 0, longFired = false;
+    function clearHold(){ if (holdT){ clearTimeout(holdT); holdT = 0; } }
+    b.addEventListener("pointerdown", function(e){
+      x0 = e.clientX; y0 = e.clientY; longFired = false;
+      clearHold();
+      holdT = setTimeout(function(){
+        holdT = 0; longFired = true;
+        if (typeof cfg !== "object" || !cfg) return;
+        cfg.fullLock = !cfg.fullLock;
+        if (typeof saveCfg === "function") saveCfg();
+        paintFullScrBtn();
+        hint(cfg.fullLock
+          ? "Full screen locked. Start writing and it fills the screen. Long-press again to unlock."
+          : "Full-screen lock off.");
+      }, LOCK_HOLD_MS);
+    });
+    b.addEventListener("pointermove", function(e){
+      if (!holdT) return;
+      if (Math.abs(e.clientX - x0) > 8 || Math.abs(e.clientY - y0) > 8) clearHold();
+    });
+    b.addEventListener("pointerup", clearHold);
+    b.addEventListener("pointercancel", clearHold);
+    b.addEventListener("click", function(e){
+      /* the long-press already acted on this press; do not also toggle full screen */
+      if (longFired){ longFired = false; e.preventDefault(); e.stopPropagation(); return; }
+      if (document.fullscreenElement || document.webkitFullscreenElement) exitFull();
+      else enterFull();
+    });
+    /* cfg is assigned lower in this same script, so it does not exist yet at boot.
+       Wait for it, then paint once — this is what shows a lock that persisted from
+       a previous session. */
+    (function paintWhenReady(){
+      if (typeof cfg === "object" && cfg){ paintFullScrBtn(); return; }
+      setTimeout(paintWhenReady, 80);
+    })();
+  })();
   document.addEventListener("fullscreenchange", paintFullScrBtn);
   document.addEventListener("webkitfullscreenchange", paintFullScrBtn);
   if ($("tabUndoBtn")) $("tabUndoBtn").addEventListener("click", function(e){
@@ -7350,6 +7417,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var footTimer = null;
   $("body").addEventListener("input", function(){
     markDirty();
+    if (typeof maybeAutoFull === "function") maybeAutoFull();
     clearTimeout(footTimer);
     footTimer = setTimeout(paintFoot, 220);      /* counting is not urgent */
     /* same reasoning as the pen path: typing again is a fresh intent, and the
@@ -8106,6 +8174,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (sc.setPointerCapture){ try { sc.setPointerCapture(e.pointerId); } catch (err) {} }
       document.body.classList.add("drawing");
       S.begin(e);
+      if (typeof maybeAutoFull === "function") maybeAutoFull();
     }, true);
 
     sc.addEventListener("pointermove", function(e){
@@ -8823,6 +8892,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("snap_" + k).addEventListener("click", function(){ setSnap(k); });
   });
   $("pracText").addEventListener("input", function(){
+    if (typeof maybeAutoFull === "function") maybeAutoFull();
     clearTimeout(prac.saveTimer);
     prac.saveTimer = setTimeout(flushPractice, 700);
   });
