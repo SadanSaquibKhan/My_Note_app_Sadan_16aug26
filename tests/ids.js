@@ -56,7 +56,7 @@ var NEW = ["favBar","favGrip","favPop","favPick","setFavBar","marksRow","marksCo
            "jumpNb0","jumpNb1","jumpNb2","jumpTabs",
            "chromeTabs","chromeStrip","chromeNew","tabUndo","tabUndoBtn",
            "setSimple","setAll","simpleBarBtn","simpleGroupPick","simpleBarPick",
-           "imgGrip"];
+           "imgGrip","exportFullBtn"];
 var bad = NEW.filter(function(k){ return !have[k]; });
 console.log((bad.length ? "\nNEW ELEMENTS MISSING: " + bad.join(", ")
                         : "\nok  all " + NEW.length + " newly added elements are present"));

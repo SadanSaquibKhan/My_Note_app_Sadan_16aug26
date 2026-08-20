@@ -472,6 +472,12 @@ built from scratch.**
   saved HTML for display) must mirror the live page's CSS rules and height
   formula block-for-block, or the join between "preview" and "live" glitches
   visibly the moment they swap.
+- Daily backup is **audio-less** (`exportBundle({ skipAudio: true })`).
+  Encoding every recording into one JSON file crashed at ~15GB. Import of a
+  notes-only file must not overwrite a local audio/image blob with emptiness
+  (`keepLocalBytes`). Never `JSON.stringify` the whole bundle for download —
+  use `bundleToFileBlob`. The with-recordings button is only for a small
+  library.
 
 ## Open items as of the last session
 
@@ -508,6 +514,12 @@ built from scratch.**
   as soon as the current page opens (`warmNeighbourInk`), so the first
   crossing should no longer start short. Ask the user to confirm on the
   tablet.
+- **Sync (see `SYNC-PLAN.md` + `HANDOFF.md`).** Phase 0 audio-less backup
+  shipped in b143. Next: wire `index.html` to the live Worker using
+  `SyncCore` — **only after the user confirms a restore on the tablet**.
+  Never hardcode `SYNC_KEY` (public GitHub Pages). Ink erases must start
+  recording a `removed` map (stroke id → erasedAt) so `mergeInk` does not
+  resurrect them. Offline-first: never block opening a note on the network.
 
 ## Working style expected of you (Claude Code, Grok, or otherwise)
 

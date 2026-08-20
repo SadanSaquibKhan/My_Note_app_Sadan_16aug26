@@ -34,24 +34,22 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b141**. The recent work has been **scrolling with the two
-  little chips** (the blue "this section" chip and the grey "whole notebook"
-  chip) — making the drag smooth, no freezing, and showing the grey page-divider
-  as you cross between pages. The S Pen side-button eraser was also fixed
-  (b125–b126) and is working.
-- Still rough / next up: the grey page-divider now *shows* during a chip drag but
-  only briefly — you asked whether it can linger longer. Lasso on typed text
-  still has open reports.
-- **Sync (started, groundwork done, 2026-08-20):** the design is in `SYNC-PLAN.md`
-  (sync everything except audio; audio manual). The risky core is built and
-  proven WITHOUT touching the app: the merge brain (`sync-client.js`, tested by
-  `tests/sync.js` — no data loss across conflicts/deletes/same-page ink/erases),
-  and the Cloudflare Worker + D1 server (`sync-server/`), which is **deployed and
-  live** at `https://margin-sync.khanssk89.workers.dev` and verified end-to-end.
-  The app itself is NOT wired to it yet. Next sync steps: (1) fix the backup
-  (audio-less/streamed) as the safety net — the first app change; (2) wire the
-  client into `index.html`; note erasing must start leaving stroke tombstones for
-  ink merge to be correct. The sync password is saved on the PC, out of the repo.
+- Current build: **b143**. Daily backup is now **notes only** (no class
+  recordings in the file), so a large audio library can still be saved. Chip
+  scrolling and the S Pen eraser are unchanged and working.
+- **Waiting on you:** confirm a restore of that notes backup on the tablet
+  (see “What to test” under b143 in the Build log). Do not start wiring sync
+  until that restore is confirmed.
+- Still rough / next up after restore: **Sync Phase 1** — wire the app to the
+  already-live server. Also open: grey page-divider during a chip drag is brief;
+  lasso on typed text still has some reports.
+- **Sync (Phase 0 shipped in b143; client not wired yet):** design in
+  `SYNC-PLAN.md`. Merge brain (`sync-client.js` + `tests/sync.js`) and the
+  Cloudflare Worker + D1 server are live at
+  `https://margin-sync.khanssk89.workers.dev`. The app is NOT wired to it yet.
+  Next: Settings field for server URL + key (never hardcode the key — public
+  GitHub Pages), then push/pull using `SyncCore`. Ink erases must start leaving
+  a `removed` map. The sync password is saved on the PC, out of the repo.
 
 **The golden rule for every AI (so nothing breaks silently).** After any change:
 run the tests in the `tests/` folder, bump the build number with the script
@@ -101,7 +99,7 @@ saying something is fixed — because every round-trip to you is slow.
   **notebook → sections → pages**. Notes never touch the repo.
 - Local folder on the PC:
   `…\files_v12ofhtml_16aug26_7pm\margin-pwa_2026-08-16_v7\margin-pwa_2026-08-16_v7`
-- Current build: **b142** — always confirm with `var BUILD` in `index.html`
+- Current build: **b143** — always confirm with `var BUILD` in `index.html`
   and `git log`; do not trust a number once time has passed.
 
 ### How to verify without the tablet (the core discipline)
@@ -145,7 +143,20 @@ layers, both in `tests/`:
 - **Repo hygiene:** never blind `git add -A` — `.gitignore` keeps the user's
   personal `*.docx/*.pdf` out of a public repo, and a blind add leaked two once.
 
-### Current focus and open items (2026-08-20, at b142)
+### Current focus and open items (2026-08-20, at b143)
+- **Phase 0 backup (shipped b143, waiting on tablet restore):** daily Data
+  button is **Save notes (no recordings)**. It packs writing, handwriting and
+  pictures, skips audio *bytes* (keeps the small record: length, page, when),
+  writes the file as many small strings (`bundleToFileBlob`) instead of one
+  giant `JSON.stringify`, and import **keeps local audio/picture bytes** if
+  the file left them out (`keepLocalBytes`). Tests: `node tests/backup.mjs
+  index.html`. Do **not** start Phase 1 until the user confirms a restore.
+- **Sync Phase 1 (next, after restore):** wire `index.html` to
+  `https://margin-sync.khanssk89.workers.dev` using `SyncCore.mergeRecord` /
+  `mergeInk` / `lightBody`. Settings field for URL + key stored per device in
+  IndexedDB/localStorage — **never commit `SYNC_KEY`**. Timer ~30–60s and on
+  save. Offline-first. Ink erases need a `removed` map on the page-ink asset.
+  Two-tab live-server test before asking the user. Full plan: `SYNC-PLAN.md`.
 - **Chips (mostly done):** freeze at page joins is gone, drag lands where you let
   go, section boundaries cross cleanly, the grey divider now shows during the
   crossing but **briefly** — the open question the user raised is whether to
@@ -155,18 +166,6 @@ layers, both in `tests/`:
   across b129–b138; verify on the current build before more work (the user's
   build number in a report can be off by one — see the memory note).
 - **Finger scroll:** "better, not perfect." Lower priority than the chips.
-- **Backup + Sync (not started) — full plan in `SYNC-PLAN.md`.** In short: the
-  current backup export crashes at ~15GB
-  because it base64s all audio into one file — fix that first (stream it / an
-  audio-less export). Then sync: split audio from everything else. Notes, ink,
-  sections, settings, photos are small — sync those online automatically
-  (Cloudflare Workers + D1 + R2 is ~$0/month, downloads free). Audio (~10GB, only
-  recorded on the tablet in class) stays **manual** — its small record syncs
-  automatically so the recording shows up in the right place on the laptop, and
-  only the sound file is copied by hand. The user works on Windows most of the
-  time and only records on the tablet, so both devices rarely edit the same page
-  at once — that makes sync much safer. Records already carry `lastEdited`,
-  `deletedAt` tombstones, and an `editedOn` device stamp.
 
 ### Starting a session in Codex (what the user does)
 1. `npm install -g @openai/codex`, then run `codex` inside the project folder,
@@ -180,6 +179,10 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
+- **b143** `c90bce0` — audio-less daily backup (notes + handwriting + pictures;
+  class recordings left out so a ~15GB library can still be saved). Restore
+  keeps recordings already on the device. Confirm restore on the tablet before
+  wiring sync. — *Grok Build*
 - **b142** `3b265a5` — measured real chip-join geometry and preserved the same
   screen seam through both-direction remounts; native-touch browser regression — *Codex*
 - **b141** `d3f5b4f` — chip drag crosses a join like a finger (peek band + normal
