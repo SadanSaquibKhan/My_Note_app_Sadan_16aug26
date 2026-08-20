@@ -2831,7 +2831,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b149";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b150";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -10405,6 +10405,27 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       srow.appendChild(minus); srow.appendChild(dotwrap); srow.appendChild(plus);
       m.appendChild(slab); m.appendChild(srow); m.appendChild(num);
       paintErSize();
+      /* Erase everything handwritten on this page in one tap, the way Samsung
+         Notes offers it — but undoable: it goes through the surface's own
+         clear(), which records a single undo step, so one Undo brings it all
+         back. */
+      var allWrap = document.createElement("div");
+      allWrap.style.marginTop = "10px";
+      var eraseAll = document.createElement("button");
+      eraseAll.type = "button"; eraseAll.className = "btn";
+      eraseAll.style.width = "100%";
+      eraseAll.textContent = "Erase all handwriting";
+      eraseAll.addEventListener("click", function(ev){
+        ev.preventDefault();
+        var S = (typeof activeSurface === "function") ? activeSurface() : ink.surfaces[ink.active];
+        if (!S || !S.strokes || !S.strokes.length){ hint("No handwriting on this page."); return; }
+        var n = S.strokes.length;
+        S.clear();
+        if (typeof closeFavPop === "function") closeFavPop();
+        hint("Erased " + n + " stroke" + (n === 1 ? "" : "s") + " on this page. Undo brings it back.");
+      });
+      allWrap.appendChild(eraseAll);
+      m.appendChild(allWrap);
     } else if (tool !== "lasso"){
       m.appendChild(row); m.appendChild(wrow);
       /* Thickness lives here, so the off-switch for pressure belongs here
