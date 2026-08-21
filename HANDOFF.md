@@ -220,6 +220,14 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
+- **b152** `62a85cf` — chip drag no longer freezes on one page or snaps back on
+  release. Root causes: chipSeek ignored its `force` arg (release seek was skipped
+  → snap-back), and multi-page moves relied on the gated per-page handover cascade
+  (froze). Fix: on release OR when the chip points >1 page away, seek straight to
+  that page past the cooldown/busy gate; the one-page-neighbour peek path (grey
+  join) is untouched. Still refining: a fast multi-page drag jumps ~2 pages at a
+  time — near-neighbour scroll continuity is the next target (3-tool synthesis with
+  CODEX/GROK-SCROLL-FINDINGS). — *Claude Code*
 - **b151** `a1e180a` — un-erasing (Undo of an erase) no longer vanishes after sync:
   each un-erase records a `restored` stamp that beats the erase tombstone, per
   stroke id, in both the app and sync-client.js mergeInk. Found by a sync bug-hunt
