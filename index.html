@@ -2839,7 +2839,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b156";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b157";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5298,10 +5298,19 @@ var MarginCore = (function(){
   function joinImageData(parts){
     if (!parts || !parts.length) return "";
     var list = parts.slice().sort(function(a, b){ return (a.i || 0) - (b.i || 0); });
-    if (list[0].n && list.length !== list[0].n) return "";
+    /* How many chunks the picture is really made of now, per its FIRST chunk.
+       assetId:0 is overwritten by every push, so it always carries the latest
+       crop's count. Cropping to FEWER chunks leaves the old higher-index chunks
+       orphaned on the server; the 120s pull look-back then re-fetches them next
+       to the new one, and the old "length must equal n" test refused to glue
+       (three chunks on hand, n now 1) — so the crop's bytes never landed and the
+       picture stayed uncropped on the other device. Take exactly the first n
+       chunks and ignore any stale extras beyond them. */
+    var n = list[0].n || list.length;
+    if (list.length < n) return "";
     var s = "", i;
-    for (i = 0; i < list.length; i++){
-      if ((list[i].i || 0) !== i) return "";
+    for (i = 0; i < n; i++){
+      if (!list[i] || (list[i].i || 0) !== i) return "";
       s += list[i].data || "";
     }
     return s;

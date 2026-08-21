@@ -34,7 +34,15 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b156**. Recent: b156 fixed the top header overflowing on a narrow
+- Current build: **b157**. Recent: b157 fixed a CROP of an attached picture not
+  reaching other devices (the uncropped one did). Root: cropping to fewer chunks left
+  the old higher-index `imgdata` rows orphaned on the server; the 120s pull look-back
+  re-fetched them next to the new chunk and `joinImageData` refused to glue (three
+  chunks on hand, n now 1), so the crop's bytes never landed — only its dimensions did
+  (LWW light record), which is why it looked uncropped. `joinImageData` now takes the
+  first n chunks (per `assetId:0`, always the latest push) and ignores stale extras.
+  Reproduced + verified with a 2-device sim (tests/cropsync.mjs). b156 fixed the top
+  header overflowing on a narrow
   (tablet-portrait) window — the action buttons (Settings, Data, …) ran off the right
   edge and pushed a page-wide grey strip; `.topright` now shrinks and wraps
   right-aligned (Settings/Data drop to a visible second row) and `.top` clips residual
@@ -255,7 +263,20 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
-- **b156** `PENDING` — the top header no longer overflows on a narrow window. The action
+- **b157** `PENDING` — cropping an attached picture now reaches other devices (before, the
+  uncropped one synced but the crop did not). A picture travels as `imgdata` chunks
+  keyed `assetId:i`; cropping to FEWER chunks overwrote `assetId:0` but left the old
+  higher-index chunks orphaned on the server, and the 120s pull look-back re-fetched
+  them next to the new chunk. `joinImageData`'s old "chunk count must equal n" test then
+  refused to glue (three on hand, n=1), so the crop's bytes never landed — only its
+  width/height did (LWW light record), which is exactly "it still looks uncropped".
+  `joinImageData` now reads n from `assetId:0` (always the latest push) and glues just
+  the first n chunks, ignoring stale extras. Reproduced and verified end-to-end with a
+  real 2-device sim over sync-client.js (tests/cropsync.mjs); syncpics/sync still green.
+  NOTE (future cleanup, not shipped): the orphan chunks still linger on the server and
+  get re-pulled within the look-back — harmless now, but a push-side tombstone of
+  indices ≥ new-n would save the bandwidth. — *Claude Code (Opus 4.8)*
+- **b156** `10e8eab` — the top header no longer overflows on a narrow window. The action
   buttons (`.topright`: Settings, Data, Sync, Full, Tabs, Jump, Quick, Dark, …) were a
   single non-shrinking row (flex:none), so on tablet-portrait width they ran off the
   right and the overflow pushed a page-wide grey strip. Now `.topright` is
