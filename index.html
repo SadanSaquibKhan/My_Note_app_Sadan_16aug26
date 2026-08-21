@@ -2790,6 +2790,9 @@
   </button>
   <button type="button" id="jumpOpen" aria-label="Open notebooks" title="Notebooks open now" data-help="Shows every notebook you have open, so you can jump between them.">▤</button>
   <button type="button" id="jumpPlaces" aria-label="Sections and bookmarks" title="Sections and bookmarks" data-help="Shows this notebook's sections and every bookmarked page, so you can jump without opening the side list.">⚑</button>
+  <button type="button" id="jumpFull" aria-label="Full screen" title="Full screen — fill the screen and hide the browser bars. Tap to turn on or off." aria-pressed="false" data-help="Fills the screen and hides the browser tabs and bars. Tap again to bring them back. While it is on it re-fills the screen the next time you touch, after you have left to another app and come back.">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
 </div>
 <button type="button" class="favdot jumpdot" id="jumpDot" hidden aria-label="Show the shortcuts bar" title="Shortcuts">↪</button>
 <div class="holdmenu favpop jumppop" id="jumpPop" hidden></div>
@@ -2844,7 +2847,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b158";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b159";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -7006,6 +7009,54 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   })();
   document.addEventListener("fullscreenchange", paintFullScrBtn);
   document.addEventListener("webkitfullscreenchange", paintFullScrBtn);
+
+  /* ---- keep-full-screen mode, driven from the shortcuts bar ----
+     The user wants the app to stay full screen — the browser tabs and bars
+     hidden — and come BACK to full screen after leaving to another app and
+     returning. A page cannot full-screen itself on its own; the browser only
+     allows it from a real touch, and it drops full screen on an app-switch or
+     Home. So: a single toggle in the shortcuts bar turns the mode on or off,
+     and while it is on, the first touch anywhere (that is not the toggle
+     itself) restores full screen if the browser has dropped it. `cfg.fullLock`
+     is that mode; it already made writing fill the screen, now it keeps it. */
+  function fullActive(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+  function paintJumpFull(){
+    var b = $("jumpFull");
+    if (!b) return;
+    var on = fullActive() || fullLocked();
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.classList.toggle("on", on);
+  }
+  (function(){
+    var b = $("jumpFull");
+    if (!b) return;
+    b.addEventListener("click", function(e){
+      e.preventDefault(); e.stopPropagation();
+      if (typeof cfg !== "object" || !cfg) return;
+      var goingOn = !(fullActive() || fullLocked());
+      cfg.fullLock = goingOn;
+      if (typeof saveCfg === "function") saveCfg();
+      if (goingOn) enterFull(); else exitFull();
+      paintFullScrBtn(); paintJumpFull();
+      hint(goingOn
+        ? "Full screen on. It comes back the next time you touch after leaving and returning. Tap the same button to turn it off."
+        : "Full screen off.");
+    });
+  })();
+  document.addEventListener("fullscreenchange", paintJumpFull);
+  document.addEventListener("webkitfullscreenchange", paintJumpFull);
+  /* Any touch (except on a full-screen toggle) restores full screen while the
+     mode is on and the browser has dropped it. capture-phase so it runs before
+     the tap's own handler, and it never blocks that handler. */
+  document.addEventListener("pointerdown", function(e){
+    if (!fullLocked() || fullActive()) return;
+    if (e && e.target && e.target.closest && e.target.closest("#jumpFull, #fullScrBtn")) return;
+    enterFull();
+  }, true);
+  (function paintJumpFullWhenReady(){
+    if (typeof cfg === "object" && cfg){ paintJumpFull(); return; }
+    setTimeout(paintJumpFullWhenReady, 90);
+  })();
   if ($("tabUndoBtn")) $("tabUndoBtn").addEventListener("click", function(e){
     e.preventDefault();
     undoCloseNotebook();

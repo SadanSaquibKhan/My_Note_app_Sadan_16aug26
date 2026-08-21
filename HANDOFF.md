@@ -34,7 +34,13 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b158**. Recent: b158 stops Settings scroll-mistouch — dragging to
+- Current build: **b159**. Recent: b159 added a full-screen toggle to the shortcuts
+  bar (`#jumpFull`). Tapping it turns "keep full screen" mode (`cfg.fullLock`) on/off;
+  while on, ANY touch that is not a full-screen toggle re-fills the screen if the
+  browser dropped it (an app-switch/Home drops full screen and only a real gesture may
+  ask it back — so the app cannot truly *auto*-restore without a touch, this is the
+  closest possible). Verified in-browser that the toggle flips state; the actual
+  full-screen fill needs the tablet. b158 stops Settings scroll-mistouch — dragging to
   scroll the settings list no longer flips a checkbox/dropdown it started on
   (`touch-action:pan-y` on the whole `.dlg-body` + a capture-phase guard in
   `wireSettings` that swallows a click when the finger moved > a tap's slop), and the
@@ -270,7 +276,20 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
-- **b158** `PENDING` — Settings no longer mistouches while you scroll. Dragging to scroll
+- **b159** `PENDING` — a full-screen toggle now lives in the shortcuts bar (`#jumpFull`,
+  4-corner icon). It owns "keep full screen" mode (`cfg.fullLock`, which already made
+  writing fill the screen). Tapping: on → enterFull + fullLock=true; off → exitFull +
+  fullLock=false, reflected in the top Full button too. While the mode is on, a
+  capture-phase document `pointerdown` (skipping `#jumpFull`/`#fullScrBtn`) calls
+  `enterFull()` whenever the browser has dropped full screen — because an app-switch or
+  Home drops it and the Fullscreen API only re-grants from a real gesture, so a page
+  genuinely cannot auto-restore on its own; the next touch is the earliest it can. This
+  is the honest ceiling of "always full screen even after returning". Browser-verified
+  the toggle flips aria-pressed/cfg state (tests/fullscreen.mjs source-pins it); the
+  actual full-screen FILL is device-only (headless Chrome can't real-fullscreen). NOTE
+  for testing: the app must be an installed PWA or a normal Chrome tab for
+  requestFullscreen to hide the chrome. — *Claude Code (Opus 4.8)*
+- **b158** `3e4e055` — Settings no longer mistouches while you scroll. Dragging to scroll
   the list used to flip a checkbox/dropdown the finger started on. Fix: `touch-action:pan-y`
   on the whole `.dlg-body` (a vertical drag scrolls, never toggles) + a capture-phase guard
   in `wireSettings` that swallows the click if the finger moved > 10px between press and
