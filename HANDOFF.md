@@ -34,7 +34,12 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b155**. Recent: b155 fixed the two floating bars (favourites +
+- Current build: **b156**. Recent: b156 fixed the top header overflowing on a narrow
+  (tablet-portrait) window — the action buttons (Settings, Data, …) ran off the right
+  edge and pushed a page-wide grey strip; `.topright` now shrinks and wraps
+  right-aligned (Settings/Data drop to a visible second row) and `.top` clips residual
+  overflow. Browser-verified: 0 page overflow at 900px, one row at 1400px.
+  b155 fixed the two floating bars (favourites +
   shortcuts) snapping to the TOP-LEFT corner when you minimise then re-open them —
   the hold-to-open hid the dot, and the pointerup then read the hidden dot's 0,0 rect
   and saved that as the position; `endDot` now ignores an open (and any 0,0 rect).
@@ -250,7 +255,16 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
-- **b155** `PENDING` — the two floating bars (favourites `#favDot`, shortcuts `#jumpDot`)
+- **b156** `PENDING` — the top header no longer overflows on a narrow window. The action
+  buttons (`.topright`: Settings, Data, Sync, Full, Tabs, Jump, Quick, Dark, …) were a
+  single non-shrinking row (flex:none), so on tablet-portrait width they ran off the
+  right and the overflow pushed a page-wide grey strip. Now `.topright` is
+  `flex:0 1 auto; min-width:0; flex-wrap:wrap; justify-content:flex-end` (shrinks, wraps
+  right-aligned so the last buttons drop to a visible second row) and `.top` has
+  `overflow:hidden` (residual never becomes a sideways page scroll). Browser-verified in
+  headless Chrome (tests/topbar.mjs source-pins it): at 900px page overflow=0 and
+  Settings+Data are on-screen (row 2); at 1400px it stays one row. — *Claude Code (Opus 4.8)*
+- **b155** `0a6d987` — the two floating bars (favourites `#favDot`, shortcuts `#jumpDot`)
   no longer jump to the top-left corner when you minimise then re-open them. Root: the
   dot opens on a ~400ms hold (`onTap` → `favMin=false` → `buildFavBar` HIDES the dot,
   shows the bar); the `pointerup` that followed ran `endDot`, which read the now-hidden

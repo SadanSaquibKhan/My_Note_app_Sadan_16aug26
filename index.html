@@ -86,6 +86,7 @@
     flex:none; display:flex; align-items:center; gap:10px;
     padding:calc(8px + env(safe-area-inset-top)) 12px 8px;
     background:var(--panel); border-bottom:1px solid var(--rule);
+    overflow:hidden;   /* a too-wide action row wraps (see .topright); never a page-wide grey strip */
   }
   .wordmark{
     font-family:var(--display); font-weight:700; font-variation-settings:"wght" 700,"wdth" 75;
@@ -97,7 +98,14 @@
     color:var(--ink-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
   .crumbs b{font-weight:400; color:var(--ink)}
-  .topright{display:flex; align-items:center; gap:8px; flex:none}
+  /* The action buttons used to sit in one non-shrinking row (flex:none), so on a
+     narrow window (tablet portrait) they ran off the right edge — Settings and
+     Data fell off the page and the overflow pushed a grey strip past the screen.
+     They now shrink and WRAP, right-aligned, so the last buttons drop to a second
+     visible row instead of off-screen. `.top` clips any residual overflow so the
+     page itself can never gain a sideways scroll. */
+  .topright{display:flex; align-items:center; gap:8px 8px; flex:0 1 auto; min-width:0;
+            flex-wrap:wrap; justify-content:flex-end}
   .state{
     font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase;
     color:var(--ink-2); display:flex; align-items:center; gap:6px; white-space:nowrap;
@@ -2831,7 +2839,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b155";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b156";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
