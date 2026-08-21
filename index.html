@@ -2847,7 +2847,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b160";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b161";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -14784,6 +14784,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* ---- 4. a newer upload should announce itself ---- */
   if ("serviceWorker" in navigator && navigator.serviceWorker.getRegistration){
+    /* When a NEW worker takes control (after it installed the fresh shell and
+       claimed the page), reload once so the new build actually shows instead of
+       waiting for the user to find the "Reload" notice. Only for a real update
+       (there was already a controller) — not the first install of this session,
+       and guarded by a one-shot flag so it cannot loop. */
+    var hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener("controllerchange", function(){
+      if (!hadController || window.__swReloaded) return;
+      window.__swReloaded = true;
+      location.reload();
+    });
     navigator.serviceWorker.getRegistration().then(function(reg){
       if (!reg) return;
       /* An installed PWA checks for a new service worker only rarely on its own,

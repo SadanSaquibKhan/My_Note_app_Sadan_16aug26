@@ -23,6 +23,8 @@ eq("big assets (icons, PDF reader) stay cache-first, not re-downloaded",
    /caches\.match\(e\.request, \{ ignoreSearch: true \}\)\.then\(hit => hit \|\| fetch/.test(sw));
 eq("a new worker still skips waiting, claims, and deletes old caches",
    /self\.skipWaiting\(\)/.test(sw) && /self\.clients\.claim\(\)/.test(sw) && /caches\.delete\(k\)/.test(sw));
+eq("install fetches the shell bypassing the HTTP cache (no stale HTML baked in)",
+   /new Request\(u, \{ cache: "reload" \}\)/.test(sw) && /SHELL\.map\(u => c\.add\(fresh\(u\)\)\)/.test(sw));
 
 console.log("\nindex.html — the app forces update checks:");
 eq("it calls reg.update() on load",
@@ -31,6 +33,10 @@ eq("it re-checks whenever the app returns to the front",
    /visibilitychange[\s\S]{0,140}reg\.update\(\)/.test(html));
 eq("it still shows the 'newer version ready' notice",
    /A newer version of Margin is ready/.test(html));
+eq("a new worker taking control auto-reloads once (real update only, guarded)",
+   /addEventListener\("controllerchange"/.test(html) &&
+   /if \(!hadController \|\| window\.__swReloaded\) return;/.test(html) &&
+   /window\.__swReloaded = true;\s*\n\s*location\.reload\(\);/.test(html));
 
 process.exitCode = bad ? 1 : 0;
 console.log(bad ? "\n" + bad + " failed" : "\nall service-worker shell checks passed");

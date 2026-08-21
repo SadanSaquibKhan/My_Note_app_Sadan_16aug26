@@ -34,7 +34,14 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b160**. Recent: b160 fixes the tablet **not updating its build** — the
+- Current build: **b161**. Recent: b161 completes the update fix — install now fetches the
+  shell with `{cache:"reload"}` (an install right after a deploy could bake the OLD
+  index.html into the NEW cache), and a new worker taking control auto-reloads once (real
+  update only, one-shot guarded) so the fresh build shows without hunting for the notice.
+  A parallel 6-agent read-only workflow root-caused the whole b159 bug list (A–H) with
+  file:line precision; results in the task output. Shipping the high-confidence isolated
+  fixes next (G peek-ink parity, A/C toolbar, F immerse arrows); holding the fragile ones
+  (B pen-down, D/E/H scroll) to cross-check with Codex. b160 fixes the tablet **not updating its build** — the
   service worker was cache-first for the whole shell, so an installed PWA served its
   first-cached `index.html` forever (sync worked because it is a different host). The
   shell (page + `sync-client.js`) is now **network-first** (fresh build when online, cache
@@ -287,7 +294,14 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
-- **b160** `PENDING` — the tablet now actually updates to new builds. `sw.js` served the
+- **b161** `PENDING` — completes the tablet-update fix (with b160). install now fetches the
+  shell via `new Request(u, {cache:"reload"})` so a worker installing right after a deploy
+  cannot bake the OLD index.html into the NEW cache (GitHub Pages holds HTML ~10 min);
+  index.html adds a one-shot `controllerchange` auto-reload (guarded by `hadController` +
+  `window.__swReloaded`, so only a real update reloads, never first install, never a loop),
+  so a freshly-activated worker's build shows without the user finding the notice.
+  tests/swshell.mjs pins both. — *Claude Code (Opus 4.8)*
+- **b160** `677d3e9` — the tablet now actually updates to new builds. `sw.js` served the
   whole shell CACHE-FIRST, so an installed Android PWA kept serving the `index.html` it
   first cached (sync still worked because it hits a different origin, which is why "sync
   works but the build won't update"). A browser TAB updated because it re-checks the SW on

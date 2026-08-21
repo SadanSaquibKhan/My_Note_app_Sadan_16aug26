@@ -5,7 +5,7 @@
    cached — the build number never moved on the tablet even though sync worked.
    Static assets (icons, the on-demand PDF reader) stay cache-first below.
    bump.py bumps CACHE to match index.html's BUILD on every build. */
-const CACHE = "margin-2026-08-16-v160";
+const CACHE = "margin-2026-08-16-v161";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest",
                "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png"];
 /* The PDF reader is 1.4MB and only matters the first time you import a PDF,
@@ -16,11 +16,17 @@ const SHELL = ["./", "./index.html", "./manifest.webmanifest",
 const EXTRA = ["./pdf.min.js", "./pdf.worker.min.js", "./sync-client.js"];
 
 self.addEventListener("install", e => {
+  /* Fetch the shell BYPASSING the browser HTTP cache. cache.addAll()/add() obey
+     the HTTP cache, and GitHub Pages holds HTML for ~10 min, so a worker that
+     installs soon after a deploy could otherwise bake the OLD index.html into the
+     NEW cache — the cache name would bump but the bytes would be stale (which is
+     part of why the tablet got stuck). { cache: "reload" } forces the network. */
+  const fresh = u => new Request(u, { cache: "reload" });
   e.waitUntil(
     caches.open(CACHE)
-      .then(c => c.addAll(SHELL).then(() => {
+      .then(c => Promise.all(SHELL.map(u => c.add(fresh(u)))).then(() => {
         /* best effort, never fatal */
-        return Promise.all(EXTRA.map(u => c.add(u).catch(() => {})));
+        return Promise.all(EXTRA.map(u => c.add(fresh(u)).catch(() => {})));
       }))
       .then(() => self.skipWaiting())
   );
