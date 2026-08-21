@@ -15,9 +15,15 @@ eq("2  a fling is not killed just because the pen is near",
 eq("3  a fling is re-anchored then carried, not spent at the heading",
    has(/handover\.glideCarry/) && has(/stopGlide\(\)/) &&
    has(/startGlide\(c\.S, c\.vx \* 0\.7, c\.vy \* 0\.7\)/));
-eq("4  a carried fling still waits one join (until does not skip)",
+/* A carried FLING still waits one join — the until gate holds momentum for a
+   single turn so a throw cannot bounce through two joins. A held CHIP, though,
+   has no momentum: it moves only with the finger, so from b153 it is exempt
+   from that wait. Old bug: the chip was not pan.on, so it inherited the full
+   400ms fling cooldown and froze at every second join while its number ran on
+   ahead, then caught up by jumping when the finger got two pages clear. */
+eq("4  a carried fling waits one join, but a held chip is exempt (b153)",
    has(/The join is one turn/) &&
-   has(/if \(Date\.now\(\) < \(handover\.until \|\| 0\)\) return;/));
+   has(/if \(!chipDrag && Date\.now\(\) < \(handover\.until \|\| 0\)\) return;/));
 /* A neighbour chip-drag now overscrolls into the peek and remounts only
    once that peek has crossed the same 40/60 line a finger uses. The swap
    still stands down during the drag so the two machines cannot bounce. */

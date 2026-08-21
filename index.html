@@ -2831,7 +2831,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b152";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b153";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -16218,8 +16218,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (chipDrag && typeof chipLoading === "function" && chipLoading()) return;
     /* A carried-over fling used to skip this wait, so the next peek could
        satisfy the line on the first frame of the new page and turn again.
-       The join is one turn. The leftover speed continues after settle. */
-    if (Date.now() < (handover.until || 0)) return;
+       The join is one turn. The leftover speed continues after settle.
+       But a chip drag is not a fling — it moves only while the finger moves,
+       so it has no leftover speed to bounce with. The 400ms cooldown was
+       meant purely for momentum, yet a chip is not pan.on so it inherited the
+       full 400ms and stalled at every second join: the page froze at the peek
+       edge while the chip's number ran on ahead, and only caught up by jumping
+       when the finger got two pages clear. Let a held chip cross each join as
+       soon as the previous swap's busy flag clears (one frame later), which is
+       the real single-flight lock; chipDrag.join still carries the scroll so
+       nothing can immediately re-trigger the opposite direction. */
+    if (!chipDrag && Date.now() < (handover.until || 0)) return;
     var p = $("paper");
     if (!p) return;
     var pr = p.getBoundingClientRect();

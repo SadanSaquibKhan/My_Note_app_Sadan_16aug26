@@ -90,8 +90,12 @@ console.log("\nE. listProgress vs peek overscroll (release snap even on one join
 }
 
 console.log("\nF. finger vs chip until durations");
-eq("chip path is not pan.on, so until is 400ms not 160ms",
-   /pan && pan\.on\) \? 160 : 400/.test(html));
+/* RESOLVED (b153): the 400ms duration still exists (a fling that is not pan.on
+   still gets it), but pageHandover now exempts a held chip from that gate, so
+   the chip no longer freezes at every second join. Both facts asserted. */
+eq("the 400ms fling duration still exists, but a held chip is exempt from the gate",
+   /pan && pan\.on\) \? 160 : 400/.test(html) &&
+   /if \(!chipDrag && Date\.now\(\) < \(handover\.until \|\| 0\)\) return;/.test(html));
 eq("fingerPanMove freezes deltas while handover busy/pending",
    html.indexOf("function fingerPanMove") >= 0 &&
    html.indexOf("handover.busy || handover.pending") >= 0 &&

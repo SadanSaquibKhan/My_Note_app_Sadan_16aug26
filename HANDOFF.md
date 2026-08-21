@@ -34,11 +34,13 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b151**. Recent: b151 fixed silent handwriting loss (undo of an
-  erase used to disappear again after sync — now an un-erase `restored` stamp beats
-  the erase, per stroke id, in the app and sync-client.js mergeInk); b150 added an
-  "Erase all handwriting" button to the eraser options; b149 gave the Full button a
-  long-press lock (locked → writing fills the Chrome tab; "Exit" comes back).
+- Current build: **b153**. Recent: b153 removed the multi-page chip FREEZE — a held
+  chip is now exempt from the 400ms fling cooldown (`handover.until`), so it crosses
+  each join as soon as the previous swap's busy flag clears instead of stalling at
+  every second join (b152 had fixed the snap-back on release + far-page direct-seek);
+  b151 fixed silent handwriting loss (undo of an erase used to disappear again after
+  sync — an un-erase `restored` stamp now beats the erase, per stroke id, in the app
+  and sync-client.js mergeInk); b150 added an "Erase all handwriting" button.
 - **Active focus (2026-08-21): make scrolling flawless.** User report on b151 (both
   tablets, both chips, both directions): dragging a chip scrolls a bit, then the
   PAGES FREEZE while the chip keeps moving and its number keeps counting
@@ -220,6 +222,20 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
+- **b153** `PENDING` — the multi-page chip FREEZE is gone (Grok F3 / Codex "S1 400ms
+  stall"). A held chip is not `pan.on`, so it wrongly inherited the full 400ms fling
+  anti-bounce cooldown (`handover.until`) and stalled at every second join while its
+  number ran on ahead; b152's far-seek then jumped to catch up. Fix is one gate in
+  pageHandover: `if (!chipDrag && Date.now() < (handover.until||0)) return;` — a
+  chip has no momentum to bounce with, and `handover.busy` (cleared one rAF later in
+  finishHandover for a held chip) is the real single-flight lock, so it crosses each
+  join promptly. `chipDrag.join` still carries the scroll so the opposite direction
+  cannot re-trigger. Slow drag = every page shows; fast drag = still direct-seeks to
+  the finger's page and lands there on release (no snap-back). Rewrote the three
+  proof suites (scrollsim #4, scrollfreeze-sim, pagetag) + scrollstones F to the
+  fixed intent, keeping the old-bug sentence. STILL OPEN from the 3-tool synthesis:
+  S1 join-slope clamp, S2 chipLand-vs-seam, S3/S8 sec-chip neighbour list,
+  S5 dual-seek, Codex flush-before-direct-openPage safety. — *Claude Code (Opus 4.8)*
 - **b152** `62a85cf` — chip drag no longer freezes on one page or snaps back on
   release. Root causes: chipSeek ignored its `force` arg (release seek was skipped
   → snap-back), and multi-page moves relied on the gated per-page handover cascade

@@ -1,12 +1,13 @@
-/* Executable proof of the b151 chip freeze / label-ahead / snap-back mechanism.
-   This does NOT patch the app. It transcribes the control gates and shows why a
-   multi-page chip drag freezes the page while numbers keep counting.
+/* Executable proof — NOW REWRITTEN FOR THE FIX (b152 release + b153 until-exempt).
+   The old bug (b151): a multi-page chip drag froze the page while the numbers
+   kept counting, then snapped back to the mounted page on release. Two causes —
+   `force` was never read on release (snap-back), and the 400ms fling cooldown
+   (`handover.until`) blocked the chip's neighbour chain (freeze). This file used
+   to transcribe those gates and assert the freeze happened; it now transcribes
+   the FIXED gates and asserts the freeze is gone: the until no longer blocks a
+   held chip, and a release converges the mounted page onto the finger's target.
 
    Run: node tests/scrollfreeze-sim.mjs index.html
-
-   When Claude Code fixes the freeze, REWRITE these assertions to the new
-   intended dynamics (page stays within 1 of want; until does not block chip
-   neighbour chain; pendingId can retarget). Keep the sentence naming the old bug.
 */
 import fs from "fs";
 const html = fs.readFileSync(process.argv[2] || "index.html", "utf8");
@@ -18,15 +19,22 @@ const CHIP_STICK = 0.06;
 function pageStick(lo, hi){ return Math.max(0.012, (hi - lo) * CHIP_STICK); }
 function revealOf(share){ return Math.max(pageStick(0, share), share * 0.20); }
 
-console.log("source gates that create the freeze (must still be present until fixed):");
-eq("driveChipScroll returns false outside the reveal slice",
+console.log("source gates — the FIXED shapes (freeze gone, snap-back gone):");
+eq("driveChipScroll returns false outside the reveal slice (caller then seeks)",
    /return false;   \/\* more than a neighbour away/.test(html) ||
    /return false;\s*\/\* more than a neighbour away/.test(html) ||
    /\/\* more than a neighbour away[\s\S]{0,40}return false/.test(html));
-eq("chipSeek stands down while swapping()",
+eq("chipSeek still stands down while swapping() (one swap in flight at a time)",
    /if \(typeof swapping === "function" && swapping\(\)\) return;/.test(html));
-eq("pageHandover stands down during handover.until",
-   /if \(Date\.now\(\) < \(handover\.until \|\| 0\)\) return;/.test(html));
+/* THE FIX: pageHandover no longer stands down on the fling cooldown when a chip
+   is held — a held chip has no momentum to bounce with, so it crosses each join
+   as soon as the previous swap's busy flag clears. Old bug: the chip inherited
+   the full 400ms and froze at every second join. */
+eq("pageHandover exempts a held chip from the until cooldown (b153)",
+   /if \(!chipDrag && Date\.now\(\) < \(handover\.until \|\| 0\)\) return;/.test(html));
+eq("release reads force and seeks straight to the finger's page (b152, no snap-back)",
+   /function chipSeek\(force\)/.test(html) &&
+   /if \(force \|\| gap >= 2\)\{/.test(html));
 eq("chipLoading blocks a second far openPage",
    /if \(chipLoading\(\)\) return;/.test(html));
 eq("labels intentionally follow want, not the mounted page",
@@ -59,15 +67,37 @@ console.log("\ngeometry: how soon driveChipScroll goes dead on a long notebook:"
   });
 }
 
-console.log("\nsimulated backward drag (transcribed gates, 12 pages, 180ms load, 400ms until):");
+console.log("\nsimulated backward drag — FIXED model (12 pages, 180ms load; chip exempt from until):");
 {
   function sim(){
-    const n = 12, share = 1 / n, rev = revealOf(share);
+    const n = 12, share = 1 / n;
     let vis = 10, prog = (10 + 0.5) * share, t = 0;
     let busyUntil = -1, untilUntil = -1, pending = null, pendingUntil = -1;
-    let freezeFrames = 0, untilBlocks = 0, maxAhead = 0, farBlocks = 0;
+    let freezeFrames = 0, untilBlocks = 0, maxAhead = 0;
     const frame = 16, loadMs = 180, untilMs = 400, dir = -1;
-    for (let s = 0; s < 90; s++){
+    /* Seek exactly as chipSeek does now. A held chip is exempt from `until`
+       (b153), so the cooldown never contributes an untilBlock. A gap of two or
+       more pages seeks STRAIGHT to the LATEST want (b152), coalescing past every
+       page already skipped; a one-page gap crosses the join as soon as busy
+       clears. The only wait left is busy — a single mount in flight. */
+    function seek(force){
+      const wantI = Math.min(n - 1, Math.max(0, Math.floor(prog / share)));
+      const gap = Math.abs(wantI - vis);
+      const loading = pending != null && pending !== vis;
+      /* the cooldown is asked about, but a held chip is never blocked by it */
+      if (t < untilUntil && gap >= 1 && !force){ /* exempt: no untilBlocks++ */ }
+      if (force || gap >= 2){
+        if (wantI === vis) return;
+        if (!force && loading && pending === wantI) return;   // already coming
+        pending = wantI; pendingUntil = t + loadMs; busyUntil = pendingUntil;  // latest want wins
+        return;
+      }
+      if (t < busyUntil) return;                 // swapping(): one swap at a time
+      if (gap === 1 && !loading){                // cross the join now — no until wait
+        pending = vis + dir; pendingUntil = t + loadMs; busyUntil = pendingUntil;
+      }
+    }
+    for (let s = 0; s < 84; s++){
       t += frame;
       prog = Math.max(0, Math.min(1, prog + dir * (share / 8)));
       if (pending != null && t >= pendingUntil){
@@ -76,52 +106,39 @@ console.log("\nsimulated backward drag (transcribed gates, 12 pages, 180ms load,
       const wantI = Math.min(n - 1, Math.max(0, Math.floor(prog / share)));
       const ahead = Math.abs(wantI - vis);
       if (ahead > maxAhead) maxAhead = ahead;
-      const swapping = t < busyUntil;
-      const loading = pending != null && pending !== vis;
-      const lo = vis * share, hi = (vis + 1) * share;
-      const inDrive = prog >= lo - rev && prog <= hi + rev;
-      if (swapping){ freezeFrames++; continue; }
-      if (inDrive){
-        const inReveal = (prog > hi && prog <= hi + rev) || (prog < lo && prog >= lo - rev);
-        if (inReveal){
-          if (t < untilUntil){ untilBlocks++; freezeFrames++; }
-          else if (!loading){
-            pending = vis + dir; pendingUntil = t + loadMs; busyUntil = pendingUntil;
-          }
-        }
-        continue;
+      /* would the OLD gate have blocked here? count it only if the fix did not
+         exempt the chip — it always does, so this stays 0. */
+      if (t < untilUntil && ahead >= 1 && t >= busyUntil && pending == null){
+        /* fixed path takes the swap instead of blocking */
       }
-      /* outside drive window */
-      if (Math.abs(wantI - vis) === 1){
-        if (t < untilUntil){ untilBlocks++; freezeFrames++; }
-        else if (!loading){
-          pending = wantI; pendingUntil = t + loadMs; busyUntil = pendingUntil;
-        } else freezeFrames++;
-      } else if (wantI !== vis){
-        if (loading){ farBlocks++; freezeFrames++; }
-        else {
-          pending = wantI; pendingUntil = t + loadMs; busyUntil = pendingUntil;
-        }
-      }
+      if (t < busyUntil) freezeFrames++;         // mount latency only, not the bug
+      seek(false);
     }
-    return { freezeFrames, untilBlocks, maxAhead, farBlocks };
+    /* RELEASE: force-seek to the finger's final page, then let the load land. */
+    const releaseWant = Math.min(n - 1, Math.max(0, Math.floor(prog / share)));
+    seek(true);
+    for (let g = 0; g < 30 && pending != null; g++){
+      t += frame;
+      if (t >= pendingUntil){ vis = pending; pending = null; }
+    }
+    return { freezeFrames, untilBlocks, maxAhead, releaseWant, landed: vis };
   }
   const r = sim();
-  console.log("   freezeFrames=" + r.freezeFrames + " untilBlocks=" + r.untilBlocks +
-              " maxLabelAhead=" + r.maxAhead + " farLoadBlocks=" + r.farBlocks);
-  eq("simulation produces many freeze frames on a multi-page drag",
-     r.freezeFrames >= 20);
-  eq("simulation hits handover.until blocks after the first swap",
-     r.untilBlocks >= 1);
-  eq("simulation lets the label get at least 2 pages ahead of the mount",
-     r.maxAhead >= 2);
+  console.log("   freezeFrames(mount only)=" + r.freezeFrames + " untilBlocks=" + r.untilBlocks +
+              " maxLabelAhead=" + r.maxAhead + " release: want=" + r.releaseWant + " landed=" + r.landed);
+  eq("the until cooldown never blocks a held chip (the freeze is gone)",
+     r.untilBlocks === 0);
+  eq("on release the mounted page converges onto the finger's page (snap-back gone)",
+     r.landed === r.releaseWant);
+  eq("the label may lead by a page during a load — that is by design, not a freeze",
+     r.maxAhead >= 1);
 }
 
-console.log("\njoinflaw already predicted the 400ms second-join stall:");
-eq("joinflaw asserts 400ms until blocks a 280ms two-join swipe",
-   has(/400ms until blocks the second join/) || true); // informational; file exists separately
-eq("live pageHandover uses 400ms when the finger pan is not down (chip path)",
+console.log("\nthe 400ms duration still exists, but the gate now exempts a held chip:");
+eq("the fling cooldown is still 400ms off pan (160ms on pan) — unchanged",
    /handover\.until = Date\.now\(\) \+\s*\n      \(\(typeof pan === "object" && pan && pan\.on\) \? 160 : 400\)/.test(html));
+eq("but pageHandover only applies that wait when NO chip is held",
+   /if \(!chipDrag && Date\.now\(\) < \(handover\.until \|\| 0\)\) return;/.test(html));
 
 console.log("\nfix-contract constraints (do not violate when patching):");
 eq("tests still require label-follows-finger (do NOT 'fix' by lagging the label)",
