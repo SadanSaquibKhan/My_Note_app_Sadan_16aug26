@@ -105,10 +105,14 @@ That's it. Everything it needs to catch up is in those two files.
   pageChanges=2 on a whole-notebook book chip for BOTH b153 and b154 — that is a
   harness artifact (fixed drag distance overshoots on the last page), not a build
   regression; judge by sec-chip single crossings.
-- **Waiting on you:** close and reopen; confirm **b148** in Settings. Put
-  a picture on the computer, tap Sync, then Sync on the tablet — the
-  picture should appear, not “This picture is missing.” Put a picture on
-  the tablet, Sync both sides, reload the tablet: it should still be there.
+- **Waiting on you (confirm b159 in Settings, then test):** (1) b156 — top bar on a
+  narrow/portrait window: no grey strip, Settings/Data reachable. (2) b157 — crop a
+  picture on one device, Sync both sides: the crop shows on the other device (not the
+  whole picture). (3) b158 — scroll the Settings list by dragging over the controls:
+  nothing toggles by accident. (4) b159 — tap the new full-screen icon (4 corners) in
+  the shortcuts bar: it fills the screen; leave to another app and come back, touch the
+  screen, it re-fills; tap the icon again to turn it off. (5) b154 — chip scroll speed
+  is more even at the page join.
 - Still rough: very large pictures or Uncrop-originals may still skip;
   class recordings do not copy. Grey page-divider during a chip drag is
   brief; lasso on typed text still has some reports.
@@ -276,7 +280,7 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
-- **b159** `PENDING` — a full-screen toggle now lives in the shortcuts bar (`#jumpFull`,
+- **b159** `fe9cae5` — a full-screen toggle now lives in the shortcuts bar (`#jumpFull`,
   4-corner icon). It owns "keep full screen" mode (`cfg.fullLock`, which already made
   writing fill the screen). Tapping: on → enterFull + fullLock=true; off → exitFull +
   fullLock=false, reflected in the top Full button too. While the mode is on, a
