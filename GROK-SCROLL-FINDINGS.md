@@ -1,8 +1,9 @@
 # GROK-SCROLL-FINDINGS — hard diagnosis (b151)
 
-**Tool:** Grok Build (second pass — deeper than the first report)  
-**Mode:** diagnosis + executable proof — **no `index.html` / `sw.js` edits, no push**  
-**Build:** `var BUILD` = **b151**  
+**Tool:** Grok Build (third pass — leftover stones)  
+**Mode:** diagnosis + executable proof — **no `index.html` / `sw.js` edits in this pass**  
+**App on disk now:** `var BUILD` = **b152** (Claude shipped a first freeze/snap-back patch: `force` is read; `|gap|>=2` seeks straight). This appendix is the work that **b152 did not cover**.  
+**Earlier geometry/sim** was against **b151** and still explains why freeze started after a few percent of track.  
 **Companion proof:** `tests/scrollfreeze-sim.mjs` (run: `node tests/scrollfreeze-sim.mjs index.html` — **0 failed** on current code)  
 **Constraint:** do **not** reinstate `scrollToJoin` / `noLandUntil`
 
@@ -231,7 +232,7 @@ Each build: `check.js`, `ids.js`, `nest.js`, `chips.mjs`, `joinflaw.mjs`, `finge
 
 ---
 
-## File:line hot index
+## File:line hot index (b151, re-verified)
 
 | Topic | Lines |
 |---|---|
@@ -249,16 +250,136 @@ Each build: `check.js`, `ids.js`, `nest.js`, `chips.mjs`, `joinflaw.mjs`, `finge
 | `finishHandover` / join | `16305–16458` |
 | scroll rAF | `16503–16511` |
 | `openPage` | `16551–16559` |
+| `neighbourPage` | `16641–16647` |
+| `pageHeightOf` | `17179–17181` |
 | glide | `8299–8335` |
-| finger pan | `18304–18368` |
+| `paintDoc` chipLand after finishHandover | `6365–6386` |
+| finger pan | `18379–18400` |
 
 ---
 
 ## Evidence artifacts
 
-1. This file — narrative + contracts  
-2. `tests/scrollfreeze-sim.mjs` — **passing proof that the bug gates exist and the sim freezes**  
-3. `tests/joinflaw.mjs` §42–43 — 400ms vs 160ms  
-4. In-source confession `15724–15738` — staircase already known to authors  
+1. This file — narrative + contracts + appendix  
+2. `tests/scrollfreeze-sim.mjs` — freeze dynamics (81 freeze frames, label 3 ahead)  
+3. `tests/scrollstones.mjs` — 24 leftover stones, **0 failed**  
+4. `tests/joinflaw.mjs` §42–43 — 400ms vs 160ms  
+5. In-source confession `15724–15738`  
 
-*End of hard Grok diagnosis. Ready for Claude Code implementation.*
+---
+
+## Appendix — stones that were still unturned
+
+### S1 — HIGH — `chipDrag.join` slope is enormous; 2% chip travel ≈ 1100px
+
+**Lines:** peekSlope write `15635–15637`, `15646–15648`, `15766–15768`; consume `15606–15618`; fallback `16394–16397`
+
+On a 20-page book, reveal ≈ 0.012 track. Peek travel ≈ 0.70×viewport ≈ 700px.
+
+`peekSlope = 700/0.012 ≈ 58 000 px per track-unit`.
+
+Join carry stays active while `|Δprog| < 0.65 × pageShare` ≈ **0.032** track. A 0.02 move inside that window:
+
+`Δscroll = 0.02 × 58000 ≈ 1160px`
+
+Then `carriesJoin` may fail (`carried` vs `ordinary`) and the join is **dropped** (`chipDrag.join = null` at `15621`), after which ordinary `landOnPage` yanks to frac of the new page → jump / freeze feel.
+
+Fallback `if (!(js > 0)) js = listVirtual * zoom` fires on **NaN / 0 / negative**. Scroll-rAF `pageHandover` does **not** set `peekSlope`. After that swap, held-chip join uses ~30000 px/unit.
+
+**Fix:** Slope must be px per **page-fraction**, or clamp `Δscroll` per frame to a viewport. Do not treat negative/backward as missing (`!(js > 0)` is wrong if you ever store signed slope).
+
+**Proof:** `tests/scrollstones.mjs` section B.
+
+### S2 — HIGH — `paintDoc` can `restoreScroll(chipLand.frac)` **after** `finishHandover` re-anchor
+
+**Lines:** `6365–6379`
+
+Order: `finishHandover()` pins `pad - keepAt`, then if `chipLand` matches the new page, **`restoreScroll(land * span)` overwrites the seam**. Matching branch does **not** check `chipDrag`. A far-seek `chipLand` left over from earlier in the same drag can fight the neighbour handover you just finished.
+
+**Fix:** If `handover` just settled or `chipDrag.join` is set, ignore `chipLand`. Clear stale `chipLand` when starting a neighbour handover. Never `restoreScroll` frac 0/1 on top of an overlap.
+
+**Proof:** `tests/scrollstones.mjs` section C.
+
+### S3 — HIGH — Sec chip list ≠ handover neighbour list
+
+**Lines:** sec list `15800`; `neighbourPage` `16641–16647` uses **`pageOrder()`** + **`currentPageId()`**, not `chipDrag.list` / `visualNoteId`.
+
+Dragging the **blue section chip** maps progress only inside the section, but `pageHandover` remounts the **notebook** neighbour (next section’s first page at a section tail). Labels and remount disagree at section boundaries — same symptom family as “numbers go to S2P6 while page stays S2P10” when those pages straddle sections.
+
+**Fix:** While `chipDrag.kind === "sec"`, `pageHandover` / peeks must use `sectionPageList()` (or ignore notebook-next). Book chip keeps `pageOrder()`.
+
+**Proof:** `tests/scrollstones.mjs` section A.
+
+### S4 — MEDIUM — `listProgress` cannot see peek overscroll → snap-back even on **one** join
+
+**Lines:** `15282–15297`
+
+`y = (scrollTop-pad)/z` is capped with `min(h, y)`. 800px into the next peek still reports **the join of the current page**. On release, `paintNavChips` without `want` places the chip at that join, not under the finger.
+
+**Fix:** Release must use finger `prog` / `want`, not `listProgress(visual)`, until the mount matches.
+
+**Proof:** `tests/scrollstones.mjs` section E.
+
+### S5 — MEDIUM — Dual `chipSeek` every frame
+
+**Lines:** pointermove `15832` + chase `15789`
+
+Two seeks per frame: first may `openPage`, second hits `swapping`/`pendingId`. Not the primary freeze, but doubles work and races `chipLand`.
+
+**Fix:** Chase-only seek; pointermove only updates `want`/`prog`/`placeChip`.
+
+### S6 — MEDIUM — `CHIP_SEEK_MS` / `force` are dead; tests lie
+
+`chipSeek` never reads `force` or `CHIP_SEEK_MS`. `tests/joinflaw.mjs` §51 and `tests/scrollsim.mjs` §5 still claim a 130ms throttle.
+
+**Fix:** Honor `force` on release; delete or use `CHIP_SEEK_MS`; update those tests.
+
+### S7 — Finger matrix (secondary)
+
+| Case | Code | Risk |
+|---|---|---|
+| Held finger through join | rebase `18384–18389`, `16390–16399` | Low throw |
+| Fling one join | carry 0.7 `16439–16444` | Low |
+| Fling two short pages | until 160ms `16220` | Medium stall |
+| Chip drag | until **400ms** (not pan.on) | **Primary freeze** |
+| `noGlide` | only cleared `18375`, never set | Dead comment vs code |
+| Ink-only `aIdx<0` | `16248–16254` | Medium jump |
+| First page back | thin peek, `chipPeekReady(-1)` false | Stop (OK) |
+| Last page forward | `nextPeek` hidden | Stop (OK) |
+| Section boundary | extra `secjoin` height in peek | Medium; plus S3 |
+
+### S8 — `neighbourPage` uses `state.noteId` not mount
+
+AGENTS.md: scroll must follow `$("body").dataset.noteId`. `neighbourPage` uses `currentPageId()`/`state.noteId`. During the hundreds of ms they disagree, handover target can skip or repeat a page.
+
+**Fix:** `neighbourPage` must use `visualNoteId() || currentPageId()`.
+
+### S9 — What we explicitly checked and did **not** find as primary
+
+| Hypothesis | Result |
+|---|---|
+| Label-follows-finger is a bug | **Refuted** — required by `tests/chips.mjs`. Page must catch up. |
+| `pageHandover` blocked for all chipDrag | **Refuted** — only `chipLoading()` |
+| Chase rAF dies | **Refuted** |
+| Finger `rebasePan` zeros speed | **Refuted** in source (comment at `16386–16389` is stale about cancelling throw) |
+| Need `scrollToJoin` back | **Forbidden** and unnecessary if F1–F4 + S1–S4 are done |
+| `pageHeightOf` vs live ink | **By design** now (sheet + extra). Not the freeze. Cache-cold jump is a separate known item. |
+| Double `endChip` (element + document) | Chip handler runs first; document sees `chipDrag` null. OK. |
+| `hashchange` remount during replace `openPage` | `replaceState` does not fire hashchange. OK. |
+
+---
+
+## Updated Claude build plan (still small builds)
+
+**Build A — freeze/snap-back (do this first):**  
+F1 release lands on `want` + honor `force`; F3 `until` ignored while `chipDrag`; F4 retarget `pendingId`; S2 don’t let `chipLand` overwrite seam; S4 release uses finger prog.
+
+**Build B — neighbour geometry:**  
+F2 extend drive window; S1 clamp join slope; S3 sec-chip neighbours; S8 visualNoteId in `neighbourPage`; S5 chase-only seek.
+
+**Build C — finger leftovers** if still reported (S7 two-join / ink-only).
+
+Rewrite `tests/scrollfreeze-sim.mjs` after A so freezeFrames≈0 and maxAhead≤1 (keep the old-bug sentence). Keep `scrollstones.mjs` and flip each stone from “bug present” to “bug gone” as you fix it.
+
+*End of exhaustive Grok diagnosis.*
+
