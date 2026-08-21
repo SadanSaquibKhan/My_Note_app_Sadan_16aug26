@@ -2857,7 +2857,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b166";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b167";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -16475,6 +16475,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (typeof stopGlide === "function") stopGlide();
     handover.glide = null;
     handover.glideCarry = carry;
+    handover.fingerPanY = 0; handover.fingerPanX = 0;  /* finger travel banked while swapping */
     var keepAt = anchorTop - pr.top;      /* where that page's top sits now */
     var nbId = state.nbId, id = target.id;
 
@@ -16641,6 +16642,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
               id: visualNoteId() || pend.id, prog: chipDrag.prog,
               scroll: p.scrollTop, slope: js, dir: pend.dir
             };
+          }
+          /* the finger kept moving while the swap was in flight; add that banked
+             travel now, in ONE write, on top of the freshly anchored position —
+             per-frame writes during the swap would have fought this re-anchor
+             into a shiver, so fingerPanMove only banked it. */
+          if (handover.fingerPanY || handover.fingerPanX){
+            p.scrollTop  = Math.max(0, p.scrollTop  - (handover.fingerPanY || 0));
+            p.scrollLeft = Math.max(0, p.scrollLeft - (handover.fingerPanX || 0));
+            handover.fingerPanY = 0; handover.fingerPanX = 0;
           }
           rebasePan();
           padWatch.last = pad; padWatch.skip = false;
@@ -18593,15 +18603,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   function fingerPanMove(S, e){
     if (!pan.on || e.pointerId !== pan.id) return false;
-    /* while a page is remounting the stored pan.top describes a scroller
-       that is gone. Applying it is the 900px throw at the join. Hold the
-       finger still against wherever the page is now; the next move after
-       finishHandover rebases and carries on. */
+    /* While a page is remounting the stored pan.top describes a scroller that
+       is gone: applying it absolute is the 900px throw at the join. But the
+       finger is still moving and the page should still follow it — the old code
+       held the page dead still here, which on a slow (Windows, cold) mount is a
+       visible freeze under the finger, then a jump. Scrolling per-frame here is
+       no good either: finishHandover re-anchors the swap and a per-frame write
+       fights it into a shiver. So BANK the finger's travel and keep tracking
+       speed; finishHandover adds the banked travel in one write, AFTER it has
+       anchored, and the normal branch (rebased below) carries on from there. */
     if (typeof handover === "object" && handover && (handover.busy || handover.pending)){
+      var by = e.clientY - (pan.py == null ? e.clientY : pan.py);
+      var bx = e.clientX - (pan.px == null ? e.clientX : pan.px);
+      handover.fingerPanY = (handover.fingerPanY || 0) + by;
+      handover.fingerPanX = (handover.fingerPanX || 0) + bx;
+      trackVel(pan, e.clientX, e.clientY);   /* also updates pan.px/py */
       pan.top = S.scroller.scrollTop;
       pan.left = S.scroller.scrollLeft;
       pan.y = e.clientY; pan.x = e.clientX;
-      pan.py = e.clientY; pan.px = e.clientX;
       return true;
     }
     trackVel(pan, e.clientX, e.clientY);
@@ -18612,6 +18631,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function fingerPanUp(e){
     if (!pan.on || e.pointerId !== pan.id) return false;
     pan.on = false; pan.id = null;
+    /* Lifting mid-swap must NOT start a glide now: finishHandover is about to
+       re-anchor the page and a glide started here fights it for scrollTop — the
+       shiver/jump you see when you let go right at a join. Hand the throw to the
+       re-anchor via glideCarry; it starts a damped glide once the page is
+       settled (the same path a fling-into-a-swap already uses). */
+    if (typeof handover === "object" && handover && (handover.busy || handover.pending)){
+      handover.glideCarry = { S: pan.S, vx: pan.vx, vy: pan.vy };
+      return true;
+    }
     startGlide(pan.S, pan.vx, pan.vy);
     return true;
   }

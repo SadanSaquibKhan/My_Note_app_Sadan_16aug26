@@ -96,10 +96,22 @@ console.log("\nF. finger vs chip until durations");
 eq("the 400ms fling duration still exists, but a held chip is exempt from the gate",
    /pan && pan\.on\) \? 160 : 400/.test(html) &&
    /if \(!chipDrag && Date\.now\(\) < \(handover\.until \|\| 0\)\) return;/.test(html));
-eq("fingerPanMove freezes deltas while handover busy/pending",
+/* WAS (through b166): fingerPanMove held the page dead still while a handover was
+   busy/pending, to dodge the 900px absolute-pan throw. On a slow (Windows, cold)
+   mount that dead-still window is a visible freeze-then-jump under the finger.
+   NOW (b167): it BANKS the finger's travel (handover.fingerPanY/X) and keeps
+   tracking speed; finishHandover adds the banked travel in one write after it has
+   re-anchored (per-frame writes during the swap would fight the re-anchor). It
+   still rebases pan.top so the post-swap normal branch carries on seamlessly. */
+eq("fingerPanMove banks finger travel while handover busy/pending (no dead freeze)",
    html.indexOf("function fingerPanMove") >= 0 &&
    html.indexOf("handover.busy || handover.pending") >= 0 &&
+   /handover\.fingerPanY = \(handover\.fingerPanY \|\| 0\) \+ by/.test(html) &&
    /pan\.top = S\.scroller\.scrollTop/.test(html));
+eq("finishHandover applies the banked finger travel once, after the re-anchor",
+   /p\.scrollTop\s*=\s*Math\.max\(0, p\.scrollTop\s*-\s*\(handover\.fingerPanY \|\| 0\)\)/.test(html));
+eq("lifting mid-swap hands the throw to glideCarry, not a competing glide",
+   /if \(typeof handover === "object" && handover && \(handover\.busy \|\| handover\.pending\)\)\{\s*\n\s*handover\.glideCarry = \{ S: pan\.S, vx: pan\.vx, vy: pan\.vy \};\s*\n\s*return true;/.test(html));
 eq("startGlide still mentions cancelling throw via noGlide but finishHandover does not set it",
    /if \(typeof pan === "object" && pan && pan\.noGlide\) return;/.test(html) &&
    !/pan\.noGlide = true/.test(html));

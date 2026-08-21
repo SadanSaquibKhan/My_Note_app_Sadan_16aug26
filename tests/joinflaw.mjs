@@ -88,9 +88,14 @@ eq("15 no scrollToJoin / noLandUntil bounce path",
 
 console.log("");
 console.log("source locks — finger join:");
-eq("16 finger motion is frozen while the page remounts",
+/* WAS: finger motion was frozen dead while the page remounted (dodging the
+   absolute-pan throw) — a visible freeze-then-jump on a slow Windows mount.
+   NOW (b167): the travel is BANKED (fingerPanY/X) and applied once after the
+   re-anchor; pan.top is still rebased so the post-swap normal branch continues. */
+eq("16 finger motion is banked (not frozen) while the page remounts",
    has(/handover\.busy \|\| handover\.pending/) &&
-   /fingerPanMove[\s\S]{0,700}pan\.top = S\.scroller\.scrollTop/.test(html));
+   /fingerPanMove[\s\S]{0,1600}handover\.fingerPanY = \(handover\.fingerPanY \|\| 0\) \+ by/.test(html) &&
+   /fingerPanMove[\s\S]{0,1600}pan\.top = S\.scroller\.scrollTop/.test(html));
 eq("17 finishHandover rebases the pan before the next frame",
    /handover\.pending = null;[\s\S]{0,400}pan\.top = p\.scrollTop/.test(html));
 eq("18 rebase still does not kill leftover speed",
