@@ -34,7 +34,13 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b161**. Recent: b161 completes the update fix — install now fetches the
+- Current build: **b162**. Recent: b162 fixes the cross-page ink SHIFT + phantom line
+  reveal at a page join (Bug G, both platforms) — the preview-band ink canvas painted from
+  the CENTERED sheet's left while the live `#inkLayer` paints from `#paper`'s left, so peek
+  ink sat one centering-margin too far right and the sheet-wide peek canvas clipped the
+  rightmost strokes; `paintPeekInk`'s `fit()` now shifts the peek ink origin left by that
+  margin. Browser-verified (tests/peekink-browser.mjs): a stroke at page-x=400 renders at
+  the same screen-x (860) in peek and live, 0px diff. b161 completes the update fix — install now fetches the
   shell with `{cache:"reload"}` (an install right after a deploy could bake the OLD
   index.html into the NEW cache), and a new worker taking control auto-reloads once (real
   update only, one-shot guarded) so the fresh build shows without hunting for the notice.
@@ -294,7 +300,8 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
-- **b161** `PENDING` — completes the tablet-update fix (with b160). install now fetches the
+- **b162** `PENDING` — cross-page ink SHIFT + phantom line reveal at a join (Bug G, both platforms) is gone. The preview-band ink canvas (`.peekink` inside `.peekpage`, a centered max-width:794 sheet) painted page-x=0 at the SHEET left, while the live `#inkLayer` (full pane) paints page-x=0 at `#paper` left — so peek ink was one centering-margin too far right (the sideways jump at the join) and the sheet-wide canvas clipped the rightmost strokes (the "5th line reappears when it goes live"). `paintPeekInk` `fit()` now translates the peek ink origin left by that margin: offX = (peekpage.left - paper.left) * (clientWidth/rectWidth) (the ratio converts to the canvas pre-zoom units, so it holds at any zoom). Height parity was already correct. Browser-verified end-to-end (tests/peekink-browser.mjs): a page-x=400 stroke renders at screen-x 860 in BOTH peek and live (0px; would be 1033 unfixed). NOTE for other tools: a stale SW in the headless Chrome serves old builds — unregister SW + clear caches at test start. — *Claude Code (Opus 4.8)*
+- **b161** `2192b5b` — completes the tablet-update fix (with b160). install now fetches the
   shell via `new Request(u, {cache:"reload"})` so a worker installing right after a deploy
   cannot bake the OLD index.html into the NEW cache (GitHub Pages holds HTML ~10 min);
   index.html adds a one-shot `controllerchange` auto-reload (guarded by `hadController` +

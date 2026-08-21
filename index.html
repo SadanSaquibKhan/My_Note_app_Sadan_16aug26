@@ -2847,7 +2847,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b161";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b162";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -16168,7 +16168,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (!w || !h) return null;
       cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
       var ctx = cv.getContext("2d");
-      if (ctx){ ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h); }
+      if (ctx){
+        /* Give the preview band's ink the SAME horizontal origin as the LIVE
+           page. Page x=0 is the LEFT of #paper (the full-width scroller), and the
+           live #inkLayer spans the whole pane, so a stroke stored at page x lands
+           over the centered sheet. This peek canvas, though, lives INSIDE the
+           centered sheet (.peekpage is max-width:794px, margin:0 auto), so with no
+           shift every stroke was drawn one centering-margin too far RIGHT — that
+           is the sideways jump at the join, and because the sheet-wide canvas then
+           clipped the rightmost strokes, it is also the line that "reappears" when
+           the page becomes live. Shift the origin left by the sheet's offset from
+           #paper. The clientWidth / rect-width factor turns the on-screen gap into
+           the canvas's own pre-zoom units, so it holds at any zoom. */
+        var paper = $("paper");
+        var hr = host.getBoundingClientRect();
+        var offX = (paper && hr.width)
+          ? (hr.left - paper.getBoundingClientRect().left) * (w / hr.width) : 0;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, cv.width, cv.height);
+        ctx.setTransform(dpr, 0, 0, dpr, -offX * dpr, 0);
+      }
       return ctx;
     }
     fit();                                     /* something on screen at once */
