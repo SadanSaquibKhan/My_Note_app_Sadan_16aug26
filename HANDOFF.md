@@ -34,23 +34,47 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b153**. Recent: b153 removed the multi-page chip FREEZE — a held
-  chip is now exempt from the 400ms fling cooldown (`handover.until`), so it crosses
-  each join as soon as the previous swap's busy flag clears instead of stalling at
-  every second join (b152 had fixed the snap-back on release + far-page direct-seek);
-  b151 fixed silent handwriting loss (undo of an erase used to disappear again after
-  sync — an un-erase `restored` stamp now beats the erase, per stroke id, in the app
-  and sync-client.js mergeInk); b150 added an "Erase all handwriting" button.
-- **Active focus (2026-08-21): make scrolling flawless.** User report on b151 (both
-  tablets, both chips, both directions): dragging a chip scrolls a bit, then the
-  PAGES FREEZE while the chip keeps moving and its number keeps counting
-  (S2P10→S2P6); on release the chip number and position SNAP BACK to where scrolling
-  stopped (S2P10). Leading hypothesis: paintNavChips/placeChip follow the finger
-  target (chipDrag.want) every move, but the actual scroll is gated (swapping() /
-  chipLoading() / the pageHandover 400ms cooldown / peek-not-ready), so the label
-  runs ahead while the page is stuck, and endChip resolves back to the mounted
-  visualNoteId. A 3-tool bug-hunt (Claude Code + Codex + Grok) is underway;
-  findings collect in CODEX-SCROLL-FINDINGS.md / GROK-SCROLL-FINDINGS.md.
+- Current build: **b154**. Recent: b154 evens out chip-scroll SPEED — the join reveal
+  is widened (`evenReveal`) so the neighbour slides in at the page body's own speed
+  instead of racing several times faster (the user's "speed increases when the next
+  page appears"). Exactly matches the body rate for pages taller than the screen,
+  ~2.8× instead of ~7× for short floor pages (capped at half the band so the number
+  never leads more than half the next page). Speed-only change to b153's reveal WIDTH
+  — the mapping, peek and re-anchor are untouched, so it cannot bounce/hang like the
+  reverted uniform-mapping attempt did. b153 removed the multi-page chip FREEZE
+  (held chip exempt from the 400ms cooldown); b152 fixed release snap-back; b151
+  fixed silent handwriting loss on sync; b150 added "Erase all handwriting".
+- **Freeze/snap-back: FIXED (b152 + b153), user confirms "much better".** The
+  remaining scroll feedback (2026-08-21) is chip-drag SPEED is not uniform: within a
+  page the scroll is slow, then it speeds up when the neighbour comes into view.
+- **b154 (shipped) is the SAFE partial fix (widen the reveal).** The FULL uniform
+  mapping below is deeper future work — it does NOT fully even out pages that fit on
+  the screen (no body scroll to match), so if the user still reports non-uniformity
+  on short pages, that is the mapping rework, not the reveal.
+- **Full uniform-mapping was ATTEMPTED and REVERTED — do not just re-try it.**
+  Root of the non-uniformity is real and understood: the body maps the chip band to
+  `(pageSpan*zoom − viewport)` (`pageScrollFor`) while the join crams the leftover
+  screen + the 0.20-band reveal into a fifth of the track, so the join scrolls ~5×
+  faster than the body (worst on short/floor pages). The clean fix is a single
+  uniform map `scroll = pad + frac*full` everywhere (it is the exact inverse of
+  `listProgress`). I built it (pageScrollFor + driveChipScroll + chipPeekGeometry +
+  finishHandover carry + chipLand all uniform) and BROWSER-TESTED it against a live
+  headless Chrome + the chipseam fixture. Result: seam stayed 0px, BUT a **forward
+  section-chip drag bounced backward first** (s2p2→s2p1→s2p2→s2p3) and could hang —
+  the uniform (faster) over-scroll plus firing the handover on bare `frac<0` /
+  `frac>1−over` (no deadzone) fires spurious swaps when the chip rests near a band
+  edge, where b153's `prog < band.lo − reveal` margin did not. Lesson: the chip
+  position↔scroll map, the handover FIRING (needs a deadzone), and the measured
+  `finishHandover` re-anchor are ONE coupled system; changing the map alone regresses
+  section page-turns. A correct uniform-speed build must also add a firing deadzone
+  and reconcile the re-anchor, and must be re-verified in-browser on **sec forward +
+  back** and **book forward + back** (pageChanges must equal 1 on a single crossing).
+  Browser harness for this lives at `tests/chiprate-browser.mjs` (needs a headless
+  Chrome on :9222 + a server on the working dir; drives a real chip drag and logs the
+  per-step mounted/label/scroll sequence). NOTE: the chipseam `--assert` reports
+  pageChanges=2 on a whole-notebook book chip for BOTH b153 and b154 — that is a
+  harness artifact (fixed drag distance overshoots on the last page), not a build
+  regression; judge by sec-chip single crossings.
 - **Waiting on you:** close and reopen; confirm **b148** in Settings. Put
   a picture on the computer, tap Sync, then Sync on the tablet — the
   picture should appear, not “This picture is missing.” Put a picture on
@@ -222,7 +246,19 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
-- **b153** `PENDING` — the multi-page chip FREEZE is gone (Grok F3 / Codex "S1 400ms
+- **b154** `PENDING` — chip-scroll SPEED is more even. User feedback on b153: dragging a
+  chip, the scroll is slow inside a page then speeds up when the neighbour appears.
+  Cause: the body maps the band to `(pageSpan*zoom − viewport)` while the join crammed
+  the leftover screen + a fifth-of-the-band reveal into a tiny slice, so the join ran
+  ~5–7× faster than the body (worst on short pages). Fix widens the reveal to
+  `evenReveal = 0.70*view*bw/(full−view)` (capped at 0.5·bw, floored at the old 0.20),
+  so the neighbour slides in at the body's own speed. Speed-only tweak to b153's reveal
+  WIDTH — mapping/peek/re-anchor untouched, so no bounce/hang. VERIFIED in headless
+  Chrome (tests/chiprate-browser.mjs + chipseam-browser): seam 0px, sec fwd/back +
+  book fwd cross cleanly (pageChanges=1), steady body+join rate ~uniform. The FULL
+  uniform-mapping rework (needed for pages that fit on the screen) is deferred, see
+  Part 1. — *Claude Code (Opus 4.8)*
+- **b153** `eedcef0` — the multi-page chip FREEZE is gone (Grok F3 / Codex "S1 400ms
   stall"). A held chip is not `pan.on`, so it wrongly inherited the full 400ms fling
   anti-bounce cooldown (`handover.until`) and stalled at every second join while its
   number ran on ahead; b152's far-seek then jumped to catch up. Fix is one gate in

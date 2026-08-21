@@ -2831,7 +2831,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b153";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b154";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -15629,7 +15629,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        between the two pages are actually ON SCREEN long enough to see as you
        drag through, instead of flashing past in a single frame. The
        scroll-driven handover swaps the page partway through this slice. */
-    var reveal = Math.max(pageStick(band.lo, band.hi), (band.hi - band.lo) * 0.20);
+    /* Widen the join reveal so the neighbour slides in at close to the page
+       body's OWN speed instead of racing several times faster (the user's
+       "scroll speeds up when the next page appears"). The join has to move about
+       one screen of scroll (0.70 of the viewport, as the measured peek does) to
+       cross; give it enough chip-travel that (that scroll)/(its travel) matches
+       the body's (page − a screen)/(the band). Capped at half the band so the
+       number never runs more than half the next page ahead, floored at the old
+       fifth-of-the-band. Speed-only: the mapping, the peek and the re-anchor are
+       the proven b153 ones, so this cannot bounce or hang the section chip. */
+    var vFull = pageSpan(vis) * pageZoom(), vView = p.clientHeight;
+    var evenReveal = 0.70 * vView * (band.hi - band.lo) / Math.max(1, vFull - vView);
+    var reveal = Math.max(pageStick(band.lo, band.hi),
+                          (band.hi - band.lo) * 0.20,
+                          Math.min((band.hi - band.lo) * 0.5, evenReveal));
     if (prog > band.hi && prog <= band.hi + reveal){
       var fg = driveChipPeek(vis, 1, (prog - band.hi) / reveal);
       if (chipDrag && fg){

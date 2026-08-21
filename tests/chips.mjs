@@ -30,8 +30,15 @@ eq("inside the page you are on it is a plain scroll, every move",
 /* The mounted page follows the chip directly. An immediate neighbour is
    revealed with measured preview geometry and handed over in the same turn;
    only a genuinely farther target takes the direct one-load path. */
-eq("the neighbour reveal is a fifth of the mounted page's track share",
-   has(/var reveal = Math\.max\(pageStick\(band\.lo, band\.hi\), \(band\.hi - band\.lo\) \* 0\.20\);/));
+/* b154: the join reveal is widened so the neighbour slides in at the page body's
+   OWN speed instead of racing several times faster. evenReveal spreads the ~0.70
+   viewport of join scroll over enough chip-travel to match the body rate; capped
+   at half the band, floored at the old fifth. This is the user's "speed is not
+   uniform — it increases when the next page appears" feedback. */
+eq("the join reveal is widened to the page body's speed (evenReveal), capped at half the band",
+   has(/var evenReveal = 0\.70 \* vView \* \(band\.hi - band\.lo\) \/ Math\.max\(1, vFull - vView\);/) &&
+   has(/Math\.min\(\(band\.hi - band\.lo\) \* 0\.5, evenReveal\)/) &&
+   has(/\(band\.hi - band\.lo\) \* 0\.20,/));
 eq("both neighbour directions claim a ready handover synchronously",
    has(/if \(chipPeekReady\(1\) && typeof pageHandover === "function"\) pageHandover\(\);/) &&
    has(/if \(chipPeekReady\(-1\) && typeof pageHandover === "function"\) pageHandover\(\);/));
