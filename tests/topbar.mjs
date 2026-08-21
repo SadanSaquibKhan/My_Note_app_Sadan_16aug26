@@ -19,5 +19,19 @@ eq("the header clips residual overflow so there is no page-wide grey strip",
 eq("Settings and Data still live in the header action row",
    has(/id="setBtn"/) && has(/id="dataBtn"/) && has(/<div class="topright">/));
 
+/* Bug A: the mode chip (AUTO/PEN/WRITE/TYPE) and save word (ready/unsaved/saved)
+   change TEXT while you write; if they change WIDTH the .topright wrap point
+   moves, a button jumps rows, the header height changes and the writing shifts
+   up when the pen touches. Fixed widths keep the header a constant height.
+   Browser-verified at 900px: .top height is 101px for every mode/save text. */
+eq("the mode chip and save word have fixed widths (header height cannot change on pen-down)",
+   has(/#modeChip\{box-sizing:border-box; min-width:52px; text-align:center\}/) &&
+   has(/#saveWord\{display:inline-block; min-width:66px\}/));
+/* Bug C: the "Panels folded" notice fired on every pen-arrival even when the
+   panels were already folded. Now guarded by the pre-fold state. */
+eq("the 'Panels folded' notice only shows when the panels were actually open",
+   has(/var wasFolded = \(typeof panelsHidden === "function"\) \? panelsHidden\(\) : false;/) &&
+   has(/if \(allFree && !wasFolded\) hint\("Panels folded\./));
+
 process.exitCode = bad ? 1 : 0;
 console.log(bad ? "\n" + bad + " failed" : "\nall top-bar checks passed");
