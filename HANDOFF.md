@@ -34,12 +34,21 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b149**. The top-bar **Full** button now has a lock:
-  long-press it (~400ms) to lock — it highlights — and then, only while
-  locked, starting to write or type fills the Chrome tab (real full screen).
-  Short tap still toggles full screen; it reads "Exit" to come back; a second
-  long-press unlocks. **b148 pictures still need your test** (see below):
-  put a picture on the laptop, Sync, then Sync on the tablet.
+- Current build: **b151**. Recent: b151 fixed silent handwriting loss (undo of an
+  erase used to disappear again after sync — now an un-erase `restored` stamp beats
+  the erase, per stroke id, in the app and sync-client.js mergeInk); b150 added an
+  "Erase all handwriting" button to the eraser options; b149 gave the Full button a
+  long-press lock (locked → writing fills the Chrome tab; "Exit" comes back).
+- **Active focus (2026-08-21): make scrolling flawless.** User report on b151 (both
+  tablets, both chips, both directions): dragging a chip scrolls a bit, then the
+  PAGES FREEZE while the chip keeps moving and its number keeps counting
+  (S2P10→S2P6); on release the chip number and position SNAP BACK to where scrolling
+  stopped (S2P10). Leading hypothesis: paintNavChips/placeChip follow the finger
+  target (chipDrag.want) every move, but the actual scroll is gated (swapping() /
+  chipLoading() / the pageHandover 400ms cooldown / peek-not-ready), so the label
+  runs ahead while the page is stuck, and endChip resolves back to the mounted
+  visualNoteId. A 3-tool bug-hunt (Claude Code + Codex + Grok) is underway;
+  findings collect in CODEX-SCROLL-FINDINGS.md / GROK-SCROLL-FINDINGS.md.
 - **Waiting on you:** close and reopen; confirm **b148** in Settings. Put
   a picture on the computer, tap Sync, then Sync on the tablet — the
   picture should appear, not “This picture is missing.” Put a picture on
@@ -103,7 +112,7 @@ saying something is fixed — because every round-trip to you is slow.
   **notebook → sections → pages**. Notes never touch the repo.
 - Local folder on the PC:
   `…\files_v12ofhtml_16aug26_7pm\margin-pwa_2026-08-16_v7\margin-pwa_2026-08-16_v7`
-- Current build: **b148** — always confirm with `var BUILD` in `index.html`
+- Current build: **b151** — always confirm with `var BUILD` in `index.html`
   and `git log`; do not trust a number once time has passed.
 
 ### How to verify without the tablet (the core discipline)
