@@ -2857,7 +2857,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b165";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b166";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -15926,7 +15926,25 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var gap = (vgi >= 0 && wgi >= 0) ? Math.abs(wgi - vgi) : 99;
       if (force || gap >= 2){
         if (vis && wp.note.id === vis){ landOnPage(wp.frac, vis); return; }
-        if (!force && chipDrag.pendingId === wp.note.id) return;   /* already coming */
+        /* SINGLE-FLIGHT — only one page load may be in the air. This block used
+           to restart openPage() for whatever page the finger pointed at, gated
+           only against the SAME target; a moving finger changes the target every
+           frame, so it overwrote pendingId and started a fresh render each time,
+           and renderSeq cancels the previous one before it can mount. The page
+           therefore never caught up while the number ran on — the freeze -> jump
+           -> freeze staircase, worst on Windows where a mouse gives one move per
+           frame and an occluded/second-screen window throttles the frame rate, so
+           the finger skips several pages between seeks. Now: if a load is already
+           in flight, wait for it; the chase loop retries and, once it mounts,
+           heads straight for the LATEST target, skipping the pages already
+           passed. On release we may supersede a stale in-flight load ONCE so we
+           still land on the page the finger let go over. */
+        if (chipLoading()){
+          if (chipDrag.pendingId === wp.note.id) return;   /* the page we want is already coming */
+          if (!force) return;                               /* mid-drag: do not stack a second load */
+          /* release only: a different page is loading but the FINAL target
+             differs — supersede it once, below, so release lands correctly. */
+        }
         handover.queued = null;
         chipDrag.pendingId = wp.note.id;
         chipDrag.lastSeek = Date.now();
