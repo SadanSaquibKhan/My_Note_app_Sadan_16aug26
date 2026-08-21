@@ -34,7 +34,7 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b164**. Recent: b164 keeps the three left-edge arrows (the way back to the
+- Current build: **b165**. Recent: b165 cuts the Windows pen-down delay (Bug B) — when the panels are already folded (the usual case), the nib-down no longer re-runs the heavy setFocus+applyPanes+favourites-rebuild for nothing (that synchronous work blocked the first paint of the ink and the AUTO→PEN switch); a genuine fold still runs synchronously so a stroke stays on one page width. Also guards the keep-full-screen double request. Cross-checked with Codex (CODEX-B159-FINDINGS.md). Next: D chip single-flight, E finger scroll. NOTE: tests/eraser.mjs "busy cleared on every path" fails at b164 too (pre-existing — finishHandover has no try/finally; Codex D also flags it).
   panels) visible in Immerse (Bug F) — paintEdge hid them in immerse, the one place they are
   needed; now shown whenever a note is open (browser-verified). b163 fixed writing shifting up
   on pen-touch (Bug A — the mode chip AUTO→PEN moved the toolbar wrap and dropped a row; fixed
@@ -306,7 +306,8 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
-- **b164** `PENDING` — the three left-edge arrows (`#edgeStack`: edgeList/edgeSec/edgeRail,
+- **b165** `PENDING` — Windows pen-down delay (Bug B). No hover pre-roll on Windows means the contact `pointerdown` was the first pen event, and it ran the panel fold (`setFocus`+`applyPanes`+`buildFavBar`) synchronously before the first paint — trapping the ink and the AUTO→PEN switch behind it. Once folded (the common case; a pen leaving does not unfold), that is no-op churn: now the whole fold block is skipped when `panelsHidden()` (guarded so pinned panes still work). A GENUINE fold stays synchronous (Codex: never fold mid-stroke — it changes #paper width and would jump the stroke coordinates). Plus a `fullReqPending` single-flight guard on `enterFull()` so the b159 keep-full listener + `maybeAutoFull` do not both fire requestFullscreen on one nib-down. Cross-checked Claude-workflow + Codex (both high/med-high). tests/penfold.mjs pins it. Verify latency on the tablet (headless cannot time pen hover). — *Claude Code (Opus 4.8)*
+- **b164** `76da69a` — the three left-edge arrows (`#edgeStack`: edgeList/edgeSec/edgeRail,
   the handle that expands a folded rail) stay visible in Immerse (Bug F, both platforms).
   `paintEdge()` hid them with `stack.hidden = !(state.note && immerse !== "1")`, so entering
   Immerse — the one place every bar is gone and these arrows are the only way back — removed

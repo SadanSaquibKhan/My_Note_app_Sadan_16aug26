@@ -2857,7 +2857,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b164";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b165";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -6938,11 +6938,21 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   if ($("topTabsBtn")) $("topTabsBtn").addEventListener("click", function(){
     setChromeTabs(!cfg.chromeTabs);
   });
+  var fullReqPending = false;
   function enterFull(){
     var root = document.documentElement;
-    if (document.fullscreenElement || document.webkitFullscreenElement) return;
+    /* One request at a time. Keep-full-screen mode asks from two places on the
+       same nib-down (the document pointerdown that restores full screen, and
+       maybeAutoFull after the stroke starts); without this guard both fire a
+       requestFullscreen, and the async viewport resize can land in the middle of
+       a pen stroke or a scroll and disturb it. */
+    if (document.fullscreenElement || document.webkitFullscreenElement || fullReqPending) return;
     var req = root.requestFullscreen || root.webkitRequestFullscreen;
-    if (req) req.call(root).catch(function(){});
+    if (req){
+      fullReqPending = true;
+      req.call(root).then(function(){ fullReqPending = false; },
+                          function(){ fullReqPending = false; });
+    }
     else hint("This browser will not full-screen the page. Use the browser's own full-screen.");
   }
   function exitFull(){
@@ -8223,19 +8233,27 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
            A live catch is measured in page space against the paper's width,
            so folding the lists here would shift every hit-test and make the
            box you can see miss the box you can grab. */
-        /* Were the panels ALREADY folded before this pen-down? A hovering pen
-           re-fires penDetected each time it leaves and returns to the same page,
-           so without this the "Panels folded" notice popped up again and again
-           even though nothing had changed. Announce only a fold that actually
-           happened — the typing path guards the same way. */
+        /* If the panels are ALREADY folded — the usual case once you have
+           started writing, since a pen leaving does not unfold them — do NOTHING
+           here. A hovering pen re-fires penDetected every time it leaves and
+           returns to the same page, and re-running setFocus + applyPanes + the
+           favourites rebuild on EVERY nib-down is heavy synchronous layout work
+           that blocked the first paint: that was the delay on Windows before the
+           ink and the AUTO->PEN switch showed (Android hovers first, so it ran
+           ahead of contact), and it re-popped the "Panels folded" notice too. A
+           genuine fold (panels visible) still runs synchronously so the stroke's
+           coordinates are captured against one stable page width — never fold
+           halfway through a stroke. */
         var wasFolded = (typeof panelsHidden === "function") ? panelsHidden() : false;
-        if (!cfg.lockRail) cfg.railMin = true;
-        if (!cfg.lockSec)  cfg.secMin  = true;
-        if (!cfg.lockList) cfg.listMin = true;
-        var allFree = !cfg.lockRail && !cfg.lockSec && !cfg.lockList;
-        setFocus(allFree);
-        applyPanes();
-        if (allFree && !wasFolded) hint("Panels folded. The three arrows on the left bring them back. Hold an arrow to keep one open.");
+        if (!wasFolded){
+          if (!cfg.lockRail) cfg.railMin = true;
+          if (!cfg.lockSec)  cfg.secMin  = true;
+          if (!cfg.lockList) cfg.listMin = true;
+          var allFree = !cfg.lockRail && !cfg.lockSec && !cfg.lockList;
+          setFocus(allFree);
+          applyPanes();
+          if (allFree) hint("Panels folded. The three arrows on the left bring them back. Hold an arrow to keep one open.");
+        }
       }
     }
   }
