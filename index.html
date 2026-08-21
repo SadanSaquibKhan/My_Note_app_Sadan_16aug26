@@ -2857,7 +2857,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b163";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b164";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -17021,7 +17021,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var off = panelsHidden();
     $("edgeTab").hidden = true;
     var stack = $("edgeStack");
-    if (stack) stack.hidden = !(state.note && document.body.dataset.immerse !== "1");
+    /* The three left-edge arrows are the WAY BACK when the panels are folded
+       away — including in Immerse, where every bar is hidden. They used to be
+       hidden in Immerse too (`&& immerse !== "1"`), which removed the only handle
+       out exactly when it was needed. Show them whenever a note is open, the same
+       as Focus mode already does; Immerse still hides the bars and panes via CSS. */
+    if (stack) stack.hidden = !state.note;
     if ($("edgeList")){
       $("edgeList").classList.toggle("on", cfg.listMin !== true && !off);
       $("edgeList").classList.toggle("pinned", !!cfg.lockList);

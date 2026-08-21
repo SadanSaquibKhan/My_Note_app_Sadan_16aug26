@@ -34,7 +34,13 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b163**. Recent: b163 fixes Bug A (writing shifts up when the pen touches on Windows — the mode chip changing AUTO->PEN moved the toolbar wrap and dropped a row; fixed by pinning #modeChip and #saveWord widths, header now constant height) and Bug C (false "Panels folded" notice on every pen-touch — now guarded by whether the panels were actually open). Browser-verified header height constant at 101px.
+- Current build: **b164**. Recent: b164 keeps the three left-edge arrows (the way back to the
+  panels) visible in Immerse (Bug F) — paintEdge hid them in immerse, the one place they are
+  needed; now shown whenever a note is open (browser-verified). b163 fixed writing shifting up
+  on pen-touch (Bug A — the mode chip AUTO→PEN moved the toolbar wrap and dropped a row; fixed
+  by pinning #modeChip/#saveWord widths, header constant height) and the false "Panels folded"
+  notice (Bug C). Still holding the two fragile ones (B pen-down latency, D/E/H Windows scroll)
+  to cross-check against Codex before touching the pen/scroll machinery.
   reveal at a page join (Bug G, both platforms) — the preview-band ink canvas painted from
   the CENTERED sheet's left while the live `#inkLayer` paints from `#paper`'s left, so peek
   ink sat one centering-margin too far right and the sheet-wide peek canvas clipped the
@@ -300,7 +306,14 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
-- **b163** `PENDING` — writing no longer jumps up when the pen touches (Bug A, Windows) and the "Panels folded" notice stops crying wolf (Bug C, both). A: `#modeChip` (`.chip`, no fixed width) changed "AUTO"(4ch)->"PEN"(3ch) on pen-approach, narrowing `.topright` ~7px, moving the flex-wrap break so on a narrow window "Data" dropped from row 2 to row 1, `.top` lost a row and the writing shifted up (Android buttons are narrower so row 2 just went 3->2 items, row count unchanged -> no shift). Fix (CSS only): `#modeChip{min-width:52px;text-align:center;box-sizing:border-box}` + `#saveWord{min-width:66px}` so both keep constant width whatever the pen/save state -> constant header height/row-count. Browser-verified at 900px: `.top` height = 101px for AUTO/PEN/WRITE/TYPE and ready/unsaved/saved. C: penDetected re-fires on every hover-return, so `hint("Panels folded")` popped even when already folded; now captured `wasFolded = panelsHidden()` before the fold and gated `if (allFree && !wasFolded)`. tests/topbar.mjs pins both. — *Claude Code (Opus 4.8)*
+- **b164** `PENDING` — the three left-edge arrows (`#edgeStack`: edgeList/edgeSec/edgeRail,
+  the handle that expands a folded rail) stay visible in Immerse (Bug F, both platforms).
+  `paintEdge()` hid them with `stack.hidden = !(state.note && immerse !== "1")`, so entering
+  Immerse — the one place every bar is gone and these arrows are the only way back — removed
+  them. Now `stack.hidden = !state.note`, matching Focus mode; Immerse still hides bars/panes
+  via untouched CSS. Browser-verified: note open + immerse on → edgeStack.hidden===false, all
+  three arrows present. tests/edgearrows.mjs pins it. — *Claude Code (Opus 4.8)*
+- **b163** `b77b939` — writing no longer jumps up when the pen touches (Bug A, Windows) and the "Panels folded" notice stops crying wolf (Bug C, both). A: `#modeChip` (`.chip`, no fixed width) changed "AUTO"(4ch)->"PEN"(3ch) on pen-approach, narrowing `.topright` ~7px, moving the flex-wrap break so on a narrow window "Data" dropped from row 2 to row 1, `.top` lost a row and the writing shifted up (Android buttons are narrower so row 2 just went 3->2 items, row count unchanged -> no shift). Fix (CSS only): `#modeChip{min-width:52px;text-align:center;box-sizing:border-box}` + `#saveWord{min-width:66px}` so both keep constant width whatever the pen/save state -> constant header height/row-count. Browser-verified at 900px: `.top` height = 101px for AUTO/PEN/WRITE/TYPE and ready/unsaved/saved. C: penDetected re-fires on every hover-return, so `hint("Panels folded")` popped even when already folded; now captured `wasFolded = panelsHidden()` before the fold and gated `if (allFree && !wasFolded)`. tests/topbar.mjs pins both. — *Claude Code (Opus 4.8)*
 - **b162** `073cb74` — cross-page ink SHIFT + phantom line reveal at a join (Bug G, both platforms) is gone. The preview-band ink canvas (`.peekink` inside `.peekpage`, a centered max-width:794 sheet) painted page-x=0 at the SHEET left, while the live `#inkLayer` (full pane) paints page-x=0 at `#paper` left — so peek ink was one centering-margin too far right (the sideways jump at the join) and the sheet-wide canvas clipped the rightmost strokes (the "5th line reappears when it goes live"). `paintPeekInk` `fit()` now translates the peek ink origin left by that margin: offX = (peekpage.left - paper.left) * (clientWidth/rectWidth) (the ratio converts to the canvas pre-zoom units, so it holds at any zoom). Height parity was already correct. Browser-verified end-to-end (tests/peekink-browser.mjs): a page-x=400 stroke renders at screen-x 860 in BOTH peek and live (0px; would be 1033 unfixed). NOTE for other tools: a stale SW in the headless Chrome serves old builds — unregister SW + clear caches at test start. — *Claude Code (Opus 4.8)*
 - **b161** `2192b5b` — completes the tablet-update fix (with b160). install now fetches the
   shell via `new Request(u, {cache:"reload"})` so a worker installing right after a deploy
