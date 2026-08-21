@@ -2831,7 +2831,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b154";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b155";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -10594,9 +10594,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     function endDot(){
       if (!drag) return;
       clearHold();
-      var r = el.getBoundingClientRect();
-      var p = { x: Math.round(r.left), y: Math.round(r.top) };
+      var wasOpen = opened;
       drag = null;
+      /* A hold-to-open already fired: onTap has hidden the dot and shown the bar.
+         Reading the now-hidden dot's rect here returns 0,0, and saving THAT as the
+         position snapped the bar to the top-left corner the instant you let go
+         (and setPos even moves the just-shown bar straight there). Opening is not
+         a move, so do not record a position for it. */
+      if (wasOpen) return;
+      var r = el.getBoundingClientRect();
+      if (!r.width && !r.height) return;   /* hidden / detached: never save 0,0 */
+      var p = { x: Math.round(r.left), y: Math.round(r.top) };
       setPos(p);
     }
     el.addEventListener("pointerup", endDot);

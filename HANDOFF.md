@@ -34,7 +34,11 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b154**. Recent: b154 evens out chip-scroll SPEED — the join reveal
+- Current build: **b155**. Recent: b155 fixed the two floating bars (favourites +
+  shortcuts) snapping to the TOP-LEFT corner when you minimise then re-open them —
+  the hold-to-open hid the dot, and the pointerup then read the hidden dot's 0,0 rect
+  and saved that as the position; `endDot` now ignores an open (and any 0,0 rect).
+  b154 evens out chip-scroll SPEED — the join reveal
   is widened (`evenReveal`) so the neighbour slides in at the page body's own speed
   instead of racing several times faster (the user's "speed increases when the next
   page appears"). Exactly matches the body rate for pages taller than the screen,
@@ -246,7 +250,17 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
-- **b154** `PENDING` — chip-scroll SPEED is more even. User feedback on b153: dragging a
+- **b155** `PENDING` — the two floating bars (favourites `#favDot`, shortcuts `#jumpDot`)
+  no longer jump to the top-left corner when you minimise then re-open them. Root: the
+  dot opens on a ~400ms hold (`onTap` → `favMin=false` → `buildFavBar` HIDES the dot,
+  shows the bar); the `pointerup` that followed ran `endDot`, which read the now-hidden
+  dot's `getBoundingClientRect()` (0,0 for a hidden element) and saved it as the bar's
+  position — and `setPos` even moved the just-shown bar straight to 0,0. Fix: `endDot`
+  records a position only for a real drag — skips a hold-to-open (`wasOpen`) and any
+  0,0/hidden rect. One fix covers both bars (shared `bindDotDrag`). Browser-verified
+  (tests/bardot-browser.mjs: minimise → hold-open → bar returns to 240,360, not 0,0)
+  + tests/bardot.mjs. — *Claude Code (Opus 4.8)*
+- **b154** `6ec559d` — chip-scroll SPEED is more even. User feedback on b153: dragging a
   chip, the scroll is slow inside a page then speeds up when the neighbour appears.
   Cause: the body maps the band to `(pageSpan*zoom − viewport)` while the join crammed
   the leftover screen + a fifth-of-the-band reveal into a tiny slice, so the join ran
