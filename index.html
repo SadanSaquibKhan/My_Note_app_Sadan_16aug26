@@ -2831,7 +2831,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b151";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b152";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -15740,6 +15740,38 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!chipDrag || chipDrag.prog == null) return;
     var vis = visualNoteId();
     var list = chipDrag.list;
+    /* RELEASE, or a target more than one page from the page on screen.
+       Two bugs lived here. First, `force` (set on release by endChip) was never
+       actually read, so letting go fell through the gates below and did nothing —
+       the page stayed on whatever was mounted mid-drag and paintNavChips then
+       repainted the chip back onto it: the snap-back. Second, crossing more than
+       one page relied on the neighbour peek + handover cascade, and that cascade
+       cannot keep pace with a drag — each crossing waits on a swap settle and a
+       ~400ms cooldown, so the page froze on the first neighbour while the chip's
+       number ran ahead. Both are the same fix: when releasing, or when the chip
+       points more than one page away, seek STRAIGHT to that page, past the
+       cooldown/busy gate. renderSeq still guarantees only the newest load lands,
+       and pageHandover stands down for a chip load, so nothing argues. The
+       near-neighbour path below is untouched, so the grey join still shows on an
+       ordinary one-page drag. */
+    var wp = chipDrag.want;
+    if (wp && wp.note){
+      var vgi = listIndexOf(list, vis);
+      var wgi = listIndexOf(list, wp.note.id);
+      var gap = (vgi >= 0 && wgi >= 0) ? Math.abs(wgi - vgi) : 99;
+      if (force || gap >= 2){
+        if (vis && wp.note.id === vis){ landOnPage(wp.frac, vis); return; }
+        if (!force && chipDrag.pendingId === wp.note.id) return;   /* already coming */
+        handover.queued = null;
+        chipDrag.pendingId = wp.note.id;
+        chipDrag.lastSeek = Date.now();
+        chipDrag.join = null;
+        chipLand = { id: wp.note.id, frac: wp.frac };
+        if (typeof openPage === "function") openPage(wp.note, true);
+        else go({ nbId: state.nbId, noteId: wp.note.id }, true);
+        return;
+      }
+    }
     /* A swap is mid-flight: let finishHandover settle it before touching the
        scroll again, or the two fight and it shivers. */
     if (typeof swapping === "function" && swapping()) return;
