@@ -34,7 +34,14 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b157**. Recent: b157 fixed a CROP of an attached picture not
+- Current build: **b158**. Recent: b158 stops Settings scroll-mistouch — dragging to
+  scroll the settings list no longer flips a checkbox/dropdown it started on
+  (`touch-action:pan-y` on the whole `.dlg-body` + a capture-phase guard in
+  `wireSettings` that swallows a click when the finger moved > a tap's slop), and the
+  controls got bigger padded tap targets. NOTE: this is the scroll-mistouch half of the
+  Settings ask; a fuller visual REDESIGN was deliberately not attempted in one
+  unverifiable build — offer it as a dedicated pass with the user's direction.
+  b157 fixed a CROP of an attached picture not
   reaching other devices (the uncropped one did). Root: cropping to fewer chunks left
   the old higher-index `imgdata` rows orphaned on the server; the 120s pull look-back
   re-fetched them next to the new chunk and `joinImageData` refused to glue (three
@@ -263,7 +270,16 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
-- **b157** `PENDING` — cropping an attached picture now reaches other devices (before, the
+- **b158** `PENDING` — Settings no longer mistouches while you scroll. Dragging to scroll
+  the list used to flip a checkbox/dropdown the finger started on. Fix: `touch-action:pan-y`
+  on the whole `.dlg-body` (a vertical drag scrolls, never toggles) + a capture-phase guard
+  in `wireSettings` that swallows the click if the finger moved > 10px between press and
+  release (a still tap still toggles). Controls also got bigger padded tap targets
+  (`.settings .check` padding + `:active` feedback). Browser-verified
+  (tests/setscroll-browser.mjs): drag-on-checkbox does not toggle, tap does. Only the
+  scroll-mistouch half of the Settings ask is done; a full visual redesign is deferred to
+  a dedicated pass (too big/subjective to ship blind). — *Claude Code (Opus 4.8)*
+- **b157** `3a6eb01` — cropping an attached picture now reaches other devices (before, the
   uncropped one synced but the crop did not). A picture travels as `imgdata` chunks
   keyed `assetId:i`; cropping to FEWER chunks overwrote `assetId:0` but left the old
   higher-index chunks orphaned on the server, and the 120s pull look-back re-fetched

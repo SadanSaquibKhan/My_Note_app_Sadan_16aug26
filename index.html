@@ -650,7 +650,11 @@
   body.simpleSet #setDlg [data-adv]{display:none !important}
   #setViewSeg{margin-bottom:10px}
   #simpleBarBtn[aria-pressed="true"]{background:var(--ink); color:var(--panel); border-color:var(--ink)}
-  .settings .check{display:flex; align-items:center; gap:8px; margin:7px 0; font-size:13.5px; color:var(--ink)}
+  /* Bigger padded tap targets with a little breathing room, so a control is easy
+     to hit deliberately and there is room to rest a finger to scroll. */
+  .settings .check{display:flex; align-items:center; gap:10px; margin:1px 0; padding:8px 8px;
+                   border-radius:6px; font-size:13.5px; color:var(--ink)}
+  .settings .check:active{background:var(--field)}
   .settings input[type=range]{width:100%; accent-color:var(--live); margin:6px 0}
   .settings select{
     width:100%; padding:10px; min-height:42px; font-family:inherit; font-size:14px;
@@ -1589,7 +1593,8 @@
     background:transparent; border:1px solid var(--rule); border-radius:3px; color:inherit;
   }
   .dlgx:hover{border-color:var(--ink-2)}
-  .dlg-body{padding:18px; overflow-y:auto; flex:1 1 auto; min-height:0; overscroll-behavior:contain}
+  .dlg-body{padding:18px; overflow-y:auto; flex:1 1 auto; min-height:0; overscroll-behavior:contain;
+            touch-action:pan-y}   /* a vertical drag anywhere scrolls; it must never toggle a control */
 
   /* collapsible settings groups */
   .setgroup{border:1px solid var(--rule); border-radius:5px; margin-bottom:10px; background:var(--panel)}
@@ -2839,7 +2844,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b157";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b158";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9772,6 +9777,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if ($("featDlg") && $("featDlg").showModal) $("featDlg").showModal();
   }
   function wireSettings(){
+    /* A drag to SCROLL the settings list must never flip a control it started on.
+       touch-action:pan-y already lets a vertical drag scroll, but as a belt-and-
+       braces guard on every device: if the finger travelled more than a tap's slop
+       between press and release, swallow the click so no checkbox or dropdown
+       toggles. A still tap (moved === false) toggles as normal. */
+    (function guardSettingsScroll(){
+      var dlg = $("setDlg");
+      if (!dlg) return;
+      var x0 = null, y0 = null, moved = false;
+      dlg.addEventListener("pointerdown", function(e){ x0 = e.clientX; y0 = e.clientY; moved = false; }, true);
+      dlg.addEventListener("pointermove", function(e){
+        if (x0 != null && (Math.abs(e.clientX - x0) > 10 || Math.abs(e.clientY - y0) > 10)) moved = true;
+      }, true);
+      dlg.addEventListener("click", function(e){
+        if (moved){ e.preventDefault(); e.stopPropagation(); }
+        moved = false; x0 = y0 = null;
+      }, true);
+    })();
     function bindCheck(id, key){
       $(id).addEventListener("change", function(){ cfg[key] = this.checked; saveCfg(); });
     }
