@@ -2847,7 +2847,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b159";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b160";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -14786,6 +14786,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   if ("serviceWorker" in navigator && navigator.serviceWorker.getRegistration){
     navigator.serviceWorker.getRegistration().then(function(reg){
       if (!reg) return;
+      /* An installed PWA checks for a new service worker only rarely on its own,
+         which is why the tablet stayed on an old build while a laptop TAB (which
+         re-checks on every reload) updated. Force a check now, and again each time
+         the app comes back to the front, so a new build is picked up promptly. */
+      try { reg.update(); } catch (e) {}
+      document.addEventListener("visibilitychange", function(){
+        if (document.visibilityState === "visible"){ try { reg.update(); } catch (e) {} }
+      });
       reg.addEventListener("updatefound", function(){
         var sw = reg.installing;
         if (!sw) return;

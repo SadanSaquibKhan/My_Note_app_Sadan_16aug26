@@ -34,7 +34,14 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b159**. Recent: b159 added a full-screen toggle to the shortcuts
+- Current build: **b160**. Recent: b160 fixes the tablet **not updating its build** — the
+  service worker was cache-first for the whole shell, so an installed PWA served its
+  first-cached `index.html` forever (sync worked because it is a different host). The
+  shell (page + `sync-client.js`) is now **network-first** (fresh build when online, cache
+  as the offline fallback), and the app forces `reg.update()` on load + on return to front.
+  ONE-TIME on the stuck tablet: fully close the PWA (or clear its site data / reinstall)
+  once so the old cache-first worker is replaced; after that, updates are automatic.
+  b159 added a full-screen toggle to the shortcuts
   bar (`#jumpFull`). Tapping it turns "keep full screen" mode (`cfg.fullLock`) on/off;
   while on, ANY touch that is not a full-screen toggle re-fills the screen if the
   browser dropped it (an app-switch/Home drops full screen and only a real gesture may
@@ -280,6 +287,18 @@ layers, both in `tests/`:
 
 ## Build log (append one line per shipped build — newest at top)
 
+- **b160** `PENDING` — the tablet now actually updates to new builds. `sw.js` served the
+  whole shell CACHE-FIRST, so an installed Android PWA kept serving the `index.html` it
+  first cached (sync still worked because it hits a different origin, which is why "sync
+  works but the build won't update"). A browser TAB updated because it re-checks the SW on
+  every reload; an installed PWA checks rarely. Fix: the shell (navigate / `index.html` /
+  `sync-client.js` / manifest) is **network-first** (fresh when online → GitHub Pages 304s
+  make it cheap; cache is the offline fallback), static assets stay cache-first, and
+  `index.html` now forces `reg.update()` on load and on visibility→visible. One-time: the
+  currently-stuck tablet must fully close/clear-site-data/reinstall the PWA once to drop the
+  old cache-first worker. tests/swshell.mjs pins it. This is the BASELINE for the b159 bug
+  batch (A–H) — the tablet must reach new builds before the rest can be tested.
+  A parallel read-only workflow (Claude Code) + Codex are diagnosing A–H. — *Claude Code (Opus 4.8)*
 - **b159** `fe9cae5` — a full-screen toggle now lives in the shortcuts bar (`#jumpFull`,
   4-corner icon). It owns "keep full screen" mode (`cfg.fullLock`, which already made
   writing fill the screen). Tapping: on → enterFull + fullLock=true; off → exitFull +
