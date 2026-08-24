@@ -395,8 +395,8 @@
   .coverband .gomain{flex:0 0 auto; margin-left:auto; font-size:12px; font-weight:600}
   .linkbadge{font-size:11px}
   /* the spot a link just landed on, so you can see what was pointed at */
-  .anchor.flash, .flash{background:var(--live-soft); border-radius:3px;
-                        transition:background .4s ease}
+  .anchor.flash, .flash{border-radius:3px; animation:spotflash 1.4s ease-out}
+  @keyframes spotflash{ from{background:var(--live-soft)} to{background:transparent} }
   .tagrow[hidden]{display:none}
   .tagchip{
     font-family:var(--mono); font-size:10.5px; letter-spacing:.06em;
@@ -2883,7 +2883,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b171";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b172";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -6983,7 +6983,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var pz = (typeof pageZoom === "function") ? pageZoom() : 1;
       var ph = (typeof pageHeightOf === "function") ? pageHeightOf(state.note.id) : 1500;
       var p0 = $("paper");
-      var span = Math.max(0, ph * pz - (p0 ? p0.clientHeight : 0));
+      var vv = effectivePageViewport();
+      var span = Math.max(0, ph * pz - vv.height);
       if (typeof restoreScroll === "function") restoreScroll(land * span, 0);
       if (typeof paintNavChips === "function") paintNavChips();
     } else if (chipLand != null && !swapping() && !chipDrag){
@@ -12742,7 +12743,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var b = document.createElement("button");
       b.type = "button"; b.className = "outrow lvl" + h.tagName.charAt(1);
       b.textContent = h.textContent || "(untitled heading)";
-      b.addEventListener("click", function(){ h.scrollIntoView({ block:"start" }); });
+      b.addEventListener("click", function(){ revealInPageViewport(h, "start"); });
       host.appendChild(b);
     });
     if (!state.note) return;
@@ -14275,7 +14276,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return say("Lasso some working in the practice space first.");
     }
     var b = C.polyBounds(lasso.poly);
-    var dropY = $("paper").scrollTop / (state.zoom || 1) + 60;
+    /* drop it where you can see it, not behind whatever is docked on top */
+    var dropY = ($("paper").scrollTop + effectivePageViewport().topInset) / (state.zoom || 1) + 60;
     var moved = C.translateStrokes(lasso.picked, 60 - b.minX, dropY - b.minY);
     noteSurface.strokes = noteSurface.strokes.concat(moved);
     noteSurface.undo.push(tagOp({ t:"add", s: moved[0] })); clearTextRedo();
@@ -15156,19 +15158,29 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      The id is parked instead, and whichever render actually finishes consumes
      it. Parked, it also survives a render being overtaken by a newer one. */
   var pendingAnchor = null;
+  function scrollToAnchor(id){
+    pendingAnchor = id || null;
+    if (!landAnchor()) requestAnimationFrame(landAnchor);
+  }
   function landAnchor(){
     if (!pendingAnchor) return false;
     var el = document.getElementById(pendingAnchor);
     if (!el) return false;
     pendingAnchor = null;
-    el.scrollIntoView({ block: "center" });
+    /* not scrollIntoView: it centres against the browser's viewport, which
+       knows nothing about a Strip docked over the top of the page, so the spot
+       you asked for lands underneath it */
+    revealInPageViewport(el);
+    /* the flash fades on a CSS animation rather than a timer, so nothing here
+       is waiting on a clock that could outlive the page */
+    el.classList.remove("flash");
+    void el.offsetWidth;
     el.classList.add("flash");
-    setTimeout(function(){ el.classList.remove("flash"); }, 1400);
+    el.addEventListener("animationend", function done(){
+      el.classList.remove("flash");
+      el.removeEventListener("animationend", done);
+    });
     return true;
-  }
-  function scrollToAnchor(id){
-    pendingAnchor = id || null;
-    if (!landAnchor()) requestAnimationFrame(landAnchor);
   }
 
   /* ---- the Covers band, and the way back ----
@@ -15572,7 +15584,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          every timeupdate would fight any attempt to scroll by hand */
       if (chosen !== follow.lastLit){
         follow.lastLit = chosen;
-        try { chosen.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
+        revealInPageViewport(chosen);
       }
     }
     var ctx = noteSurface.ctx();
@@ -16214,7 +16226,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     /* stored relative to the page, not the scroller: the band above the page
        is a different height on a different device, and a raw scrollTop would
        land you somewhere else */
-    var top = p ? Math.max(0, p.scrollTop - prevPad()) : 0;
+    /* less whatever is docked over the top, so a place saved with the Strip
+       open comes back to the same words with it shut */
+    var v = effectivePageViewport();
+    var top = p ? Math.max(0, p.scrollTop - prevPad() + v.topInset) : 0;
     var left = p ? p.scrollLeft : 0;
     /* Two records, deliberately. The notebook one answers "where was I in
        this notebook", the page one answers "where was I on this page" — and
@@ -16254,7 +16269,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var tries = 0;
     (function attempt(){
       /* put the band back on: what was stored is a position within the page */
-      var want = top + prevPad();
+      var v = effectivePageViewport();
+      var want = top + prevPad() - v.topInset;
       p.scrollTop = want; p.scrollLeft = left || 0;
       tries++;
       if (Math.abs(p.scrollTop - want) > 2 && tries < 12){
@@ -16303,8 +16319,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function listProgress(list){
     var tot = listVirtual(list);
     if (!tot) return 0;
-    var acc = 0, pad = (typeof prevPad === "function") ? prevPad() : 0;
-    var p = $("paper");
+    var acc = 0, pad = pageTopBase();
+    var p = effectivePageViewport().paper;
     var z = pageZoom();
     /* scrollTop is scroller pixels (zoom already baked in). Page heights
        are sheet pixels. Without the divide the chips lie as soon as you
@@ -16338,8 +16354,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function chipTrack(){
     var p = $("paper");
     if (!p) return null;
-    var r = p.getBoundingClientRect();
-    return { top: r.top + 28, h: Math.max(80, r.height - 56), paper: p };
+    var v = effectivePageViewport();
+    return { top: v.top + 28, h: Math.max(80, v.height - 56), paper: p };
   }
   /* After a second of not touching either chip they tuck toward the edge,
      leaving about half of each still showing. Touching a tucked one brings
@@ -16452,9 +16468,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function pageScrollFor(nid, frac){
     var p = $("paper");
     if (!p || !nid) return 0;
-    var pad = (typeof prevPad === "function") ? prevPad() : 0;
-    var span = Math.max(0, pageSpan(nid) * pageZoom() - p.clientHeight);
-    return pad + Math.max(0, Math.min(1, frac)) * span;
+    var v = effectivePageViewport();
+    var span = Math.max(0, pageSpan(nid) * pageZoom() - v.height);
+    return pageTopBase() + Math.max(0, Math.min(1, frac)) * span;
   }
   function landOnPage(frac, id){
     var p = $("paper");
@@ -16520,9 +16536,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function pageFracNow(nid){
     var p = $("paper");
     if (!p || !nid) return 0;
-    var pad = (typeof prevPad === "function") ? prevPad() : 0;
-    var span = Math.max(1, pageSpan(nid) * pageZoom() - p.clientHeight);
-    return Math.max(0, Math.min(1, (p.scrollTop - pad) / span));
+    var v = effectivePageViewport();
+    var span = Math.max(1, pageSpan(nid) * pageZoom() - v.height);
+    return Math.max(0, Math.min(1, (p.scrollTop - pageTopBase()) / span));
   }
   function listIndexOf(list, id){
     for (var i = 0; i < (list || []).length; i++) if (list[i].id === id) return i;
@@ -16534,7 +16550,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function chipPeekReady(dir){
     var p = $("paper");
     if (!p) return false;
-    var pr = p.getBoundingClientRect();
+    var pr = effectivePageViewport();
     if (dir > 0){
       var nextEl = $("nextPeek"), nextPage = $("nextPeekPage");
       if (!nextEl || nextEl.hidden || !nextPage) return false;
@@ -16571,7 +16587,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function chipPeekGeometry(vis, dir){
     var p = $("paper");
     if (!p || !vis) return null;
-    var pr = p.getBoundingClientRect();
+    var pr = effectivePageViewport();
     var base = pageScrollFor(vis, dir > 0 ? 1 : 0);
     /* Measure the real join. The old fixed 0.62H ignored the sheet's bottom
        padding, the grey divider and (at a section boundary) its label. On a
@@ -16659,7 +16675,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        number never runs more than half the next page ahead, floored at the old
        fifth-of-the-band. Speed-only: the mapping, the peek and the re-anchor are
        the proven b153 ones, so this cannot bounce or hang the section chip. */
-    var vFull = pageSpan(vis) * pageZoom(), vView = p.clientHeight;
+    var vFull = pageSpan(vis) * pageZoom(), vView = effectivePageViewport().height;
     var evenReveal = 0.70 * vView * (band.hi - band.lo) / Math.max(1, vFull - vView);
     var reveal = Math.max(pageStick(band.lo, band.hi),
                           (band.hi - band.lo) * 0.20,
@@ -16712,7 +16728,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function armChipHandover(newId){
     var p = $("paper");
     if (!p || !newId) return false;
-    var pr = p.getBoundingClientRect();
+    var pr = effectivePageViewport();
     var dir = 0, anchorTop = 0, srcBody = null;
     var nextPage = $("nextPeekPage"), prevPage = $("prevPeekPage");
     var nextWrap = $("nextPeek"), prevWrap = $("prevPeek");
@@ -17035,6 +17051,73 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* How tall the previous-page band currently is. Everything that converts
      between a stroke's stored position and the screen subtracts this. */
+  /* ---- the part of the page you can actually see ----
+     One rectangle, asked for by everything that measures the screen: both
+     chips, the hand-over at a page join, where a page fraction sits, what a
+     remembered place means, and where a reveal should land.
+
+     Each of those used to read #paper's own rectangle. That is right only
+     while nothing is docked over the page. A short-note Strip sits across the
+     top and the working sheet across the bottom, and every one of those
+     measurements is then wrong by the height of whatever is covering it —
+     which shows up as clipping at a join, a chip that lies about where you
+     are, a remembered place that comes back somewhere else, and a page that
+     turns itself when you did not ask it to.
+
+     Correcting them one at a time is how the next one gets missed, so they all
+     ask this. With nothing docked every inset is zero and the answer is
+     exactly what #paper reported before, which is why turning this on changes
+     nothing until the Strip actually exists. */
+  function effectivePageViewport(){
+    var p = $("paper");
+    if (!p) return { top:0, bottom:0, height:0, topInset:0, bottomInset:0, paper:null };
+    var r = p.getBoundingClientRect();
+    var topInset = 0, bottomInset = 0;
+    /* a short note docked across the top */
+    var strip = document.getElementById("stripDock");
+    if (strip && !strip.hidden && !strip.classList.contains("off")){
+      var sr = strip.getBoundingClientRect();
+      topInset = Math.max(0, Math.min(r.bottom, sr.bottom) - r.top);
+    }
+    /* the working sheet, docked across the bottom */
+    var sheet = document.getElementById("pracSheet");
+    if (sheet && !sheet.hidden && !sheet.classList.contains("off")){
+      var br = sheet.getBoundingClientRect();
+      bottomInset = Math.max(0, r.bottom - Math.max(r.top, br.top));
+    }
+    var full = p.clientHeight || r.height || 0;
+    return {
+      top: r.top + topInset,
+      bottom: r.bottom - bottomInset,
+      height: Math.max(0, full - topInset - bottomInset),
+      topInset: topInset,
+      bottomInset: bottomInset,
+      paper: p
+    };
+  }
+
+  /* Where the head of the mounted page sits, in scroller pixels: the preview
+     band above it, less whatever is docked over the top of the screen. Every
+     page fraction and every remembered place is measured from here. */
+  function pageTopBase(){
+    var pad = (typeof prevPad === "function") ? prevPad() : 0;
+    return pad - effectivePageViewport().topInset;
+  }
+
+  /* scrollIntoView aims at the browser's idea of the viewport, which knows
+     nothing about a Strip over the top of the page or a sheet over the bottom.
+     Asking it to centre something therefore parks it underneath one of them. */
+  function revealInPageViewport(el, where){
+    if (!el || !el.getBoundingClientRect) return;
+    var v = effectivePageViewport();
+    if (!v.paper){ try { el.scrollIntoView({ block: "center" }); } catch (e) {} return; }
+    var r = el.getBoundingClientRect();
+    var delta = (where === "start")
+      ? (r.top - v.top)
+      : (r.top - v.top) - Math.max(0, (v.height - r.height) / 2);
+    v.paper.scrollTop = Math.max(0, v.paper.scrollTop + delta);
+  }
+
   function prevPad(){
     var el = document.getElementById("prevPeek");
     if (!el || el.hidden) return 0;
@@ -17318,7 +17401,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!chipDrag && Date.now() < (handover.until || 0)) return;
     var p = $("paper");
     if (!p) return;
-    var pr = p.getBoundingClientRect();
+    var pr = effectivePageViewport();
 
     /* Two different lines, not one.
        With a single midpoint, swapping forward left the page you just came
@@ -17471,7 +17554,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          the page is still settling. It stops as soon as two frames pass with
          nothing left to correct, so a scroll of your own is never fought for
          more than a moment. */
-      var pTop0 = p.getBoundingClientRect().top;
+      var pTop0 = effectivePageViewport().top;
       /* a finger or page-chip still dragging: one re-anchor, then let them
          keep scrolling. Fighting the finger for sixteen frames is the shiver. */
       var stillHeld = (typeof pan === "object" && pan && pan.on) ||
@@ -17566,7 +17649,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         tries++;
         /* still short of the mark because the page is not tall enough yet */
         var short = p.scrollTop < want - 2 &&
-                    p.scrollTop >= p.scrollHeight - p.clientHeight - 2;
+                    p.scrollTop >= p.scrollHeight - effectivePageViewport().height - 2;
         calm = (Math.abs(moved) <= 1 && !short) ? calm + 1 : 0;
         if (calm < 2 && tries < 16){ requestAnimationFrame(settle); return; }
         void pTop0;
@@ -17780,11 +17863,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function pageBottom(p){
     var end = $("pageEnd");
     if (!end || end.hidden) return p.scrollHeight;
-    var r = end.getBoundingClientRect(), pr = p.getBoundingClientRect();
-    return Math.max(p.clientHeight, (r.top - pr.top) + p.scrollTop);
+    var v = effectivePageViewport();
+    var r = end.getBoundingClientRect();
+    return Math.max(v.height, (r.top - v.top) + p.scrollTop);
   }
   function atPageEnd(p, slack){
-    return (p.scrollTop + p.clientHeight) >= (pageBottom(p) - (slack || 1));
+    /* "the foot is on screen" must mean the foot is somewhere you can see,
+       not somewhere behind the working sheet */
+    return (p.scrollTop + effectivePageViewport().height) >= (pageBottom(p) - (slack || 1));
   }
   /* at the top edge, at the bottom edge, or neither */
   function edgeOf(p){
@@ -17808,7 +17894,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         var p = $("paper");
         if (landAtBottom && p){
           var bot = (typeof pageBottom === "function") ? pageBottom(p) : p.scrollHeight;
-          p.scrollTop = Math.max(0, bot - p.clientHeight);
+          p.scrollTop = Math.max(0, bot - effectivePageViewport().height);
         }
         flow.busy = false;
       }, 260);
@@ -17865,7 +17951,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   function visibleStrokes(S){
-    var r = S.scroller.getBoundingClientRect();
+    /* the note's own surface can be docked over; a sheet's surface cannot */
+    var r = (S.name === "note") ? effectivePageViewport() : S.scroller.getBoundingClientRect();
     var z = (S.name === "note" ? state.zoom : 1) || 1;
     /* the same band the drawing code allows for, so culling agrees with it */
     var off = (S.name === "note") ? prevPad() : 0;
@@ -17915,7 +18002,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!cfg.autoScroll) return;
     var now = Date.now();
     if (now - lastAutoScroll < 60) return;
-    var rr = S.scroller.getBoundingClientRect();
+    var rr = (S.name === "note") ? effectivePageViewport() : S.scroller.getBoundingClientRect();
     if (clientY > rr.bottom - 80){
       lastAutoScroll = now;
       S.scroller.scrollTop += 12;
@@ -18523,7 +18610,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     findState.at = (findState.at + dir + findState.hits.length) % findState.hits.length;
     var m = findState.hits[findState.at];
     m.classList.add("here");
-    m.scrollIntoView({ block: "center" });
+    revealInPageViewport(m);
     $("findStat").textContent = (findState.at + 1) + " of " + findState.hits.length;
   }
   $("findWhat").addEventListener("input", function(){
@@ -18608,7 +18695,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if ($("outlinePane").hidden) return;
     var hs = Array.prototype.slice.call($("body").querySelectorAll("h1,h2,h3"));
     if (!hs.length) return;
-    var top = $("paper").getBoundingClientRect().top + 40;
+    /* the top of what you can SEE, so the outline does not claim you are on a
+       heading that is currently behind the Strip */
+    var top = effectivePageViewport().top + 40;
     var idx = 0;
     hs.forEach(function(h, i){ if (h.getBoundingClientRect().top <= top) idx = i; });
     Array.prototype.forEach.call($("outlineList").children, function(el, i){
@@ -18857,7 +18946,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!p) return;
     var padv = (typeof prevPad === "function") ? prevPad() : 0;
     var top = b.minY * z + padv, bottom = b.maxY * z + padv;
-    var view = p.clientHeight;
+    var view = effectivePageViewport().height;
     /* already looking at this change: do not jump */
     if (top >= p.scrollTop + 40 && bottom <= p.scrollTop + view - 40) return;
     var want = Math.max(0, (top + bottom) / 2 - view / 2);
@@ -18876,9 +18965,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!sel || !sel.rangeCount) return;
     var node = sel.anchorNode;
     var el = node && (node.nodeType === 3 ? node.parentNode : node);
-    if (el && el.scrollIntoView){
-      try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
-    }
+    if (el) revealInPageViewport(el);
   }
 
   /* Document-level undo, for things that are bigger than one page — bringing
@@ -19304,8 +19391,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var p = $("paper");
     if (!p) return;
     var bot = (typeof pageBottom === "function") ? pageBottom(p) : p.scrollHeight;
-    if (p.scrollTop + p.clientHeight < bot - 24){
-      p.scrollTo({ top: Math.max(0, bot - p.clientHeight), behavior: "smooth" });
+    var vj = effectivePageViewport();
+    if (p.scrollTop + vj.height < bot - 24){
+      p.scrollTo({ top: Math.max(0, bot - vj.height), behavior: "smooth" });
       return;
     }
     var next = neighbourPage(1);

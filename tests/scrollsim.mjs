@@ -53,11 +53,17 @@ eq("6  the bounce-prone join-scrolling path is gone entirely",
 eq("7  a chip drag that loses its pointer cannot freeze page turning",
    has(/if \(chipDrag\.moved\) chipSeek\(true\);/) &&
    has(/el\.addEventListener\("lostpointercapture", endChip\);/));
+/* b172: "what can actually scroll" now comes from the one shared helper rather
+   than from clientHeight directly, so a page docked under a Strip lands in the
+   same place as one that is not. */
 eq("8  chip landing retries like restoreScroll, over what can actually scroll",
    has(/restoreScroll\(land \* span, 0\)/) &&
-   has(/var span = Math\.max\(0, ph \* pz - \(p0 \? p0\.clientHeight : 0\)\);/));
+   has(/var span = Math\.max\(0, ph \* pz - vv\.height\);/));
+/* Same landing, measured against the visible page: the foot of a page must sit
+   where you can see it, not behind the working sheet. */
 eq("9  going back via overscroll lands on the page, not its next peek",
-   has(/pageBottom\(p\) : p\.scrollHeight/) && has(/bot - p\.clientHeight/));
+   has(/pageBottom\(p\) : p\.scrollHeight/) &&
+   has(/bot - effectivePageViewport\(\)\.height/));
 eq("10 neighbour ink no longer rebuilds the whole peek band",
    has(/Only redraw the ink canvas/) &&
    !/if \(dir < 0 && typeof paintPrevPeek === "function"\) paintPrevPeek\(\);/.test(html));
@@ -78,7 +84,13 @@ eq("17 chip progress divides out zoom",
    has(/\(p\.scrollTop - pad\) \/ z/));
 eq("18 landOnPage measures the page in screen pixels",
    has(/function pageScrollFor\(nid, frac\)\{/) &&
-   has(/pageSpan\(nid\) \* pageZoom\(\) - p\.clientHeight/));
+   has(/pageSpan\(nid\) \* pageZoom\(\) - v\.height/));
+/* And the head of the page is measured from the same place the fraction is,
+   or 0 stops meaning "head of the page at the top of the screen" the moment
+   anything is docked over it. */
+eq("18b the page head is measured from the shared base",
+   has(/function pageTopBase\(\)/) &&
+   has(/return pageTopBase\(\) \+ Math\.max\(0, Math\.min\(1, frac\)\) \* span;/));
 eq("19 a live stroke still blocks handover",
    has(/ink\.surfaces\[ink\.active\]\.drawing/));
 eq("20 swap cooldown is 400ms, not 700",

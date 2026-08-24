@@ -105,9 +105,14 @@ console.log("landing honours the zoom:");
    "one whole page further down" put the page entirely above the screen and left
    you inside the next page's band, past the hand-over line, so releasing the
    chip turned the page again on its own. */
+/* b172 replaced p.clientHeight here with the shared viewport helper. Same
+   meaning, one more subtraction: what can actually scroll is the paper less
+   anything docked over it. With nothing docked the helper returns exactly what
+   clientHeight used to, so this is the same measurement, not a new one. */
 eq("a fraction of a page is measured against what can actually scroll",
    has(/function pageScrollFor\(nid, frac\)\{/) &&
-   has(/var span = Math\.max\(0, pageSpan\(nid\) \* pageZoom\(\) - p\.clientHeight\);/) &&
+   has(/var span = Math\.max\(0, pageSpan\(nid\) \* pageZoom\(\) - v\.height\);/) &&
+   has(/var v = effectivePageViewport\(\);/) &&
    has(/restoreScroll\(land \* span, 0\);/));
 
 console.log("");

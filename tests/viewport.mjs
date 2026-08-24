@@ -56,13 +56,21 @@ const nearPageFoot = span("function nearPageFoot", "function addPageHalf");
 const growForInk = span("function growForInk", "/* ---- 5.");
 const peekSizing = span("function paintPrevPeek", "function warmNeighbourInk");
 const revealBounds = span("function revealBounds", "function revealCaret");
-const revealCaret = span("function revealCaret", "function performUndoJump");
+/* performUndoJump does not exist here either; revealCaret is followed by the
+   undo-jump wiring, so the span ran to the end of the file. */
+const revealCaret = span("function revealCaret", "/* ---------- 2. per-tool");
 const jumpButtons = span('$("jumpTop").addEventListener', "/* ---------- 12.");
-const outline = span("function paintOutline", "function paintBacklinks");
+/* paintBacklinks does not exist here, so this ran from paintOutline to the end
+   of the file and swept in the picture bar, the lasso and half the editor. */
+const outline = span("function paintOutline", "function paintTags");
 const anchor = span("function scrollToAnchor", "/* ---- attachments");
 const audioFollow = span("function followAudio", "function playAudio");
 const findStep = span("function stepFind", '$("findWhat").addEventListener');
-const currentHeading = span("function paintCurrentHeading", "function paintOutline");
+/* This file has no paintCurrentHeading; the function that tracks which heading
+   you are on is paintOutlineHere, under "22. the outline should track where you
+   are". The old marker matched nothing, so the span was empty and the check
+   could never pass however the code was written. */
+const currentHeading = span("function paintOutlineHere", "/* ---- 23.");
 const lassoPromote = span('$("lassoPromote").addEventListener', "/* ---- printing and PNG");
 
 console.log("one helper defines the unobscured part of #paper:");

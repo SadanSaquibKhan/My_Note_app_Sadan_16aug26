@@ -273,8 +273,13 @@ eq("53 a lost capture still ends the drag so page turning cannot freeze",
    has(/lostpointercapture/) && has(/if \(chipDrag\.moved\) chipSeek\(true\);/));
 eq("54 paintDoc will not restore a remembered place on top of a swap",
    has(/!swapping\(\) && !undoReveal && !chipDrag && chipLand == null/));
+/* Still 0-is-a-real-place. b172 added the one extra term: a place is stored
+   and restored relative to the head of the page, so if it was saved while a
+   Strip covered the top of the screen it has to come back to the same words
+   with the Strip shut. */
 eq("55 restoreScroll treats 0 as the top, not as 'do nothing'",
-   has(/0 is a real place/) && has(/var want = top \+ prevPad\(\);/));
+   has(/0 is a real place/) &&
+   has(/var want = top \+ prevPad\(\) - v\.topInset;/));
 
 process.exitCode = bad ? 1 : 0;
 console.log("\n" + n + " join checks, " + bad + " failed");
