@@ -2857,7 +2857,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b168";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b169";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4243,7 +4243,20 @@ var MarginCore = (function(){
             notebook: n && nb[n.notebookId] ? nb[n.notebookId].name : "",
             marks: marks[p.id] || 0
           };
-        }).sort(function(a,b){ return (b.practice.lastEdited||0) - (a.practice.lastEdited||0); });
+        }).sort(function(a,b){
+          /* Newest-first read as noise: the first sheet for page 9 landed
+             between the two for page 2. A working page follows the page it
+             hangs off, and only then its own sheet number. A sheet whose page
+             is gone has no place in that order, so it goes to the end. */
+          function parentOrder(x){
+            if (!x.note) return [1, 9e15, 9e15];
+            var sp = splitSecPage(x.note.title);
+            return sp ? [0, sp.s, sp.p] : [0, 9e14, x.note.createdAt || 0];
+          }
+          var pa = parentOrder(a), pb = parentOrder(b);
+          return (pa[0] - pb[0]) || (pa[1] - pb[1]) || (pa[2] - pb[2]) ||
+                 ((a.practice.workOrder||0) - (b.practice.workOrder||0));
+        });
       });
   }
 
@@ -4579,73 +4592,115 @@ var MarginCore = (function(){
   }
 
   /* ---- moving the old working records into the notebook ----
-     This runs once, after the connection is open — not inside the schema
-     upgrade, which is the wrong place for work that has to read the notes it
-     is rewriting. Every old record becomes a page carrying its own id, so the
-     markers already on your pages go on finding it.
+     Every route in — boot, an old backup file, a row that arrives from another
+     device weeks later — goes through the one converter below. Two converters
+     that look alike on the day they are written drift apart the moment a field
+     is added to one of them, and the drift is invisible until something is
+     already lost. */
 
-     The old records are left exactly where they are rather than erased. They
-     cost nothing, they are what an old backup file still expects to find, and
-     if any of this turns out wrong they are the way back. */
+  /* Runs at every boot, not once. There is deliberately no "already done"
+     flag: a flag stops the scan, and the scan is the only thing that catches
+     an old row arriving later — from a backup restored next month, or from a
+     device that had been switched off. The scan is cheap because a row that
+     already has a page is skipped on sight, and it writes nothing when there
+     is nothing to move.
+
+     The old records are left where they are rather than erased. They cost
+     little, an old backup file still expects to find them, and they are the
+     way back if any of this turns out to be wrong. */
   function migrateWorkingToNotes(){
-    return getMeta("workingMigrated", 0).then(function(done){
-      if (done) return { moved: 0, already: true };
-      return Promise.all([getAll("practices"), getAll("notes")]).then(function(r){
-        var old = r[0].filter(live);
-        var have = {};
-        r[1].forEach(function(n){ have[n.id] = true; });
-        var todo = old.filter(function(p){ return !have[p.id]; });
-        if (!todo.length) return setMeta("workingMigrated", 1).then(function(){
-          return { moved: 0, already: false };
-        });
-        var byId = {};
-        r[1].forEach(function(n){ byId[n.id] = n; });
-        /* one Working drawer per notebook, made once and shared */
-        var books = {};
-        todo.forEach(function(p){
-          var parent = byId[p.noteId];
-          if (parent && parent.notebookId) books[parent.notebookId] = true;
-        });
-        var ids = Object.keys(books);
-        return Promise.all(ids.map(function(nb){
-          return ensureWorkingSection(nb).then(function(sec){ return [nb, sec]; });
-        })).then(function(pairs){
-          var drawer = {};
-          pairs.forEach(function(p){ drawer[p[0]] = p[1]; });
-          var notes = [], assets = [], now = Date.now();
+    return Promise.all([getAll("practices"), getAll("notes")]).then(function(r){
+      var old = r[0], notes = r[1];
+      var byId = {};
+      notes.forEach(function(n){ byId[n.id] = n; });
+      var todo = old.filter(function(p){ return p && p.id && !byId[p.id]; });
+      if (!todo.length) return { moved: 0 };
+      var books = {};
+      todo.forEach(function(p){
+        var parent = byId[p.noteId];
+        if (parent && parent.notebookId) books[parent.notebookId] = 1;
+      });
+      return Promise.all(Object.keys(books).map(function(nb){
+        return ensureWorkingSection(nb).then(function(sec){ return [nb, sec]; });
+      })).then(function(pairs){
+        var drawer = {};
+        pairs.forEach(function(x){ drawer[x[0]] = x[1]; });
+        return getAll("assets").then(function(assets){
+          var haveInk = {};
+          assets.forEach(function(a){ if (a.kind === "page") haveInk[a.noteId] = 1; });
+          var outNotes = [], outAssets = [];
           todo.forEach(function(p){
             var parent = byId[p.noteId];
             var sec = parent ? drawer[parent.notebookId] : null;
-            notes.push({
-              id: p.id,                                  /* the whole point: same id */
-              notebookId: parent ? parent.notebookId : null,
-              sectionId: sec ? sec.id : null,
-              worksFor: p.noteId || null,
-              workOrder: p.page || 0,
-              title: workingName(parent, p.page || 0),
-              html: p.html || "",
-              tags: [], pinned: false, starred: false,
-              createdAt: p.createdAt || now,
-              lastEdited: p.lastEdited || now,
-              deletedAt: null, deletedVia: null,
-              editedOn: p.editedOn || _device
-            });
-            if (p.strokes && p.strokes.length){
-              assets.push({
-                id: newId("ink"), noteId: p.id, kind: "page",
-                strokes: p.strokes, removed: p.removed || {}, restored: p.restored || {},
-                h: p.h || 0,
-                createdAt: p.createdAt || now, lastEdited: p.lastEdited || now,
-                deletedAt: null, editedOn: p.editedOn || _device
-              });
-            }
+            outNotes.push(practiceToNote(p, parent, sec ? sec.id : null));
+            /* never a second ink record for a page that already has one */
+            if (haveInk[p.id]) return;
+            var ink = practiceToInk(p);
+            if (ink) outAssets.push(ink);
           });
-          return putMany(["notes","assets"], { notes: notes, assets: assets })
-                   .then(function(){ return setMeta("workingMigrated", 1); })
-                   .then(function(){ return { moved: notes.length, already: false }; });
+          return putMany(["notes","assets"], { notes: outNotes, assets: outAssets })
+                   .then(function(){ return { moved: outNotes.length }; });
         });
       });
     });
+  }
+
+  /* One old working record, as an ordinary page. */
+  function practiceToNote(p, parent, sectionId){
+    var now = Date.now();
+    /* Spread the old record first so a field nobody here thought of — one an
+       older build wrote, or a newer one will — survives the move, and only
+       then lay the page's own fields over the top. Building the object field
+       by field is exactly how you lose the thing you did not know was there. */
+    var n = Object.assign({}, p, {
+      id: p.id,                          /* the marker sitting on the page knows this id */
+      notebookId: parent ? parent.notebookId : (p.notebookId || null),
+      sectionId: sectionId || null,
+      worksFor: p.noteId || null,
+      workOrder: p.page || 0,
+      title: workingName(parent, p.page || 0),
+      html: p.html || "",
+      tags: Array.isArray(p.tags) ? p.tags : [],
+      pinned: false,
+      starred: !!p.starred,
+      createdAt: p.createdAt || now,
+      lastEdited: p.lastEdited || now,
+      /* A tombstone stays a tombstone. Bringing one back to life would put a
+         page you deleted back into the drawer — and would do it again on every
+         device the old row ever reaches. */
+      deletedAt: p.deletedAt || null,
+      deletedVia: p.deletedVia || null,
+      editedOn: p.editedOn || _device
+    });
+    ["noteId", "page", "strokes", "removed", "restored", "h", "ink"].forEach(function(k){
+      delete n[k];
+    });
+    return n;
+  }
+
+  /* Its ink, as the kind of record an ordinary page keeps ink in — or null if
+     there was none. The id is worked out from the page's own id rather than
+     minted fresh, so a second pass over the same row cannot leave two. */
+  function workInkId(pracId){ return "ink_" + pracId; }
+  function practiceToInk(p){
+    var anyInk = (p.strokes && p.strokes.length) ||
+                 (p.removed && Object.keys(p.removed).length) ||
+                 (p.restored && Object.keys(p.restored).length) ||
+                 p.h;
+    /* Deliberately not "are there strokes": a page whose every stroke has been
+       rubbed out still has an erasure map, and throwing that away un-erases
+       the lot the next time the strokes are re-read. */
+    if (!anyInk) return null;
+    var now = Date.now();
+    return {
+      id: workInkId(p.id), noteId: p.id, kind: "page",
+      strokes:  p.strokes  || [],
+      removed:  p.removed  || {},
+      restored: p.restored || {},
+      h: p.h || 0,
+      createdAt: p.createdAt || now, lastEdited: p.lastEdited || now,
+      deletedAt: p.deletedAt || null, editedOn: p.editedOn || _device
+    };
   }
 
   /* ---------- ink blocks (stored as assets) ---------- */
@@ -4856,17 +4911,15 @@ var MarginCore = (function(){
     return Promise.all([getNote(id), practicesFor(id), assetsFor(id)]).then(function(r){
       var src = r[0];
       if (!src) throw new Error("No note " + id);
+      var kids = r[1].filter(live);
       var now = Date.now();
-      /* clone the ink and repoint the note's markup at the clones, or the
-         copy and the original would share one drawing */
+      /* clone the ink and repoint the copy's markup at the clones, or the two
+         pages would share one drawing and rubbing out on either would rub out
+         on both */
       var html = src.html || "";
       var newAssets = [];
-      r[2].forEach(function(a){
-        var na = {
-          id: newId("ink"), noteId: null, kind: a.kind,
-          strokes: JSON.parse(JSON.stringify(a.strokes || [])), h: a.h,
-          createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
-        };
+      r[2].filter(live).forEach(function(a){
+        var na = cloneAsset(a, null);
         html = html.split(a.id).join(na.id);
         newAssets.push(na);
       });
@@ -4881,21 +4934,75 @@ var MarginCore = (function(){
         createdAt: now, lastEdited: now,
         deletedAt: null, deletedVia: null, editedOn: _device
       };
-      var pracs = r[1].filter(live).map(function(p){
-        return {
-          id: newId("pr"), noteId: copy.id, html: p.html, ink: p.ink,
-          createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
-        };
+      newAssets.forEach(function(a){ if (!a.noteId) a.noteId = copy.id; });
+
+      /* The working pages come with it — as pages, pointed at the copy through
+         worksFor, each with its own ink and pictures cloned. Copying a page and
+         getting a copy whose working still hangs off the original is worse than
+         not copying it at all: you would edit one believing you were editing
+         the other. */
+      return Promise.all(kids.map(function(p){ return assetsFor(p.id); })).then(function(kidAssets){
+        var kidNotes = [];
+        kids.forEach(function(p, i){
+          var kc = Object.assign({}, p);
+          kc.id = newId("pr");
+          kc.notebookId = copy.notebookId;
+          kc.worksFor = copy.id;
+          kc.workOrder = p.workOrder || 0;
+          kc.createdAt = now; kc.lastEdited = now;
+          kc.deletedAt = null; kc.deletedVia = null; kc.editedOn = _device;
+          var kh = kc.html || "";
+          (kidAssets[i] || []).filter(live).forEach(function(a){
+            var na = cloneAsset(a, kc.id);
+            kh = kh.split(a.id).join(na.id);
+            newAssets.push(na);
+          });
+          kc.html = kh;
+          kidNotes.push(kc);
+        });
+        function write(secId){
+          kidNotes.forEach(function(k){ k.sectionId = secId; });
+          return putMany(["notes","assets"],
+                         {notes: [copy].concat(kidNotes), assets: newAssets})
+                 .then(function(){ return copy; });
+        }
+        if (!kidNotes.length) return write(null);
+        return ensureWorkingSection(copy.notebookId).then(function(sec){
+          return write(sec.id);
+        });
       });
-      newAssets.forEach(function(a){ a.noteId = copy.id; });
-      return putMany(["notes","practices","assets"],
-                     {notes:[copy], practices:pracs, assets:newAssets})
-             .then(function(){ return copy; });
     });
   }
 
+  /* A copy of an asset that keeps everything: the image bytes, the untouched
+     original a crop can always go back to, and any field a later build adds.
+     This used to be rebuilt field by field, which silently dropped the blob —
+     so duplicating a page gave you a copy with its pictures missing. */
+  function cloneAsset(a, noteId){
+    var now = Date.now();
+    var na = Object.assign({}, a, {
+      id: newId(a.kind === "image" ? "img" : (a.kind === "file" ? "file" :
+               (a.kind === "audio" ? "aud" : "ink"))),
+      noteId: noteId,
+      blob: a.blob,          /* the picture's own bytes — this is what used to be dropped */
+      orig: a.orig,          /* and the untouched bytes an uncrop always goes back to */
+      createdAt: now, lastEdited: now,
+      deletedAt: null, editedOn: _device
+    });
+    if (na.blob === undefined) delete na.blob;
+    if (na.orig === undefined) delete na.orig;
+    if (a.strokes) na.strokes = JSON.parse(JSON.stringify(a.strokes));
+    if (a.removed) na.removed = JSON.parse(JSON.stringify(a.removed));
+    if (a.restored) na.restored = JSON.parse(JSON.stringify(a.restored));
+    return na;
+  }
+
+  /* the same clone, stored, for callers outside the bulk paths */
+  function copyAsset(a, noteId){ return putOne("assets", cloneAsset(a, noteId)); }
+
   function duplicateNotebook(id){
-    return Promise.all([getNotebook(id), notesIn(id), sectionsIn(id)]).then(function(r){
+    return Promise.all([getNotebook(id), notesIn(id, {includeDeleted:false}), sectionsIn(id)])
+      .then(function(r){
       var src = r[0];
       if (!src) throw new Error("No notebook " + id);
       var now = Date.now();
@@ -4908,48 +5015,63 @@ var MarginCore = (function(){
       var sections = (r[2] || []).map(function(s){
         var ns = {
           id: newId("sc"), notebookId: nb.id, name: s.name, colour: s.colour,
+          /* the drawers must stay drawers in the copy. A Working section that
+             came back as an ordinary one would put every working page straight
+             into the page list of the new notebook. */
+          kind: s.kind || null,
+          isDefault: s.isDefault === true,
           order: s.order, createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
         };
         secMap[s.id] = ns.id;
         return ns;
       });
-      return Promise.all(r[1].map(function(n){ return practicesFor(n.id); }))
-        .then(function(pracLists){
-          var notes = [], pracs = [];
-          r[1].forEach(function(n, i){
-            var copy = {
-              id: newId("nt"), notebookId: nb.id, title: n.title, html: n.html,
-              sectionId: (n.sectionId && secMap[n.sectionId]) ? secMap[n.sectionId] : null,
-              tags: (n.tags||[]).slice(), pinned: n.pinned, starred: n.starred,
-              createdAt: now, lastEdited: now,
-              deletedAt: null, deletedVia: null, editedOn: _device
-            };
-            notes.push(copy);
-            pracLists[i].filter(live).forEach(function(p){
-              pracs.push({
-                id: newId("pr"), noteId: copy.id, html: p.html, ink: p.ink,
-                createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
-              });
-            });
+      /* notesIn returns the working pages too, because they are pages. They are
+         copied in the same pass, then their worksFor is remapped to the copy of
+         the page they hang off — an id from the old notebook left in the new one
+         would point a copied sheet at the original's page. */
+      var idMap = {};
+      r[1].forEach(function(n){ idMap[n.id] = newId(n.worksFor ? "pr" : "nt"); });
+      return Promise.all(r[1].map(function(n){ return assetsFor(n.id); })).then(function(assetLists){
+        var notes = [], newAssets = [];
+        r[1].forEach(function(n, i){
+          var copy = Object.assign({}, n);
+          copy.id = idMap[n.id];
+          copy.notebookId = nb.id;
+          copy.sectionId = (n.sectionId && secMap[n.sectionId]) ? secMap[n.sectionId] : null;
+          copy.tags = (n.tags||[]).slice();
+          copy.createdAt = now; copy.lastEdited = now;
+          copy.deletedAt = null; copy.deletedVia = null; copy.editedOn = _device;
+          if (n.worksFor) copy.worksFor = idMap[n.worksFor] || null;
+          var h = copy.html || "";
+          (assetLists[i] || []).filter(live).forEach(function(a){
+            var na = cloneAsset(a, copy.id);
+            h = h.split(a.id).join(na.id);
+            newAssets.push(na);
           });
-          return putMany(["notebooks","notes","practices","sections"],
-                         {notebooks:[nb], notes:notes, practices:pracs, sections:sections});
-        }).then(function(){ return nb; });
+          copy.html = h;
+          notes.push(copy);
+        });
+        return putMany(["notebooks","notes","sections","assets"],
+                       {notebooks:[nb], notes:notes, sections:sections, assets:newAssets});
+      }).then(function(){ return nb; });
     });
   }
 
   /* ---------- delete: tombstones, not erasure ---------- */
 
   function deleteNote(id){
-    return Promise.all([getNote(id), practicesFor(id), assetsFor(id)]).then(function(r){
+    return Promise.all([getNote(id), assetsFor(id)]).then(function(r){
       if (!r[0]) return false;
       var now = Date.now();
       function kill(x){ x.deletedAt = now; x.editedOn = _device; x.lastEdited = now; return x; }
       kill(r[0]);
-      var pr = r[1].filter(live).map(kill);
-      var as = r[2].filter(live).map(kill);
-      return putMany(["notes","practices","assets"],
-                     {notes:[r[0]], practices:pr, assets:as}).then(function(){ return true; });
+      var as = r[1].filter(live).map(kill);
+      /* The working pages hanging off this one are deliberately left alive.
+         They are pages in their own right now, they often hold the only copy
+         of a derivation, and the page they were started from going away is a
+         reason to say so — not a reason to take them with it. */
+      return putMany(["notes","assets"],
+                     {notes:[r[0]], assets:as}).then(function(){ return true; });
     });
   }
 
@@ -4958,6 +5080,7 @@ var MarginCore = (function(){
       if (!r[0]) return 0;
       var now = Date.now();
       r[0].deletedAt = now; r[0].editedOn = _device; r[0].lastEdited = now;
+      /* one pass over the notes is enough: a working page is one of them */
       var notes = r[1].map(function(n){
         n.deletedAt = now; n.deletedVia = id; n.editedOn = _device; n.lastEdited = now;
         return n;
@@ -4966,17 +5089,9 @@ var MarginCore = (function(){
         s.deletedAt = now; s.editedOn = _device; s.lastEdited = now;
         return s;
       });
-      return Promise.all(notes.map(function(n){ return practicesFor(n.id); }))
-        .then(function(lists){
-          var pracs = [];
-          lists.forEach(function(l){
-            l.filter(live).forEach(function(p){
-              p.deletedAt = now; p.editedOn = _device; p.lastEdited = now; pracs.push(p);
-            });
-          });
-          return putMany(["notebooks","notes","practices","sections"],
-                         {notebooks:[r[0]], notes:notes, practices:pracs, sections:sections});
-        }).then(function(){ return notes.length; });
+      return putMany(["notebooks","notes","sections"],
+                     {notebooks:[r[0]], notes:notes, sections:sections})
+             .then(function(){ return notes.length; });
     });
   }
 
@@ -4984,19 +5099,20 @@ var MarginCore = (function(){
     return getNote(id).then(function(n){
       if (!n) throw new Error("No note " + id);
       return getNotebook(n.notebookId).then(function(nb){
-        var jobs = {notes:[], notebooks:[], practices:[]};
+        var jobs = {notes:[], notebooks:[], assets:[]};
         n.deletedAt = null; n.deletedVia = null; touch(n);
         jobs.notes.push(n);
         /* a note is no use without a notebook to sit in */
         if (!nb || nb.deletedAt){
           if (nb){ nb.deletedAt = null; touch(nb); jobs.notebooks.push(nb); }
         }
-        jobs.assets = [];
-        return Promise.all([practicesFor(id, {includeDeleted:true}),
-                            assetsFor(id, {includeDeleted:true})]).then(function(rr){
-          rr[0].forEach(function(p){ if (p.deletedAt){ p.deletedAt = null; touch(p); jobs.practices.push(p); } });
-          rr[1].forEach(function(a){ if (a.deletedAt){ a.deletedAt = null; touch(a); jobs.assets.push(a); } });
-          return putMany(["notes","notebooks","practices","assets"], jobs);
+        /* only this page's own records come back. Its working pages were never
+           deleted with it, so there is nothing of theirs to restore — and
+           reaching for them here is what used to write page records into the
+           old working store. */
+        return assetsFor(id, {includeDeleted:true}).then(function(as){
+          as.forEach(function(a){ if (a.deletedAt){ a.deletedAt = null; touch(a); jobs.assets.push(a); } });
+          return putMany(["notes","notebooks","assets"], jobs);
         }).then(function(){ return n; });
       });
     });
@@ -5006,19 +5122,14 @@ var MarginCore = (function(){
     return Promise.all([getNotebook(id), getAll("notes"), getAll("sections")]).then(function(r){
       if (!r[0]) throw new Error("No notebook " + id);
       r[0].deletedAt = null; touch(r[0]);
+      /* deletedVia catches the working pages as well, because they are notes */
       var notes = r[1].filter(function(n){ return n.deletedVia === id && n.deletedAt; });
       notes.forEach(function(n){ n.deletedAt = null; n.deletedVia = null; touch(n); });
       var sections = (r[2] || []).filter(function(s){ return s.notebookId === id && s.deletedAt; });
       sections.forEach(function(s){ s.deletedAt = null; touch(s); });
-      return Promise.all(notes.map(function(n){ return practicesFor(n.id); }))
-        .then(function(lists){
-          var pracs = [];
-          lists.forEach(function(l){
-            l.forEach(function(p){ if (p.deletedAt){ p.deletedAt = null; touch(p); pracs.push(p); } });
-          });
-          return putMany(["notebooks","notes","practices","sections"],
-                         {notebooks:[r[0]], notes:notes, practices:pracs, sections:sections});
-        }).then(function(){ return notes.length; });
+      return putMany(["notebooks","notes","sections"],
+                     {notebooks:[r[0]], notes:notes, sections:sections})
+             .then(function(){ return notes.length; });
     });
   }
 
@@ -5236,7 +5347,7 @@ var MarginCore = (function(){
     opts = opts || {};
     var skipAudio = !!opts.skipAudio;
     return Promise.all([
-      getAll("notebooks"), getAll("notes"), getAll("practices"), getAll("assets"), allMeta(),
+      getAll("notebooks"), getAll("notes"), Promise.resolve([]), getAll("assets"), allMeta(),
       getAll("groups"), getAll("sections")
     ]).then(function(r){
       return encodeAssets(r[3], skipAudio).then(function(assets){ r[3] = assets; return r; });
@@ -5247,7 +5358,11 @@ var MarginCore = (function(){
         app: "margin", format: FORMAT, schema: DB_VERSION,
         exportedAt: Date.now(), exportedBy: _device,
         audioOmitted: skipAudio,
-        notebooks: r[0], notes: r[1], practices: r[2],
+        notebooks: r[0], notes: r[1],
+        /* A working page is a page and travels in `notes`. Shipping the legacy
+           rows as well would put both halves of the same sheet in one file, and
+           importing it would give you each one twice. */
+        practices: [],
         assets: r[3],     /* ink lives here; images join it at stage 4 */
         groups: r[5] || [],
         sections: r[6] || [],
@@ -5371,16 +5486,22 @@ var MarginCore = (function(){
     if (!validBundle(b)) return Promise.reject(new Error("That file isn't a Margin backup."));
     var inNb = (b.notebooks||[]).map(function(x){ return normalise(x, "notebook"); }).filter(Boolean);
     var inNt = (b.notes||[]).map(function(x){ return normalise(x, "note"); }).filter(Boolean);
-    var inPr = (b.practices||[]).map(function(x){ return normalise(x, "practice"); }).filter(Boolean);
+    /* Nothing is written to the old working store any more. A file that still
+       carries one is converted below, through the same converter the boot pass
+       uses — two converters that look alike today drift apart the moment a
+       field is added to one of them. */
+    var inPr = [];
+    var legacyWork = (b.practices||[]).map(function(x){ return normalise(x, "practice"); }).filter(Boolean);
     var inAs = (b.assets||[]).map(function(x){ return normalise(x, "asset"); }).filter(Boolean);
     var inGp = (b.groups||[]).map(function(x){ return normalise(x, "group"); }).filter(Boolean);
     var inSc = (b.sections||[]).map(function(x){ return normalise(x, "section"); }).filter(Boolean);
 
-    /* a format-1 file keeps its scratch text inline */
+    /* A format-1 file keeps its scratch text inline. That is the same thing as
+       a working row, only older still, so it joins the same queue. */
     inNt.forEach(function(n){
       if (n.scratch){
-        inPr.push({
-          id: newId("pr"), noteId: n.id, html: n.scratch, ink: null,
+        legacyWork.push({
+          id: newId("pr"), noteId: n.id, html: n.scratch,
           createdAt: n.createdAt, lastEdited: n.lastEdited,
           deletedAt: null, editedOn: "imported"
         });
@@ -5393,6 +5514,23 @@ var MarginCore = (function(){
       .then(function(cur){
         var have = [{}, {}, {}, {}, {}, {}];
         cur.forEach(function(list, i){ list.forEach(function(x){ have[i][x.id] = x; }); });
+
+        /* Legacy working rows become pages before the merge ever sees them, so
+           they are compared and written as the pages they now are. This waits
+           until the current contents are in hand because the page a sheet hangs
+           off may not be in the file at all — it may already be here. */
+        var parentOf = {};
+        Object.keys(have[1]).forEach(function(k){ parentOf[k] = have[1][k]; });
+        inNt.forEach(function(n){ parentOf[n.id] = n; });
+        var already = {};
+        inNt.forEach(function(n){ already[n.id] = 1; });
+        legacyWork.forEach(function(p){
+          if (!p || !p.id || have[1][p.id] || already[p.id]) return;
+          inNt.push(practiceToNote(p, parentOf[p.noteId] || null, null));
+          already[p.id] = 1;
+          var ink = practiceToInk(p);
+          if (ink && !have[3][ink.id]) inAs.push(ink);
+        });
 
         var res = {added:0, updated:0, skipped:0, deleted:0, conflicts:0};
         var write = [[], [], [], [], [], []];
@@ -5496,7 +5634,10 @@ var MarginCore = (function(){
       });
   }
 
-  var SYNC_STORES = ["notebooks","notes","sections","groups","practices","assets"];
+  /* The legacy working store is deliberately absent. It is read once at boot to
+     be converted and is never written again; publishing it would make a second,
+     older copy of every working page that another device would keep re-adopting. */
+  var SYNC_STORES = ["notebooks","notes","sections","groups","assets"];
 
   function stripBlobs(r){
     if (!r || typeof r !== "object") return r;
@@ -5687,6 +5828,7 @@ var MarginCore = (function(){
     ensureWorkingSection:ensureWorkingSection, ensureDrawer:ensureDrawer,
     isDrawer:isDrawer, drawerOf:drawerOf, workingSectionOf:workingSectionOf,
     reviveAsset:reviveAsset, tombstoneAssets:tombstoneAssets, bumpNote:bumpNote,
+    cloneAsset:cloneAsset, copyAsset:copyAsset,
     matchNote:matchNote, stamp:stamp, relTime:relTime,
     createNotebook:createNotebook, allNotebooks:allNotebooks, getNotebook:getNotebook,
     updateNotebook:updateNotebook, duplicateNotebook:duplicateNotebook,
@@ -5796,9 +5938,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* The canvases are mounted into the ink blocks at runtime; they must never
      be written into the stored markup. */
-  function serializeBody(){
-    trimTrailingBlanks();
-    var clone = $("body").cloneNode(true);
+  /* Everything the editor puts on the page at runtime and that must never reach
+     the disk: the rendered maths, which is regenerated from its source on load;
+     the <img> inside a picture block, which is an object URL that dies with the
+     tab, so only the record id belongs on disk; the find highlights; and the
+     "this one is open" classes. A page saved without this scrub comes back with
+     dead pictures and doubled maths.
+
+     It takes the host as an argument because a working page needs exactly the
+     same treatment. It used to be hard-wired to the note, and the working sheet
+     saved its raw innerHTML instead — which was survivable while a working page
+     was a lesser kind of record, and stopped being survivable the moment it
+     became a real page that gets re-rendered like one. */
+  function serializeHost(host){
+    var clone = host.cloneNode(true);
     Array.prototype.forEach.call(clone.querySelectorAll("mark.findhit"), function(m){
       m.replaceWith(document.createTextNode(m.textContent));
     });
@@ -5824,6 +5977,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       el.classList.remove("on");
     });
     return clone.innerHTML;
+  }
+
+  function serializeBody(){
+    trimTrailingBlanks();
+    return serializeHost($("body"));
   }
 
   function flush(){
@@ -9203,7 +9361,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     clearTimeout(prac.saveTimer);
     if (!prac.rec) return Promise.resolve();
     var id = prac.rec.id;
-    return C.savePractice(id, { html: $("pracText").innerHTML, strokes: pracSurface.strokes, removed: pracSurface.removed || {}, restored: pracSurface.restored || {} })
+    return C.savePractice(id, { html: serializeHost($("pracText")),
+                                strokes: pracSurface.strokes,
+                                removed: pracSurface.removed || {},
+                                restored: pracSurface.restored || {} })
              .then(function(r){ if (prac.rec && prac.rec.id === id) prac.rec = r; })
              .catch(function(){});
   }
@@ -18014,15 +18175,33 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("pracDup").addEventListener("click", function(){
     if (!prac.rec || !state.note) return;
     var src = prac.rec;
-    flushPractice().then(function(){ return C.addPracticePage(state.note.id); })
+    /* Read what is on the screen, not what is on the record. The ink is a
+       record of its own now, so src.strokes is simply not there any more and
+       the copy was coming out blank. Pictures are cloned rather than shared,
+       or cropping the copy would crop the original with it. */
+    flushPractice()
+      .then(function(){ return C.addPracticePage(state.note.id); })
       .then(function(p){
-        return C.savePractice(p.id, {
-          html: src.html,
-          strokes: JSON.parse(JSON.stringify(src.strokes || []))
+        var html = serializeHost($("pracText"));
+        var body = {
+          strokes: JSON.parse(JSON.stringify(pracSurface.strokes || [])),
+          removed: JSON.parse(JSON.stringify(pracSurface.removed || {})),
+          restored: JSON.parse(JSON.stringify(pracSurface.restored || {}))
+        };
+        return C.assetsFor(src.id).then(function(list){
+          var pics = list.filter(function(a){ return a.kind !== "page" && !a.deletedAt; });
+          return Promise.all(pics.map(function(a){
+            var na = C.cloneAsset(a, p.id);
+            html = html.split(a.id).join(na.id);
+            return C.putRaw("assets", na);
+          })).then(function(){
+            body.html = html;
+            return C.savePractice(p.id, body);
+          });
         });
       })
       .then(function(){ return openPractice(prac.pages.length); })
-      .then(function(){ hint("Practice page copied."); });
+      .then(function(){ hint("Working page copied."); });
   });
 
 

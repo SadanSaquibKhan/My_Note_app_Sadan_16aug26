@@ -19,9 +19,13 @@ let bad = 0;
 const eq = (l, c) => { console.log((c ? "  ok   " : "  FAIL ") + l); if (!c) bad++; };
 
 console.log("the id is what makes every existing marker keep working:");
-const mig = html.match(/function migrateWorkingToNotes\(\)\{[\s\S]*?\n  \}\n/);
-eq("there is a migration", !!mig);
-const m = mig ? mig[0] : "";
+/* Read the whole migration section, not one function: b169 split the record
+   conversion out into practiceToNote/practiceToInk so that boot and an old
+   backup import share one converter instead of two that drift apart. */
+const from = html.indexOf("function migrateWorkingToNotes");
+const to = html.indexOf("/* ---------- ink blocks");
+eq("there is a migration", from > 0 && to > from);
+const m = from > 0 ? html.slice(from, to) : "";
 eq("the moved page is given the id it already had", /id:\s*p\.id\b/.test(m));
 eq("it is not given a fresh one", !/id:\s*newId\("nt"\)/.test(m));
 eq("the page it hangs off is remembered", /worksFor:\s*p\.noteId/.test(m));
@@ -37,9 +41,23 @@ eq("the clocks are kept, not reset to now",
    /createdAt:\s*p\.createdAt/.test(m) && /lastEdited:\s*p\.lastEdited/.test(m));
 eq("the old records are left alone rather than erased", !/delete\(|clear\(\)/.test(m));
 
-console.log("it happens once, and only once:");
-eq("a flag says it is done", /workingMigrated/.test(m));
-eq("a page that is already there is skipped", /have\[p\.id\]/.test(m));
+console.log("it cannot be skipped, and cannot double up:");
+/* b169: there was a "done" flag, and the Codex audit was right that it was a
+   trap. The flag stopped the scan, and the scan is the only thing that catches
+   an old row arriving late — from a backup restored next month, or a device
+   that had been switched off. There is no flag now; the scan is cheap because
+   a row that already has a page is skipped on sight, and it writes nothing at
+   all when there is nothing to move. */
+eq("no flag can stop a late-arriving old row being caught", !/workingMigrated/.test(m));
+eq("a row that already has a page is skipped", /byId\[p\.id\]/.test(m));
+eq("and its ink is never written a second time", /haveInk\[p\.id\]/.test(m));
+eq("the ink id is worked out from the page id, never minted fresh",
+   /function workInkId/.test(m) && !/newId\("ink"\)/.test(m));
+eq("a tombstone is migrated as a tombstone, not resurrected",
+   /deletedAt: p\.deletedAt/.test(m));
+eq("boot and old-backup import share one converter",
+   /practiceToNote/.test(html.slice(html.indexOf("function importBundle"),
+                                    html.indexOf("var SYNC_STORES"))));
 eq("it runs at boot before anything is painted",
    /migrateWorkingToNotes\(\)[\s\S]{0,220}purgeExpired/.test(html));
 eq("a failure does not stop the app opening",
