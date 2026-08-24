@@ -45,7 +45,11 @@ eq("a missing section does not hide the page", g[0].notes.some(n => n.id === "n5
 eq("empty input is safe", S.notesBySection([], []).length === 0);
 
 console.log("schema and wiring:");
-eq("storage version is 4", /var DB_VERSION = 4/.test(html));
+/* b168 moved to 5 to add notes.by_works, the index that answers "what working
+   pages hang off this page" without walking every note in the database. */
+eq("storage version is 5", /var DB_VERSION = 5/.test(html));
+eq("working pages are indexed by the page they hang off",
+   /createIndex\("by_works", "worksFor"\)/.test(html));
 eq("sections store is created", /createObjectStore\("sections"/.test(html));
 eq("sections are indexed by notebook", /createIndex\("by_notebook", "notebookId"\)/.test(html));
 eq("createNote accepts a section", /function createNote\(notebookId, title, sectionId\)/.test(html));

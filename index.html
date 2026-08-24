@@ -2852,12 +2852,12 @@ var MarginCore = (function(){
      the top level, so an older backup still imports unchanged.
      4 adds sections inside a notebook (notebooks → sections → pages).
      Existing pages have no sectionId and keep working as an unfiled group. */
-  var DB_VERSION = 4;      /* storage schema */
+  var DB_VERSION = 5;      /* storage schema */
   var FORMAT     = 8;      /* export file format (8 adds sections) */
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b167";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b168";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -2891,6 +2891,12 @@ var MarginCore = (function(){
       n.createIndex("by_notebook", "notebookId");
       n.createIndex("by_tag", "tags", {multiEntry:true});
       n.createIndex("by_edited", "lastEdited");
+      /* a working page carries the id of the page it was started from.
+         An ordinary page has no worksFor at all, and a record with no value
+         at the key path is simply absent from the index — so this index holds
+         working pages and nothing else, which is exactly what asking "what
+         working pages hang off this page" wants. */
+      n.createIndex("by_works", "worksFor");
     }
     if (!db.objectStoreNames.contains("assets")){
       db.createObjectStore("assets", {keyPath:"id"}).createIndex("by_note", "noteId");
@@ -2911,6 +2917,15 @@ var MarginCore = (function(){
       db.createObjectStore("sections", {keyPath:"id"}).createIndex("by_notebook", "notebookId");
     }
     if (oldVersion >= 1 && oldVersion < 2 && tx) migrate1to2(tx);
+    /* by_works arrived with v5. A store that already exists needs the index
+       added rather than created, and only the once. Moving the working pages
+       themselves is not done here: an upgrade transaction is the wrong place
+       for work that has to read the notes it is rewriting. See
+       migrateWorkingToNotes, which runs after the connection is open. */
+    if (oldVersion >= 1 && oldVersion < 5 && tx && db.objectStoreNames.contains("notes")){
+      var nn = tx.objectStore("notes");
+      if (!nn.indexNames.contains("by_works")) nn.createIndex("by_works", "worksFor");
+    }
   }
 
   function migrate1to2(tx){
@@ -3685,8 +3700,15 @@ var MarginCore = (function(){
     var grouped = notesBySection(notes, sections);
     var plan = [];
     grouped.forEach(function(g, si){
+      /* A drawer is not part of the notebook's numbering. Its pages are named
+         after the page they hang off — S2P2w1 — and renumbering them as though
+         they were ordinary pages of a section would throw that name away and
+         leave every working marker pointing at a name that no longer says what
+         it is for. */
+      if (isDrawer(g.section)) return;
       var sNum = sectionNumber(g.section, si);
       (g.notes || []).forEach(function(n, pi){
+        if (isWorkingPage(n)) return;
         var old = splitSecPage(n.title);
         if (!old && (n.title || "").trim()) return;
         var next = secPageName(sNum, pi + 1, old ? old.suffix : "");
@@ -3907,6 +3929,9 @@ var MarginCore = (function(){
         notebookId: notebookId,
         name: (name||"").trim() || "New section",
         colour: COLOURS.indexOf(colour) >= 0 ? colour : "slate",
+        /* null for an ordinary section. "working" or "summary" makes it a
+           drawer — see ensureDrawer below. */
+        kind: extra.kind || null,
         isDefault: extra.isDefault === true,
         order: extra.order != null ? extra.order : now,
         createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
@@ -3954,8 +3979,47 @@ var MarginCore = (function(){
     (sections || []).forEach(function(s){
       if (s.isDefault || s.name === "sec0" || s.name === "Sec1") def = s;
     });
-    return def || (sections && sections[0]) || null;
+    if (def) return def;
+    /* Falling back to "whichever section came first" must never land on a
+       drawer: a page dropped into Working because sec0 was missing would
+       vanish from the ordinary list without ever being asked. */
+    var first = null;
+    (sections || []).forEach(function(s){ if (!first && !isDrawer(s)) first = s; });
+    return first || null;
   }
+
+  /* ---- the drawers: sections that hold working pages and short notes ----
+     A drawer is an ordinary section carrying a kind. Everything inside it is a
+     real page, so it gets scrolling, search, export, backup and sync for free
+     — none of that has to be built a second time. What makes it a drawer is
+     that it is kept out of the ordinary page list, the page counts and the
+     chip tracks, so the notes you actually write stay exactly as slim as they
+     were before working pages had anywhere proper to live. */
+  var DRAWER_KINDS = { working: 1, summary: 1 };
+  function isDrawer(sec){ return !!(sec && DRAWER_KINDS[sec.kind]); }
+  function drawerOf(sections, kind){
+    var found = null;
+    (sections || []).forEach(function(s){
+      if (s && s.kind === kind && !s.deletedAt) found = s;
+    });
+    return found;
+  }
+  /* Made the first time something needs it, not when a notebook is created: a
+     notebook you never did any working in should not grow an empty drawer it
+     never asked for. The order sits far past any ordinary section so drawers
+     always settle at the foot of the list however many sections you add. */
+  function ensureDrawer(notebookId, kind, name){
+    return sectionsIn(notebookId).then(function(list){
+      var found = drawerOf(list, kind);
+      if (found) return found;
+      return createSection(notebookId, name, "slate",
+                           { kind: kind, order: (kind === "working" ? 9e14 : 8e14) });
+    });
+  }
+  function ensureWorkingSection(notebookId){
+    return ensureDrawer(notebookId, "working", "Working");
+  }
+  function workingSectionOf(sections){ return drawerOf(sections, "working"); }
   function sectionsIn(notebookId, opts){
     opts = opts || {};
     return byIndex("sections", "by_notebook", notebookId).then(function(l){
@@ -4155,23 +4219,31 @@ var MarginCore = (function(){
 
   /* every practice page anywhere, newest first — for "where did I do that
      integral last week" */
+  /* Every working page in every notebook, most recently touched first. The
+     stroke count has to be looked up now rather than read off the record: the
+     ink lives in a "page" asset, the same place an ordinary page keeps it. */
   function practiceAll(){
-    return Promise.all([getAll("practices"), getAll("notes"), getAll("notebooks")])
+    return Promise.all([getAll("notes"), getAll("notebooks"), getAll("assets")])
       .then(function(r){
-        var note = {}, nb = {};
-        r[1].forEach(function(n){ note[n.id] = n; });
-        r[2].forEach(function(x){ nb[x.id] = x; });
-        return r[0].filter(live).filter(function(p){
-          return (p.strokes && p.strokes.length) || plainText(p.html).length;
+        var note = {}, nb = {}, marks = {};
+        r[0].forEach(function(n){ note[n.id] = n; });
+        r[1].forEach(function(x){ nb[x.id] = x; });
+        r[2].forEach(function(a){
+          if (a.kind === "page" && live(a)) marks[a.noteId] = (a.strokes || []).length;
+        });
+        return r[0].filter(function(p){
+          if (!live(p) || !isWorkingPage(p)) return false;
+          /* a sheet you opened and never wrote on is not working you did */
+          return (marks[p.id] || 0) > 0 || plainText(p.html).length > 0;
         }).map(function(p){
-          var n = note[p.noteId];
+          var n = note[p.worksFor];
           return {
             practice: p, note: n || null,
-            noteTitle: n ? displayTitle(n) : "(note deleted)",
+            noteTitle: n ? displayTitle(n) : "(page deleted)",
             notebook: n && nb[n.notebookId] ? nb[n.notebookId].name : "",
-            marks: (p.strokes || []).length
+            marks: marks[p.id] || 0
           };
-        }).sort(function(a,b){ return b.practice.lastEdited - a.practice.lastEdited; });
+        }).sort(function(a,b){ return (b.practice.lastEdited||0) - (a.practice.lastEdited||0); });
       });
   }
 
@@ -4301,12 +4373,13 @@ var MarginCore = (function(){
     });
   }
 
-  /* Practice pages can hold megabytes of strokes. A key cursor walks the
-     index without deserialising a single record, so the per-note badge costs
-     nothing. */
+  /* Working pages can hold megabytes of strokes. A key cursor walks the index
+     without deserialising a single record, so the per-page badge costs
+     nothing. by_works holds working pages and nothing else, because an
+     ordinary page has no worksFor for the index to file it under. */
   function practiceCounts(){
     return open().then(function(db){
-      var idx = db.transaction(["practices"], "readonly").objectStore("practices").index("by_note");
+      var idx = db.transaction(["notes"], "readonly").objectStore("notes").index("by_works");
       return new Promise(function(res, rej){
         var m = {};
         var cur = idx.openKeyCursor();
@@ -4321,31 +4394,73 @@ var MarginCore = (function(){
     });
   }
 
+  /* How many pages a notebook holds. Working pages are real pages now, but
+     they are not what you mean when you ask how long a notebook is — counting
+     them would make a notebook you had done a lot of working in look twice the
+     size it reads as. */
   function counts(){
     return getAll("notes").then(function(l){
       var m = {};
-      l.filter(live).forEach(function(n){ m[n.notebookId] = (m[n.notebookId]||0) + 1; });
+      l.forEach(function(n){
+        if (!live(n) || isWorkingPage(n)) return;
+        m[n.notebookId] = (m[n.notebookId]||0) + 1;
+      });
       return m;
     });
   }
 
-  /* ---------- practice spaces ---------- */
+  /* ---------- working pages ----------
+     A working page used to be a record in a store of its own. That kept it a
+     second-class citizen for as long as it existed: you could not scroll from
+     one working page into the next, search never found it, it could take no
+     bookmark, no tag and no recording, and none of the page machinery that
+     took so long to get right applied to it at all.
 
-  /* One per note, made on demand. Stage 3 gives it a UI; the record
-     exists from Stage 1 so ids and timestamps are stable from the start. */
-  function blankPractice(noteId, page){
+     It is an ordinary page now. It lives in the notebook's Working drawer and
+     points back at the page it was started from through worksFor. Everything a
+     page already knows how to do it now does for free.
+
+     Two things deliberately did not change. The function names are the same, so
+     every caller still reads as it did. And the ids are the same: a working
+     marker on a page stores the id it was created with, so keeping the id is
+     the entire reason every marker already sitting in your notes keeps working
+     without being touched.
+
+     Ink moved, though. It used to sit inline on the record; it now lives where
+     an ordinary page's ink lives, in a "page" asset. */
+
+  function isWorkingPage(n){ return !!(n && n.worksFor); }
+
+  function newWorkingPage(parent, order, sectionId){
     var now = Date.now();
     return {
-      id: newId("pr"), noteId: noteId, page: page || 0,
-      html: "", strokes: [], h: 1200,
-      createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
+      id: newId("pr"),        /* pr_, still — old markers are matched by this id */
+      notebookId: parent ? parent.notebookId : null,
+      sectionId: sectionId || null,
+      worksFor: parent ? parent.id : null,
+      workOrder: order || 0,
+      title: workingName(parent, order || 0),
+      html: "", tags: [], pinned: false, starred: false,
+      createdAt: now, lastEdited: now,
+      deletedAt: null, deletedVia: null, editedOn: _device
     };
   }
+
+  /* every working page hanging off one page, in the order they were started */
   function practicePages(noteId){
-    return byIndex("practices", "by_note", noteId).then(function(l){
-      return l.filter(live).sort(function(a,b){
-        return (a.page||0) - (b.page||0) || (a.createdAt||0) - (b.createdAt||0);
+    if (!noteId) return Promise.resolve([]);
+    return byIndex("notes", "by_works", noteId).then(function(l){
+      return l.filter(live).sort(function(a, b){
+        return (a.workOrder||0) - (b.workOrder||0) ||
+               (a.createdAt||0) - (b.createdAt||0);
       });
+    });
+  }
+  function practicesFor(noteId, opts){
+    opts = opts || {};
+    if (!noteId) return Promise.resolve([]);
+    return byIndex("notes", "by_works", noteId).then(function(l){
+      return opts.includeDeleted ? l : l.filter(live);
     });
   }
   function getPractice(noteId, opts){
@@ -4354,35 +4469,46 @@ var MarginCore = (function(){
       var found = l[typeof opts.page === "number" ? opts.page : 0];
       if (found) return found;
       if (!opts.create && !opts.draft) return null;
-      /* Held in memory until something is actually written on it, so an
-         opened-but-unused page never counts as rough working. */
-      if (opts.draft) return blankPractice(noteId, l.length);
-      return putOne("practices", blankPractice(noteId, l.length));
+      return getNote(noteId).then(function(parent){
+        if (!parent) return null;
+        /* A draft is held in memory until something is actually written on it,
+           so a sheet you opened and never used never becomes a page sitting in
+           the drawer for ever. */
+        if (opts.draft) return newWorkingPage(parent, l.length, null);
+        return ensureWorkingSection(parent.notebookId).then(function(sec){
+          return putOne("notes", newWorkingPage(parent, l.length, sec.id));
+        });
+      });
     });
   }
   function addPracticePage(noteId){
-    return practicePages(noteId).then(function(l){
-      return putOne("practices", blankPractice(noteId, l.length));
+    return Promise.all([practicePages(noteId), getNote(noteId)]).then(function(r){
+      var list = r[0], parent = r[1];
+      if (!parent) throw new Error("No page " + noteId);
+      return ensureWorkingSection(parent.notebookId).then(function(sec){
+        return putOne("notes", newWorkingPage(parent, list.length, sec.id));
+      });
     });
   }
-  /* Every live working page, grouped by the notebook page it belongs to.
-     Used to weave them into the same reading order as ordinary pages. */
+  /* Every live working page, grouped by the page it hangs off. */
   function practicesGrouped(){
-    return getAll("practices").then(function(l){
+    return getAll("notes").then(function(l){
       var m = {};
-      l.filter(live).forEach(function(p){
-        if (!m[p.noteId]) m[p.noteId] = [];
-        m[p.noteId].push(p);
+      l.forEach(function(p){
+        if (!live(p) || !isWorkingPage(p)) return;
+        if (!m[p.worksFor]) m[p.worksFor] = [];
+        m[p.worksFor].push(p);
       });
       Object.keys(m).forEach(function(k){
-        m[k].sort(function(a,b){
-          return (a.page||0) - (b.page||0) || (a.createdAt||0) - (b.createdAt||0);
+        m[k].sort(function(a, b){
+          return (a.workOrder||0) - (b.workOrder||0) ||
+                 (a.createdAt||0) - (b.createdAt||0);
         });
       });
       return m;
     });
   }
-  /* S2P2w1 — the page it was opened from, then which working sheet. */
+  /* S2P2w1 — the page it was started from, then which working sheet. */
   function workingName(parent, index){
     var base = "P";
     if (parent){
@@ -4395,35 +4521,130 @@ var MarginCore = (function(){
     }
     return base + "w" + (index + 1);
   }
-  /* does this note have rough working attached, and how much? */
+  /* does this page have working attached, and has any of it been used?
+     Used is now two questions rather than one, because the ink moved out of
+     the record: words on the page, or strokes in its ink asset. */
   function practiceSummary(){
-    return getAll("practices").then(function(l){
+    return Promise.all([getAll("notes"), getAll("assets")]).then(function(r){
+      var inked = {};
+      r[1].forEach(function(a){
+        if (a.kind === "page" && live(a) && a.strokes && a.strokes.length) inked[a.noteId] = true;
+      });
       var m = {};
-      l.filter(live).forEach(function(p){
-        var used = (p.strokes && p.strokes.length) || plainText(p.html).length;
-        if (!m[p.noteId]) m[p.noteId] = {pages:0, used:false};
-        m[p.noteId].pages++;
-        if (used) m[p.noteId].used = true;
+      r[0].forEach(function(p){
+        if (!live(p) || !isWorkingPage(p)) return;
+        var used = inked[p.id] || plainText(p.html).length;
+        if (!m[p.worksFor]) m[p.worksFor] = {pages:0, used:false};
+        m[p.worksFor].pages++;
+        if (used) m[p.worksFor].used = true;
       });
       return m;
     });
   }
-  function savePractice(id, patch){
-    return getOne("practices", id).then(function(p){
-      if (!p) throw new Error("No practice space " + id);
-      if (patch.strokes) patch = Object.assign({}, patch, { strokes: cleanStrokes(patch.strokes) });
-      var touched = false;
-      Object.keys(patch).forEach(function(k){
-        if (p[k] !== patch[k]){ p[k] = patch[k]; touched = true; }
-      });
-      if (touched) touch(p);
-      return putOne("practices", p);
+  /* The ink on a working page, read from the same kind of record an ordinary
+     page keeps its ink in. Callers used to find strokes sitting on the record
+     itself; they have to ask for them now. */
+  function workInk(id){
+    if (!id) return Promise.resolve({ strokes: [], removed: {}, restored: {} });
+    return getPageInk(id).then(function(a){
+      return a ? { strokes: a.strokes || [], removed: a.removed || {}, restored: a.restored || {} }
+               : { strokes: [], removed: {}, restored: {} };
     });
   }
-  function practicesFor(noteId, opts){
-    opts = opts || {};
-    return byIndex("practices", "by_note", noteId).then(function(l){
-      return opts.includeDeleted ? l : l.filter(live);
+  /* One door for saving, so the callers that hand over words and ink together
+     still can. The words go on the page, the ink goes in its asset. The two
+     steps are deliberately in sequence and not side by side: both of them
+     read-modify-write the same note record, and run together the second would
+     quietly undo the first. */
+  function savePractice(id, patch){
+    patch = patch || {};
+    var step = Promise.resolve();
+    if (patch.strokes){
+      step = step.then(function(){
+        return getPageInk(id, { create:true }).then(function(a){
+          return saveAsset(a.id, {
+            strokes: patch.strokes,
+            removed: patch.removed || {},
+            restored: patch.restored || {}
+          });
+        });
+      });
+    }
+    if ("html" in patch){
+      step = step.then(function(){ return saveNote(id, { html: patch.html }); });
+    } else if (patch.strokes){
+      step = step.then(function(){ return bumpNote(id); });   /* drawing is editing */
+    }
+    return step.then(function(){ return getNote(id); });
+  }
+
+  /* ---- moving the old working records into the notebook ----
+     This runs once, after the connection is open — not inside the schema
+     upgrade, which is the wrong place for work that has to read the notes it
+     is rewriting. Every old record becomes a page carrying its own id, so the
+     markers already on your pages go on finding it.
+
+     The old records are left exactly where they are rather than erased. They
+     cost nothing, they are what an old backup file still expects to find, and
+     if any of this turns out wrong they are the way back. */
+  function migrateWorkingToNotes(){
+    return getMeta("workingMigrated", 0).then(function(done){
+      if (done) return { moved: 0, already: true };
+      return Promise.all([getAll("practices"), getAll("notes")]).then(function(r){
+        var old = r[0].filter(live);
+        var have = {};
+        r[1].forEach(function(n){ have[n.id] = true; });
+        var todo = old.filter(function(p){ return !have[p.id]; });
+        if (!todo.length) return setMeta("workingMigrated", 1).then(function(){
+          return { moved: 0, already: false };
+        });
+        var byId = {};
+        r[1].forEach(function(n){ byId[n.id] = n; });
+        /* one Working drawer per notebook, made once and shared */
+        var books = {};
+        todo.forEach(function(p){
+          var parent = byId[p.noteId];
+          if (parent && parent.notebookId) books[parent.notebookId] = true;
+        });
+        var ids = Object.keys(books);
+        return Promise.all(ids.map(function(nb){
+          return ensureWorkingSection(nb).then(function(sec){ return [nb, sec]; });
+        })).then(function(pairs){
+          var drawer = {};
+          pairs.forEach(function(p){ drawer[p[0]] = p[1]; });
+          var notes = [], assets = [], now = Date.now();
+          todo.forEach(function(p){
+            var parent = byId[p.noteId];
+            var sec = parent ? drawer[parent.notebookId] : null;
+            notes.push({
+              id: p.id,                                  /* the whole point: same id */
+              notebookId: parent ? parent.notebookId : null,
+              sectionId: sec ? sec.id : null,
+              worksFor: p.noteId || null,
+              workOrder: p.page || 0,
+              title: workingName(parent, p.page || 0),
+              html: p.html || "",
+              tags: [], pinned: false, starred: false,
+              createdAt: p.createdAt || now,
+              lastEdited: p.lastEdited || now,
+              deletedAt: null, deletedVia: null,
+              editedOn: p.editedOn || _device
+            });
+            if (p.strokes && p.strokes.length){
+              assets.push({
+                id: newId("ink"), noteId: p.id, kind: "page",
+                strokes: p.strokes, removed: p.removed || {}, restored: p.restored || {},
+                h: p.h || 0,
+                createdAt: p.createdAt || now, lastEdited: p.lastEdited || now,
+                deletedAt: null, editedOn: p.editedOn || _device
+              });
+            }
+          });
+          return putMany(["notes","assets"], { notes: notes, assets: assets })
+                   .then(function(){ return setMeta("workingMigrated", 1); })
+                   .then(function(){ return { moved: notes.length, already: false }; });
+        });
+      });
     });
   }
 
@@ -5461,6 +5682,10 @@ var MarginCore = (function(){
     htmlToMarkdown:htmlToMarkdown, noteToMarkdown:noteToMarkdown,
     addPracticePage:addPracticePage, practiceSummary:practiceSummary,
     practicesGrouped:practicesGrouped, workingName:workingName,
+    workInk:workInk, isWorkingPage:isWorkingPage,
+    migrateWorkingToNotes:migrateWorkingToNotes,
+    ensureWorkingSection:ensureWorkingSection, ensureDrawer:ensureDrawer,
+    isDrawer:isDrawer, drawerOf:drawerOf, workingSectionOf:workingSectionOf,
     reviveAsset:reviveAsset, tombstoneAssets:tombstoneAssets, bumpNote:bumpNote,
     matchNote:matchNote, stamp:stamp, relTime:relTime,
     createNotebook:createNotebook, allNotebooks:allNotebooks, getNotebook:getNotebook,
@@ -8906,13 +9131,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     setTimeout(function(){ pracSurface.redraw(); noteSurface.redraw(); }, 210);
   }
 
+  /* Only the newest open may finish. The ink is fetched now rather than read
+     off the record, so a second open started while the first is still waiting
+     would otherwise paint the sheet you left over the one you asked for. */
+  var pracSeq = 0;
+
   function openPractice(page){
     if (!state.note) return Promise.resolve();
     var nid = state.note.id;
+    var seq = ++pracSeq;
     return C.practicePages(nid).then(function(list){
       if (!list.length) return C.getPractice(nid, { create:true }).then(function(p){ return [p]; });
       return list;
     }).then(function(list){
+      if (seq !== pracSeq) return;
       prac.pages = list;
       prac.idx = Math.max(0, Math.min(list.length - 1, page == null ? 0 : page));
       prac.rec = list[prac.idx];
@@ -8925,9 +9157,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       });
       setSnap(prac.snap === "full" ? "full" : "half");
       $("pracText").innerHTML = prac.rec.html || "";
-      pracSurface.strokes = prac.rec.strokes || [];
-      pracSurface.removed = prac.rec.removed || {};
-      pracSurface.restored = prac.rec.restored || {};
+      /* Blank first, fill when it arrives. A working page keeps its ink in a
+         record of its own now, exactly as an ordinary page does, so it lands a
+         moment after the words — and without the blanking, the sheet you just
+         closed shows its strokes on the one you just opened. */
+      pracSurface.strokes = [];
+      pracSurface.removed = {};
+      pracSurface.restored = {};
+      loadPracInk(prac.rec.id, seq);
       pracSurface.undo = []; pracSurface.redo = [];
       ink.active = "practice";
       if (typeof hydrateImages === "function") hydrateImages();
@@ -8980,15 +9217,30 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("pracWhere").textContent = name;
   }
 
+  /* Fetch a working page's ink and put it on the surface, but only if that is
+     still the page being looked at by the time it arrives. Both guards matter:
+     seq catches a newer open, the id catches a page turn inside the sheet. */
+  function loadPracInk(id, seq){
+    return C.workInk(id).then(function(k){
+      if (seq !== pracSeq) return;
+      if (!prac.rec || prac.rec.id !== id) return;
+      pracSurface.strokes = k.strokes;
+      pracSurface.removed = k.removed;
+      pracSurface.restored = k.restored;
+      pracSurface.redraw();
+    }).catch(function(){});
+  }
+
   function gotoPracPage(i){
     if (i < 0 || i >= prac.pages.length) return;
     flushPractice().then(function(){
       prac.idx = i;
       prac.rec = prac.pages[i];
       $("pracText").innerHTML = prac.rec.html || "";
-      pracSurface.strokes = prac.rec.strokes || [];
-      pracSurface.removed = prac.rec.removed || {};
-      pracSurface.restored = prac.rec.restored || {};
+      pracSurface.strokes = [];
+      pracSurface.removed = {};
+      pracSurface.restored = {};
+      loadPracInk(prac.rec.id, pracSeq);
       pracSurface.undo = []; pracSurface.redo = [];
       if (typeof hydrateImages === "function") hydrateImages();
       pracSurface.redraw();
@@ -13748,7 +14000,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       b.type = "button"; b.className = "row";
       var m = document.createElement("span"); m.className = "rowmain";
       var t = document.createElement("span"); t.className = "rowtitle";
-      t.textContent = p.noteTitle + "  \u00B7  page " + ((p.practice.page || 0) + 1);
+      t.textContent = p.noteTitle + "  \u00B7  page " + ((p.practice.workOrder || 0) + 1);
       var s = document.createElement("span"); s.className = "rowsub";
       s.textContent = p.notebook + " \u00B7 " + p.marks + " marks \u00B7 " + C.relTime(p.practice.lastEdited);
       m.appendChild(t); m.appendChild(s);
@@ -13757,7 +14009,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         if (!p.note) return;
         flush();
         go({ nbId: p.note.notebookId, noteId: p.note.id });
-        setTimeout(function(){ openPractice(p.practice.page || 0); }, 400);
+        setTimeout(function(){ openPractice(p.practice.workOrder || 0); }, 400);
       });
       host.appendChild(b);
     });
@@ -19423,7 +19675,16 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* ---------------- boot ---------------- */
   C.open().then(function(){
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
-    return C.purgeExpired().then(function(){ return C.getMeta("sort", "edited"); });
+    /* Working pages moved out of a store of their own and into the notebook.
+       This runs once, before a single thing is painted, so nothing ever sees
+       the half-moved state. A failure here must not stop the app opening —
+       the old records are still there and the next start tries again. */
+    return C.migrateWorkingToNotes().catch(function(e){
+      console.warn("working pages could not be moved yet", e);
+      return null;
+    }).then(function(){
+      return C.purgeExpired();
+    }).then(function(){ return C.getMeta("sort", "edited"); });
   }).then(function(sortMode){
     state.sort = sortMode;
     $("sortSel").value = sortMode;
