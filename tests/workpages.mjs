@@ -80,12 +80,24 @@ eq("the default-section fallback refuses to pick a drawer",
 console.log("the notebook does not get bulky:");
 /* A notebook you had done a lot of working in would otherwise read as twice
    the length it actually is. */
-eq("page counts skip working pages",
-   /function counts\(\)\{[\s\S]*?isWorkingPage\(n\)\) return;/.test(html));
+/* b170: each consumer used to roll its own test for "is this a drawer page".
+   That is how the next consumer added gets missed, so there is one predicate
+   now and everything asks it. */
+eq("page counts go through the one drawer predicate",
+   /function counts\(\)\{[\s\S]*?ordinaryPages\(/.test(html));
 eq("renumbering skips the drawer",
    /function planSecPageNames[\s\S]*?isDrawer\(g\.section\)\) return;/.test(html));
 eq("renumbering also skips a working page filed anywhere else",
-   /function planSecPageNames[\s\S]*?isWorkingPage\(n\)\) return;/.test(html));
+   /function planSecPageNames[\s\S]*?isDrawerPage\(n, dIds\)\) return;/.test(html));
+/* A skipped page must not consume a page number on its way past, or the page
+   after it jumps from P3 to P5 with nothing on screen to explain why. */
+eq("and a skipped page does not eat a page number",
+   /function planSecPageNames[\s\S]*?var pi = 0;[\s\S]*?pi\+\+;/.test(html));
+/* Sections are numbered among the ordinary ones only: counting the drawers in
+   would renumber every section the first time a notebook grew a Working
+   drawer, which renames every page in the notebook after it. */
+eq("sections are numbered among the ordinary ones only",
+   /function planSecPageNames[\s\S]*?sectionNumber\(g\.section, ordinaryIndex\)/.test(html));
 
 console.log("looking one up does not walk the whole database:");
 eq("there is an index for it", /createIndex\("by_works", "worksFor"\)/.test(html));

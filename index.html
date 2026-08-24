@@ -1428,6 +1428,12 @@
   .prachead .segmented button{padding:7px 10px; font-size:11px}
   .pracmark{font-family:var(--mono); font-size:9.5px; letter-spacing:.2em; color:var(--live); flex:none}
   .pracwhere{font-size:12px; color:var(--ink-2); max-width:34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  /* the source page is gone: say so where the name would have been, and make
+     it obviously tappable rather than a dead label */
+  .pracwhere.relink{color:var(--warn, #c2410c); cursor:pointer; text-decoration:underline dotted; font-weight:600}
+  /* a drawer row in the section list is a drawer, not Sec 3 */
+  #sectionList .row.drawerrow .rowtitle{font-style:italic; opacity:.85}
+  #sectionList .row.drawerrow .swatch{border-radius:3px}
   .pracpage{font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--ink-2); flex:none}
   .paper.prac{background:var(--ground); overflow-y:auto; -webkit-overflow-scrolling:touch}
   .sheet.prac{
@@ -2857,7 +2863,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b169";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b170";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -3698,20 +3704,28 @@ var MarginCore = (function(){
   }
   function planSecPageNames(notes, sections){
     var grouped = notesBySection(notes, sections);
+    var dIds = drawerSectionIds(sections);
     var plan = [];
-    grouped.forEach(function(g, si){
+    /* Sections are numbered by their place among the ordinary ones. Counting
+       the drawers in would shift every section number the first time a
+       notebook happened to grow a Working drawer. */
+    var ordinaryIndex = -1;
+    grouped.forEach(function(g){
       /* A drawer is not part of the notebook's numbering. Its pages are named
          after the page they hang off — S2P2w1 — and renumbering them as though
          they were ordinary pages of a section would throw that name away and
          leave every working marker pointing at a name that no longer says what
          it is for. */
       if (isDrawer(g.section)) return;
-      var sNum = sectionNumber(g.section, si);
-      (g.notes || []).forEach(function(n, pi){
-        if (isWorkingPage(n)) return;
+      ordinaryIndex++;
+      var sNum = sectionNumber(g.section, ordinaryIndex);
+      var pi = 0;
+      (g.notes || []).forEach(function(n){
+        if (isDrawerPage(n, dIds)) return;   /* and it must not eat a page number */
+        pi++;
         var old = splitSecPage(n.title);
         if (!old && (n.title || "").trim()) return;
-        var next = secPageName(sNum, pi + 1, old ? old.suffix : "");
+        var next = secPageName(sNum, pi, old ? old.suffix : "");
         if (next !== (n.title || "")) plan.push({ id: n.id, from: n.title || "", to: next });
       });
     });
@@ -3952,7 +3966,12 @@ var MarginCore = (function(){
       return ready.then(function(sec){
         return notesIn(notebookId).then(function(notes){
           var jobs = [];
+          var dIds = drawerSectionIds(list.concat([sec]));
           notes.forEach(function(n){
+            /* A working page with no section must not be swept into sec0. It
+               belongs in the drawer, and putting it in the ordinary list is
+               exactly the bulk this is all meant to prevent. */
+            if (isDrawerPage(n, dIds)) return;
             if (!n.sectionId){
               n.sectionId = sec.id;
               touch(n);
@@ -4020,6 +4039,32 @@ var MarginCore = (function(){
     return ensureDrawer(notebookId, "working", "Working");
   }
   function workingSectionOf(sections){ return drawerOf(sections, "working"); }
+
+  /* ---- one answer to "is this a page you write on, or one of the drawers" ----
+     Every list, every count and both chips ask this and only this. Teaching
+     each painter its own version of the question is how the next one added
+     gets missed, and a working page turning up in the ordinary page list is
+     precisely the bulk this whole design exists to avoid. */
+  function drawerSectionIds(sections){
+    var m = {};
+    (sections || []).forEach(function(s){ if (isDrawer(s)) m[s.id] = 1; });
+    return m;
+  }
+  function isDrawerPage(n, drawerIds){
+    if (!n) return false;
+    /* worksFor is asked first on purpose: a working page is one wherever it
+       happens to be filed, including before its drawer has arrived from
+       another device, when its sectionId still points at nothing here. */
+    if (n.worksFor) return true;
+    return !!(drawerIds && n.sectionId && drawerIds[n.sectionId]);
+  }
+  function ordinaryPages(notes, sections){
+    var d = drawerSectionIds(sections);
+    return (notes || []).filter(function(n){ return !isDrawerPage(n, d); });
+  }
+  function ordinarySections(sections){
+    return (sections || []).filter(function(s){ return !isDrawer(s); });
+  }
   function sectionsIn(notebookId, opts){
     opts = opts || {};
     return byIndex("sections", "by_notebook", notebookId).then(function(l){
@@ -4049,6 +4094,12 @@ var MarginCore = (function(){
       if (!sec) return null;
       if (sec.isDefault || sec.name === "sec0"){
         throw new Error("The default section cannot be deleted.");
+      }
+      /* Deleting a section moves its pages to sec0. Doing that to a drawer
+         would tip every working page into the ordinary list at once. */
+      if (isDrawer(sec)){
+        throw new Error("The " + sec.name + " drawer cannot be deleted \u2014 " +
+                        "its pages belong to other pages.");
       }
       return ensureDefaultSection(sec.notebookId).then(function(list){
         var home = defaultSectionOf(list);
@@ -4361,11 +4412,15 @@ var MarginCore = (function(){
      one after another, each doing its own full scan of every note. One pass
      now answers all four. */
   function notesSnapshot(){
-    return getAll("notes").then(function(all){
+    return Promise.all([getAll("notes"), getAll("sections")]).then(function(rr){
+      var all = rr[0];
       var live_ = all.filter(live);
+      var drawerIds = drawerSectionIds(rr[1]);
       var counts = {}, starred = [], weak = [], marks = [];
       live_.forEach(function(n){
-        counts[n.notebookId] = (counts[n.notebookId] || 0) + 1;
+        /* Stars and bookmarks on a working page still belong in their lists.
+           You put them there. Only the length of the notebook excludes them. */
+        if (!isDrawerPage(n, drawerIds)) counts[n.notebookId] = (counts[n.notebookId] || 0) + 1;
         if (n.starred) starred.push(n);
         if (n.bookmark) marks.push(n);
         var t = n.tags || [];
@@ -4412,10 +4467,9 @@ var MarginCore = (function(){
      them would make a notebook you had done a lot of working in look twice the
      size it reads as. */
   function counts(){
-    return getAll("notes").then(function(l){
+    return Promise.all([getAll("notes"), getAll("sections")]).then(function(r){
       var m = {};
-      l.forEach(function(n){
-        if (!live(n) || isWorkingPage(n)) return;
+      ordinaryPages(r[0].filter(live), r[1]).forEach(function(n){
         m[n.notebookId] = (m[n.notebookId]||0) + 1;
       });
       return m;
@@ -5827,6 +5881,8 @@ var MarginCore = (function(){
     migrateWorkingToNotes:migrateWorkingToNotes,
     ensureWorkingSection:ensureWorkingSection, ensureDrawer:ensureDrawer,
     isDrawer:isDrawer, drawerOf:drawerOf, workingSectionOf:workingSectionOf,
+    isDrawerPage:isDrawerPage, ordinaryPages:ordinaryPages,
+    ordinarySections:ordinarySections, drawerSectionIds:drawerSectionIds,
     reviveAsset:reviveAsset, tombstoneAssets:tombstoneAssets, bumpNote:bumpNote,
     cloneAsset:cloneAsset, copyAsset:copyAsset,
     matchNote:matchNote, stamp:stamp, relTime:relTime,
@@ -6320,19 +6376,23 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       host.innerHTML = '<div class="empty">No sections.</div>';
       return;
     }
+    /* Drawers are rows too, but they are not sections: they carry a mark, and
+       they are never counted among "Sec 1, Sec 2 ...". */
+    var ordinary = C.ordinarySections(list);
     list.forEach(function(s){
       var nHere = (state.notes || []).filter(function(n){ return n.sectionId === s.id; }).length;
       var b = document.createElement("button");
-      b.type = "button"; b.className = "row";
+      b.type = "button"; b.className = "row" + (C.isDrawer(s) ? " drawerrow" : "");
       if (s.id === state.sectionId) b.setAttribute("aria-current", "true");
       var sw = document.createElement("i");
       sw.className = "swatch";
       sw.style.background = SWATCH[s.colour] || SWATCH.slate;
       var m = document.createElement("span"); m.className = "rowmain";
       var t = document.createElement("span"); t.className = "rowtitle";
-      t.textContent = (typeof C.sectionDisplayName === "function")
-        ? C.sectionDisplayName(s, list.indexOf(s))
-        : s.name;
+      t.textContent = C.isDrawer(s) ? s.name
+        : ((typeof C.sectionDisplayName === "function")
+             ? C.sectionDisplayName(s, ordinary.indexOf(s))
+             : s.name);
       m.appendChild(t);
       var c = document.createElement("span"); c.className = "count";
       c.textContent = nHere;
@@ -6571,7 +6631,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     var q = state.filter.trim();
     var sid = state.sectionId;
-    var shown = C.sortNotes(state.notes, state.sort)
+    /* filtered before it is sorted or matched, so nothing downstream has to
+       remember to ask the question again */
+    var shown = C.sortNotes(C.ordinaryPages(state.notes, state.sections), state.sort)
                  .filter(function(n){
                    if (sid && n.sectionId && n.sectionId !== sid) return false;
                    return C.matchNote(n, q);
@@ -9375,7 +9437,44 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     $("pracPage").textContent = name + "  ·  " + (prac.idx + 1) + "/" + prac.pages.length;
     $("pracPrev").disabled = prac.idx <= 0;
     $("pracNext").disabled = prac.idx >= prac.pages.length - 1;
-    $("pracWhere").textContent = name;
+    paintPracSource(name);
+  }
+
+  /* A working page whose source page has been deleted is not broken, and must
+     not be quietly hidden: it often holds the only copy of a derivation, which
+     is worth more than the page it was started from. So it says what happened,
+     and offers to hang itself off whatever page is open instead. */
+  function paintPracSource(name){
+    var el = $("pracWhere");
+    if (!el) return;
+    el.classList.remove("relink");
+    el.onclick = null;
+    var src = prac.rec && prac.rec.worksFor;
+    var parent = src ? ((state.notes || []).filter(function(n){
+      return n.id === src && !n.deletedAt;
+    })[0] || null) : null;
+    if (src && !parent){
+      el.textContent = "Source missing \u2014 Relink";
+      el.title = "The page this working was started from is gone. " +
+                 "Tap to hang it off the page you have open instead.";
+      el.classList.add("relink");
+      el.onclick = relinkWorkingHere;
+      return;
+    }
+    el.textContent = name;
+    el.title = parent ? ("Working for " + C.displayTitle(parent)) : "";
+  }
+
+  function relinkWorkingHere(){
+    if (!prac.rec || !state.note) return;
+    if (state.note.id === prac.rec.worksFor) return;
+    var id = prac.rec.id;
+    C.saveNote(id, { worksFor: state.note.id }).then(function(n){
+      if (prac.rec && prac.rec.id === id) prac.rec = n;
+      if (typeof ensureWorkPin === "function") ensureWorkPin(id);
+      paintPracHead();
+      hint("Working page re-linked to this page.");
+    }).catch(function(){ say("Could not re-link that working page."); });
   }
 
   /* Fetch a working page's ink and put it on the surface, but only if that is
@@ -17201,12 +17300,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* the same reading order the data layer uses, so scrolling on from a page
      and the page numbers never disagree */
+  /* The reading order of a notebook: the pages you write on, in order. Both
+     chips, every page turn and the whole hand-over between pages walk this, so
+     a drawer page reaching it would drop a working sheet into the middle of
+     the lecture you were scrolling through. */
   function pageOrder(){
     var secs = state.sections || [];
-    if (!secs.length) return C.sortPages(state.notes);
-    var grouped = C.notesBySection(state.notes, secs);
+    var pages = C.ordinaryPages(state.notes, secs);
+    if (!secs.length) return C.sortPages(pages);
+    var grouped = C.notesBySection(pages, secs);
     var out = [];
-    grouped.forEach(function(g){ out = out.concat(g.notes); });
+    grouped.forEach(function(g){
+      if (C.isDrawer(g.section)) return;
+      out = out.concat(g.notes);
+    });
     return out;
   }
   function pageById(id){

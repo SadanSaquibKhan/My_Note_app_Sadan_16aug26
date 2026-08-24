@@ -16,8 +16,14 @@ const splitSeries = html.match(/function splitSeries\(name\)\{[\s\S]*?\n  \}/)[0
 const kinds = html.match(/var DRAWER_KINDS = \{[\s\S]*?\};/)[0];
 const isDrawer = html.match(/function isDrawer\(sec\)\{.*\}/)[0];
 const isWork = html.match(/function isWorkingPage\(n\)\{.*\}/)[0];
+/* b170: renumbering asks one central predicate now instead of testing worksFor
+   itself, so the two functions that answer it travel with the extracted copy.
+   Without them the eval throws where the real code is perfectly fine. */
+const dIds = html.match(/function drawerSectionIds\(sections\)\{[\s\S]*?\n  \}/)[0];
+const isDrawerPage = html.match(/function isDrawerPage\(n, drawerIds\)\{[\s\S]*?\n  \}/)[0];
 const mk = new Function(
   splitSeries + "\n" + kinds + "\n" + isDrawer + "\n" + isWork + "\n" +
+  dIds + "\n" + isDrawerPage + "\n" +
   (sort ? sort[0] : "function sortPages(l){return l.slice();}") + "\n" +
   by + "\n" + split + "\n" + name + "\n" + secN + "\n" + plan + "\n" +
   "return { splitSecPage, secPageName, planSecPageNames };"
