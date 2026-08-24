@@ -63,7 +63,7 @@ eq("8  chip landing retries like restoreScroll, over what can actually scroll",
    where you can see it, not behind the working sheet. */
 eq("9  going back via overscroll lands on the page, not its next peek",
    has(/pageBottom\(p\) : p\.scrollHeight/) &&
-   has(/bot - effectivePageViewport\(\)\.height/));
+   has(/bot - usablePageViewport\(\)\.height/));
 eq("10 neighbour ink no longer rebuilds the whole peek band",
    has(/Only redraw the ink canvas/) &&
    !/if \(dir < 0 && typeof paintPrevPeek === "function"\) paintPrevPeek\(\);/.test(html));

@@ -22,7 +22,7 @@ const span = (from, to) => {
   return html.slice(a, b < 0 ? html.length : b);
 };
 
-const helperPattern = /function\s+(effectivePageViewport|visiblePageViewport|usablePageViewport|pageViewport|noteViewport|effectiveViewport|visiblePageRect)\s*\(/g;
+const helperPattern = /function\s+(usablePageViewport|visiblePageViewport|usablePageViewport|pageViewport|noteViewport|effectiveViewport|visiblePageRect)\s*\(/g;
 const helperHits = Array.from(html.matchAll(helperPattern));
 const helperName = helperHits.length ? helperHits[0][1] : "";
 const callsHelper = (code) => !!helperName && new RegExp("\\b" + helperName + "\\s*\\(").test(code);

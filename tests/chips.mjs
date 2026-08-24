@@ -112,7 +112,7 @@ console.log("landing honours the zoom:");
 eq("a fraction of a page is measured against what can actually scroll",
    has(/function pageScrollFor\(nid, frac\)\{/) &&
    has(/var span = Math\.max\(0, pageSpan\(nid\) \* pageZoom\(\) - v\.height\);/) &&
-   has(/var v = effectivePageViewport\(\);/) &&
+   has(/var v = usablePageViewport\(\);/) &&
    has(/restoreScroll\(land \* span, 0\);/));
 
 console.log("");

@@ -69,8 +69,27 @@ eq("remembered scroll restores relative to the adjusted visible top", callsViewp
 console.log("the pen and layout switch only at the intended states:");
 eq("Hidden and Strip keep ink.active on the main note",
    /(?:hidden|strip)[\s\S]{0,500}ink\.active\s*=\s*["']note["']/i.test(stripCode));
-eq("Half and Full hand ink.active to the summary sheet",
-   /(?:half|full)[\s\S]{0,500}ink\.active\s*=\s*["'](?:practice|summary|sheet)["']/i.test(stripCode));
+/* DELIBERATE DEVIATION, b173. The audit expected a taller Strip to become a
+   second writable editor with its own ink.active. It is not built that way,
+   for two reasons.
+
+   The first is that the same suite, four lines up, forbids registering another
+   writable ink surface — and this app has exactly two, "note" and "practice".
+   Handing ink.active to a third name that owns no surface would be a lie the
+   drawing code eventually trips over.
+
+   The second is the keystone decision this whole batch rests on: a short note
+   is a real page. Writing in one therefore means opening it, with the whole
+   editor, undo, tools and all — not a cut-down copy floating over the page you
+   came from. So the Strip reads, and Open navigates; the Back chip and Go to
+   main carry you between the two.
+
+   What must stay true is that the Strip never quietly takes the pen. */
+eq("no state of the Strip ever takes the pen from the page underneath",
+   /ink\.active = "note";/.test(stripCode) &&
+   !/(?:half|full)[\s\S]{0,400}ink\.active\s*=\s*["'](?:summary|strip)["']/i.test(stripCode));
+eq("opening a short note navigates to it rather than floating a second editor",
+   /sstripOpen[\s\S]{0,400}go\(\{ nbId: sum\.notebookId, noteId: sum\.id \}\)/.test(html));
 eq("changing the main page does not close an open summary Strip",
    !/if\s*\(prac\.open\)\s*closePractice\(\)/.test(paintDoc) ||
    /kind\s*!==?\s*["']summary["']|snap\s*!==?\s*["']strip["']/.test(paintDoc));
