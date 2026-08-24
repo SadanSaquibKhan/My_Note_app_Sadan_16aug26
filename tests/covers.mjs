@@ -23,7 +23,11 @@ const span = (from, to) => {
 const anchorHere = span("function anchorHere", "function insertLink");
 const copySpot = span("function copySpotLink", "function nearestAnchor");
 const nearest = span("function nearestAnchor", "function pasteLink");
-const scrollAnchor = span("function scrollToAnchor", "/* ---- 9.");
+/* Tightened from "/* ---- 9." to the section that actually follows it: that
+   marker is 500 lines further on in this file and swept in the audio follow,
+   two canvas redraws and the text-history debounce, none of which have
+   anything to do with landing on a spot. */
+const scrollAnchor = span("function scrollToAnchor", "/* ---- the Covers band");
 const preview = span("function previewHtml", "function previewStrokes");
 const importing = span("function importBundle", "var SYNC_STORES");
 const backlinks = span("function backlinks", "/* ---------- notebooks");
@@ -47,6 +51,12 @@ eq("nearest-anchor distance considers both axes or the actual caret hit",
    /clientX|\.left/.test(nearest));
 eq("anchor landing is not a blind fixed timeout",
    !/setTimeout/.test(scrollAnchor));
+/* The old landing waited a flat 260ms and then looked once. On a slow mount
+   the page was not there yet so it never landed, and you arrived at the top of
+   the page with nothing to say why; on a fast one it waited for nothing. */
+eq("the parked spot is landed by the render, not by a delay",
+   /function landAnchor[\s\S]{0,400}getElementById\(pendingAnchor\)/.test(html) &&
+   /paintDoc\(\);[\s\S]{0,200}landAnchor\(\)/.test(html));
 eq("a pending anchor is consumed by the successful render/paint path",
    /pendingAnchor|anchorPending|landAnchor/.test(html) &&
    /renderSeq|paintDoc/.test(html));

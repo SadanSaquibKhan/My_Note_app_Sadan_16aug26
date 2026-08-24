@@ -380,6 +380,23 @@
   #lassoCount{font-size:11px; opacity:.8; padding:0 6px; white-space:nowrap}
 
   .tagrow{display:flex; gap:6px; flex-wrap:wrap; padding:7px 14px; border-bottom:1px solid var(--rule)}
+  /* What this short note was written about. One row, scrolls sideways rather
+     than wrapping: a summary covering eight pages must not eat eight lines of
+     the page it is sitting on. */
+  .coverband{display:flex; gap:6px; align-items:center; padding:6px 14px;
+             border-bottom:1px solid var(--rule); overflow-x:auto; white-space:nowrap;
+             background:var(--panel)}
+  .coverband .lbl{font-size:11px; color:var(--ink-2); flex:0 0 auto; letter-spacing:.02em}
+  .coverband .cchip{flex:0 0 auto; font-size:12px; padding:3px 9px; border-radius:999px;
+                    border:1px solid var(--rule); background:var(--bg); cursor:pointer; color:var(--ink)}
+  .coverband .cchip:hover{background:var(--live-soft)}
+  .coverband .cchip.gone{color:var(--warn,#c2410c); border-style:dashed}
+  .coverband .cchip.add{border-style:dashed; color:var(--ink-2)}
+  .coverband .gomain{flex:0 0 auto; margin-left:auto; font-size:12px; font-weight:600}
+  .linkbadge{font-size:11px}
+  /* the spot a link just landed on, so you can see what was pointed at */
+  .anchor.flash, .flash{background:var(--live-soft); border-radius:3px;
+                        transition:background .4s ease}
   .tagrow[hidden]{display:none}
   .tagchip{
     font-family:var(--mono); font-size:10.5px; letter-spacing:.06em;
@@ -1951,6 +1968,8 @@
         <button class="ghost" id="starBtn" aria-pressed="false">&#9734; Star</button>
         <button class="ghost" id="markBtn" aria-pressed="false" title="Bookmark this page and name the topic that starts here">&#9873; Bookmark</button>
         <button class="ghost" id="pracBtn" title="Rough working for this note">Practice</button>
+        <button class="ghost" id="sumBtn" title="Write a short note about this page. It remembers where you were standing.">Sum up</button>
+        <button class="ghost linkbadge" id="srcBadge" hidden></button>
         <span class="segmented modes">
           <button type="button" id="mode_auto" aria-pressed="true" title="Pen writes, finger works the text">Auto</button>
           <button type="button" id="mode_write" aria-pressed="false" title="Everything draws">Write</button>
@@ -2124,6 +2143,7 @@
         <button class="ghost" id="imgDone">Done</button>
       </div>
       <div class="tagrow" id="noteTags" hidden></div>
+      <div class="coverband" id="coverBand" hidden></div>
       <div class="pagewrap">
         <aside class="outlinepane" id="outlinePane" hidden>
           <h3>Headings</h3>
@@ -2863,7 +2883,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b170";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b171";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4039,6 +4059,107 @@ var MarginCore = (function(){
     return ensureDrawer(notebookId, "working", "Working");
   }
   function workingSectionOf(sections){ return drawerOf(sections, "working"); }
+  function ensureSummarySection(notebookId){
+    return ensureDrawer(notebookId, "summary", "Summary");
+  }
+
+  /* ---- what a Cover is ----
+     A summary page is an ordinary page in the Summary drawer. What makes it a
+     summary rather than just a page is the list below: the places in the main
+     notes it was written about.
+
+     Each entry is {noteId, anchorId, notebookId}. Ids, and deliberately not the
+     label you see on screen. That label is recomputed every time pages move,
+     so a link stored against it breaks the first time a page is inserted, and
+     breaks silently, which is the worst way for a link to break. The notebookId
+     rides along so a summary can point into a different notebook without
+     anything having to go looking for where the page lives.
+
+     Nothing here asks you to file or tag anything. The link is made from where
+     you were standing when you asked for a summary. */
+  function coverRef(note, anchorId){
+    if (!note) return null;
+    return { noteId: note.id, anchorId: anchorId || null,
+             notebookId: note.notebookId || null };
+  }
+  function sameCover(a, b){
+    return !!a && !!b && a.noteId === b.noteId &&
+           (a.anchorId || null) === (b.anchorId || null);
+  }
+  function isSummaryPage(n){ return !!(n && Array.isArray(n.covers)); }
+
+  function newSummaryPage(parent, sectionId, refs){
+    var now = Date.now();
+    return {
+      id: newId("sm"),
+      notebookId: parent ? parent.notebookId : null,
+      sectionId: sectionId || null,
+      title: "Summary",
+      html: "", tags: [], pinned: false, starred: false,
+      covers: [],
+      createdAt: now, lastEdited: now,
+      deletedAt: null, deletedVia: null, editedOn: _device
+    };
+  }
+
+  /* Made from the page you are standing on, stamped with that page and, when
+     there is one, the exact spot on it. */
+  function createSummaryFor(sourceId, anchorId){
+    return getNote(sourceId).then(function(parent){
+      if (!parent) throw new Error("No page " + sourceId);
+      return ensureSummarySection(parent.notebookId).then(function(sec){
+        var rec = newSummaryPage(parent, sec.id);
+        var ref = coverRef(parent, anchorId);
+        if (ref) rec.covers = rec.covers.concat([ref]);
+        return putOne("notes", rec);
+      });
+    });
+  }
+
+  /* One tap adds wherever you have just come from. A summary may cover as many
+     pages as you like, in as many notebooks as you like. */
+  function addCover(summaryId, sourceId, anchorId){
+    return Promise.all([getNote(summaryId), getNote(sourceId)]).then(function(r){
+      var sum = r[0], src = r[1];
+      if (!sum || !src) return null;
+      var have = Array.isArray(sum.covers) ? sum.covers : [];
+      var ref = coverRef(src, anchorId);
+      var dup = false;
+      have.forEach(function(c){ if (sameCover(c, ref)) dup = true; });
+      if (dup) return sum;
+      return saveNote(summaryId, { covers: have.concat([ref]) });
+    });
+  }
+  function dropCover(summaryId, sourceId){
+    return getNote(summaryId).then(function(sum){
+      if (!sum || !Array.isArray(sum.covers)) return sum;
+      return saveNote(summaryId, {
+        covers: sum.covers.filter(function(c){ return !c || c.noteId !== sourceId; })
+      });
+    });
+  }
+  /* the other direction: which summaries were written about this page */
+  function summariesFor(sourceId){
+    if (!sourceId) return Promise.resolve([]);
+    return getAll("notes").then(function(l){
+      return l.filter(function(n){
+        if (!live(n) || !Array.isArray(n.covers)) return false;
+        var hit = false;
+        n.covers.forEach(function(c){ if (c && c.noteId === sourceId) hit = true; });
+        return hit;
+      });
+    });
+  }
+  /* A Cover that no longer resolves is shown, never dropped. The summary is
+     often the more valuable half of the pair. */
+  function resolveCover(ref){
+    if (!ref || !ref.noteId) return Promise.resolve(null);
+    return getNote(ref.noteId).then(function(n){
+      if (!n || n.deletedAt) return { ref: ref, note: null, missing: true };
+      return { ref: ref, note: n, missing: false,
+               notebookId: n.notebookId || ref.notebookId || null };
+    });
+  }
 
   /* ---- one answer to "is this a page you write on, or one of the drawers" ----
      Every list, every count and both chips ask this and only this. Teaching
@@ -5600,6 +5721,10 @@ var MarginCore = (function(){
         function conflicting(a, b2){
           if (!a || !b2) return false;
           if ((a.lastEdited || 0) === (b2.lastEdited || 0)) return false;
+          /* Two copies whose words match but whose Covers do not are still two
+             different pages: one of them knows about a source the other has
+             never heard of, and last-writer-wins would drop that quietly. */
+          if (JSON.stringify(a.covers || null) !== JSON.stringify(b2.covers || null)) return true;
           return (a.html || "") !== (b2.html || "") ||
                  (a.title || "") !== (b2.title || "");
         }
@@ -5881,6 +6006,9 @@ var MarginCore = (function(){
     migrateWorkingToNotes:migrateWorkingToNotes,
     ensureWorkingSection:ensureWorkingSection, ensureDrawer:ensureDrawer,
     isDrawer:isDrawer, drawerOf:drawerOf, workingSectionOf:workingSectionOf,
+    ensureSummarySection:ensureSummarySection, isSummaryPage:isSummaryPage,
+    createSummaryFor:createSummaryFor, addCover:addCover, dropCover:dropCover,
+    summariesFor:summariesFor, resolveCover:resolveCover, coverRef:coverRef,
     isDrawerPage:isDrawerPage, ordinaryPages:ordinaryPages,
     ordinarySections:ordinarySections, drawerSectionIds:drawerSectionIds,
     reviveAsset:reviveAsset, tombstoneAssets:tombstoneAssets, bumpNote:bumpNote,
@@ -7072,6 +7200,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         if (state.nbId) openNotebookTab(state.nbId); else paintTabs();
         if (state.note && state.note.sectionId) state.sectionId = state.note.sectionId;
         paintNotebooks(); paintSections(); paintTrashRow(); paintNotes(); paintDoc(); paintCrumbs(); paintRecent();
+        /* the render that actually won is the one that can land the spot */
+        if (typeof landAnchor === "function") landAnchor();
+        if (typeof paintCoverBand === "function") paintCoverBand();
+        if (typeof paintSrcBadge === "function") paintSrcBadge();
         if (r.workId && typeof openPracticeById === "function") openPracticeById(r.workId);
         /* the layout may have changed which panes are on screen */
         if (typeof paintEdge === "function") paintEdge();
@@ -14887,6 +15019,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function copySpotLink(x, y){
     if (!state.note) return;
     var el = nearestAnchor(x, y);
+    /* Nothing within reach to point at, so make the spot rather than quietly
+       falling back to the top of the page. A link that lands three screens
+       from what you meant is barely better than no link. */
+    if (!el){
+      var made = anchorHere("spot");
+      if (made && made.ref){
+        state.lastLink = { to: made.ref, href: made.href, label: "spot" };
+        markDirty(); flush();
+        say("Link copied to this exact spot. Hold anywhere and choose \u201CPaste the last link here\u201D.");
+        return;
+      }
+    }
     var id = el ? el.getAttribute("id") : null;
     state.lastLink = {
       to: "nt:" + state.note.id + (id ? "#" + id : ""),
@@ -14895,11 +15039,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     };
     say("Link copied. Hold anywhere and choose \u201CPaste the last link here\u201D.");
   }
+  /* Distance now counts sideways as well as down, weighted lower because a
+     page is much taller than it is wide. Measuring the vertical gap alone made
+     an anchor at the far edge of the same line look nearer than the one your
+     finger was actually resting on. */
   function nearestAnchor(x, y){
     var best = null, bestD = 1e9;
     Array.prototype.forEach.call($("body").querySelectorAll("span.anchor"), function(el){
       var r = el.getBoundingClientRect();
-      var d = Math.abs(r.top - y);
+      var d = Math.abs(r.top - y) + Math.abs(r.left - x) * 0.25;
       if (d < bestD){ bestD = d; best = el; }
     });
     return bestD < 400 ? best : null;
@@ -15002,16 +15150,225 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   /* jumping to an anchor after the note loads */
-  function scrollToAnchor(id){
-    setTimeout(function(){
-      var el = document.getElementById(id);
-      if (el){
-        el.scrollIntoView({ block: "center" });
-        el.classList.add("flash");
-        setTimeout(function(){ el.classList.remove("flash"); }, 1400);
-      }
-    }, 260);
+  /* Landing on an exact spot used to be a fixed 260ms wait and a hope. On a
+     slow mount the page was not there yet, so it simply did not land and you
+     arrived at the top with no clue why; on a fast one it waited for nothing.
+     The id is parked instead, and whichever render actually finishes consumes
+     it. Parked, it also survives a render being overtaken by a newer one. */
+  var pendingAnchor = null;
+  function landAnchor(){
+    if (!pendingAnchor) return false;
+    var el = document.getElementById(pendingAnchor);
+    if (!el) return false;
+    pendingAnchor = null;
+    el.scrollIntoView({ block: "center" });
+    el.classList.add("flash");
+    setTimeout(function(){ el.classList.remove("flash"); }, 1400);
+    return true;
   }
+  function scrollToAnchor(id){
+    pendingAnchor = id || null;
+    if (!landAnchor()) requestAnimationFrame(landAnchor);
+  }
+
+  /* ---- the Covers band, and the way back ----
+     A short note is a page like any other. What makes it a short note is that
+     it remembers what it was written about, and the band across the top is
+     that memory made visible: tap a chip and you are on the page it came from.
+
+     The link is never the label you see. S2P3 is recomputed whenever pages
+     move, so a Cover holds ids and resolves the label fresh every time it is
+     painted. Move a page, rename it, drop it into another section: the chip
+     still lands where it should. */
+
+  /* Where you have been, so a jump can be taken back. Deliberately held in
+     memory and nowhere else: the earlier design wrote a permanent "back to X"
+     link into whichever page you landed on, which edited a note you had never
+     asked to edit and left dead links lying around once the pages moved. */
+  var backTrail = [];
+  var BACK_TRAIL_MAX = 8;
+
+  function pushBackTrail(){
+    if (!state.note) return;
+    var here = {
+      noteId: state.note.id,
+      nbId: state.note.notebookId,
+      label: C.displayTitle(state.note),
+      top: ($("paper") ? $("paper").scrollTop : 0)
+    };
+    var last = backTrail[backTrail.length - 1];
+    if (last && last.noteId === here.noteId) backTrail.pop();
+    backTrail.push(here);
+    if (backTrail.length > BACK_TRAIL_MAX) backTrail.shift();
+    paintBackChip();
+  }
+
+  function goBackOnce(){
+    var to = backTrail.pop();
+    if (!to) return;
+    paintBackChip();
+    go({ nbId: to.nbId, noteId: to.noteId });
+    /* restore where on the page you were, not just which page */
+    var want = to.top || 0;
+    requestAnimationFrame(function(){
+      requestAnimationFrame(function(){
+        var pp = $("paper");
+        if (pp && want) pp.scrollTop = want;
+      });
+    });
+  }
+
+  function paintBackChip(){
+    var el = $("srcBadge");
+    if (!el) return;
+    /* the badge does double duty: what points at this page, and the way back */
+    paintSrcBadge();
+  }
+
+  /* How many short notes and working pages were written about the page you are
+     looking at. Tap it to see them; hold nothing, remember nothing. */
+  function paintSrcBadge(){
+    var el = $("srcBadge");
+    if (!el) return;
+    var n = state.note;
+    if (!n || state.view !== "note" || C.isSummaryPage(n)){
+      if (!backTrail.length){ el.hidden = true; return; }
+      el.hidden = false;
+      el.textContent = "\u2190 Back";
+      el.title = "Back to " + backTrail[backTrail.length - 1].label;
+      el.onclick = goBackOnce;
+      return;
+    }
+    var id = n.id;
+    Promise.all([C.summariesFor(id), C.practicePages(id)]).then(function(r){
+      if (!state.note || state.note.id !== id) return;
+      var sums = r[0].length, work = r[1].length;
+      if (!sums && !work && !backTrail.length){ el.hidden = true; return; }
+      el.hidden = false;
+      if (!sums && !work){
+        el.textContent = "\u2190 Back";
+        el.title = "Back to " + backTrail[backTrail.length - 1].label;
+        el.onclick = goBackOnce;
+        return;
+      }
+      /* the summaries badge: how many short notes cover this page */
+      var bits = [];
+      if (sums) bits.push(sums + (sums === 1 ? " summary" : " summaries"));
+      if (work) bits.push(work + " working");
+      el.textContent = bits.join(" \u00B7 ");
+      el.title = "Written about this page. Tap to open.";
+      el.onclick = function(){
+        C.summariesFor(id).then(function(list){
+          if (list.length){ pushBackTrail(); go({ nbId: list[0].notebookId, noteId: list[0].id }); }
+          else if (typeof openPractice === "function") openPractice(0);
+        });
+      };
+    }).catch(function(){});
+  }
+
+  function paintCoverBand(){
+    var band = $("coverBand");
+    if (!band) return;
+    var n = state.note;
+    if (!n || state.view !== "note" || !C.isSummaryPage(n)){ band.hidden = true; return; }
+    band.hidden = false;
+    band.textContent = "";
+    var lbl = document.createElement("span");
+    lbl.className = "lbl";
+    lbl.textContent = "COVERS";
+    band.appendChild(lbl);
+
+    var refs = Array.isArray(n.covers) ? n.covers : [];
+    var mine = n.id;
+    Promise.all(refs.map(C.resolveCover)).then(function(res){
+      if (!state.note || state.note.id !== mine) return;   /* a newer page won */
+      var firstLive = null;
+      res.forEach(function(hit, i){
+        if (!hit) return;
+        var chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "cchip" + (hit.missing ? " gone" : "");
+        if (hit.missing){
+          chip.textContent = "Source missing";
+          chip.title = "That page has been deleted. This short note is kept.";
+          chip.onclick = function(){
+            if (!confirm("Take this missing source out of the list?")) return;
+            C.dropCover(mine, hit.ref.noteId).then(function(nn){
+              if (state.note && state.note.id === mine) state.note = nn;
+              paintCoverBand();
+            });
+          };
+        } else {
+          if (!firstLive) firstLive = hit;
+          chip.textContent = C.displayTitle(hit.note);
+          chip.title = "Go to this page";
+          chip.onclick = function(){
+            pushBackTrail();
+            go({ nbId: hit.notebookId, noteId: hit.note.id });
+            if (hit.ref.anchorId) scrollToAnchor(hit.ref.anchorId);
+          };
+        }
+        band.appendChild(chip);
+      });
+
+      var add = document.createElement("button");
+      add.type = "button"; add.className = "cchip add";
+      add.textContent = "+";
+      add.title = "Also cover the page you last came from";
+      add.onclick = function(){
+        var from = backTrail[backTrail.length - 1];
+        if (!from) return say("Go to a page first, then come back and tap +.");
+        C.addCover(mine, from.noteId, null).then(function(nn){
+          if (nn && state.note && state.note.id === mine) state.note = nn;
+          paintCoverBand();
+          hint("Now covers " + from.label + ".");
+        });
+      };
+      band.appendChild(add);
+
+      /* Go to main: one tap out, no choosing. The Strip, when it lands in
+         b173, stays open across this on purpose. */
+      var goMain = document.createElement("button");
+      goMain.type = "button"; goMain.className = "cchip gomain";
+      goMain.textContent = "Go to main \u2192";
+      goMain.disabled = !firstLive;
+      goMain.title = firstLive ? "Open the first page this covers"
+                               : "Nothing this covers is still here";
+      goMain.onclick = function(){
+        if (!firstLive) return;
+        pushBackTrail();
+        go({ nbId: firstLive.notebookId, noteId: firstLive.note.id });
+        if (firstLive.ref.anchorId) scrollToAnchor(firstLive.ref.anchorId);
+      };
+      band.appendChild(goMain);
+    }).catch(function(){});
+  }
+
+  /* Sum up: made from where you are standing, so nothing has to be tagged.
+     If a short note already covers this page, it opens that one instead of
+     quietly making a second. */
+  $("sumBtn").addEventListener("click", function(){
+    if (!state.note) return;
+    var src = state.note.id;
+    if (C.isSummaryPage(state.note)) return say("You are already in a short note.");
+    flush().then(function(){ return C.summariesFor(src); }).then(function(list){
+      if (list.length){
+        pushBackTrail();
+        go({ nbId: list[0].notebookId, noteId: list[0].id });
+        hint("Opened the short note that covers this page.");
+        return;
+      }
+      var spot = anchorHere("summed here");
+      markDirty();
+      return flush().then(function(){
+        return C.createSummaryFor(src, spot && spot.ref ? String(spot.ref).split("#")[1] : null);
+      }).then(function(sum){
+        pushBackTrail();
+        go({ nbId: sum.notebookId, noteId: sum.id });
+        hint("Short note started. It remembers the page you came from.");
+      });
+    }).catch(dbFail("Could not start a short note"));
+  });
 
   /* ---- attachments ---- */
   function attachFile(file){
@@ -16624,12 +16981,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      (pictures, attachments, ink, maths) become a quiet marker rather than an
      empty hole, because the code that fills those only ever looks inside
      #body and would leave these blank. */
-  function previewHtml(html){
+  /* mode "peek" is the band either side of the page you are on: it must lay
+     out identically to the real page but nothing in it is meant to be tapped.
+     mode "live" is for a preview you are actually reading, where the links are
+     the point of it being there at all. */
+  function previewHtml(html, mode){
     var box = document.createElement("div");
+    var live = (mode === "live");
     box.innerHTML = String(html || "");
     Array.prototype.forEach.call(box.querySelectorAll("[id]"), function(el){
+      /* ids are stripped so two copies of one page cannot both answer to the
+         same id — except in a live preview, where an anchor is how a link
+         inside it finds its way to a spot. */
+      if (live && /^sp_/.test(el.id)) return;
       el.removeAttribute("id");
     });
+
     Array.prototype.forEach.call(box.querySelectorAll("[contenteditable]"), function(el){
       el.setAttribute("contenteditable", "false");
     });
@@ -16652,11 +17019,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         tag.textContent = el.classList.contains("filechip") ? "attachment" : "recording";
         el.parentNode.replaceChild(tag, el);
       });
-    /* anchors and links are inert here; they belong to the real page */
-    Array.prototype.forEach.call(box.querySelectorAll("a"), function(el){
-      el.removeAttribute("href");
-      el.removeAttribute("data-to");
-    });
+    /* In a peek band the links are inert: they belong to the real page, and a
+       stray finger landing on the page below the one you are reading must not
+       navigate you away mid-scroll. A live preview is the opposite case — you
+       are reading it on purpose, and following a link out of it is the whole
+       reason it is on screen. */
+    if (!live){
+      Array.prototype.forEach.call(box.querySelectorAll("a"), function(el){
+        el.removeAttribute("href");
+        el.removeAttribute("data-to");
+      });
+    }
     return box.innerHTML || "<p class=\"peekempty\">(this page is empty)</p>";
   }
 

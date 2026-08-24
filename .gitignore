@@ -14,3 +14,8 @@ v11_device_test_results_and_tablet_issues.md
 
 # Device password for the sync server. Never publish.
 margin-sync-key.txt
+
+# Test-only dependencies. tests/peek.mjs needs linkedom to give it a DOM;
+# install it with `npm install --no-save linkedom`. It must never be committed:
+# this repo is a public GitHub Pages site and only the app belongs in it.
+node_modules/
