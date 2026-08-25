@@ -51,12 +51,17 @@ eq("nearest-anchor distance considers both axes or the actual caret hit",
    /clientX|\.left/.test(nearest));
 eq("anchor landing is not a blind fixed timeout",
    !/setTimeout/.test(scrollAnchor));
-/* The old landing waited a flat 260ms and then looked once. On a slow mount
+/* b180 widened the window from 200 to 600 characters. The ordering it checks is
+   unchanged — landAnchor still runs inside finishRender, after the paint — but
+   a few lines added between the two pushed it out of a window that had been cut
+   close to the code as it happened to look that day.
+
+   The old landing waited a flat 260ms and then looked once. On a slow mount
    the page was not there yet so it never landed, and you arrived at the top of
    the page with nothing to say why; on a fast one it waited for nothing. */
 eq("the parked spot is landed by the render, not by a delay",
    /function landAnchor[\s\S]{0,400}getElementById\(pendingAnchor\)/.test(html) &&
-   /paintDoc\(\);[\s\S]{0,200}landAnchor\(\)/.test(html));
+   /paintDoc\(\);[\s\S]{0,600}landAnchor\(\)/.test(html));
 eq("a pending anchor is consumed by the successful render/paint path",
    /pendingAnchor|anchorPending|landAnchor/.test(html) &&
    /renderSeq|paintDoc/.test(html));
