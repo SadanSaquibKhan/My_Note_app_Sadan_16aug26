@@ -2990,7 +2990,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b183";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b184";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9829,8 +9829,32 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      It costs something real — you can no longer shrink the text to fit more
      lines on the screen — so it is a setting, on by default, rather than
      something quietly taken away. */
+  /* ---- what "100%" means ----
+     A page is a fixed sheet in its own units — 794 of them — and those units
+     are not screen pixels on any device. Showing the raw scale as a percentage
+     therefore told you the ratio between the page's internal width and a count
+     of CSS pixels, which is a number nobody can see or use: on this tablet
+     "100%" was a page that did not fill the writing area, and there was no
+     setting that meant "the page, across the screen, as paper".
+
+     So the number on the button is a ratio to the fit, not to the units. 100%
+     is the page exactly across the writing area, whatever the screen is; 200%
+     is twice that. Everything underneath still works in the real scale, so the
+     ink, the joins and the chips are untouched by this. */
+  function baseScale(){
+    var f = fitWidthZoom();
+    return (f > 0 && isFinite(f)) ? f : 1;
+  }
+  function zoomPct(z){
+    var b = baseScale() || 1;
+    return Math.max(1, Math.round(((z || 1) / b) * 100));
+  }
+  /* and the reverse, for anything that thinks in percentages */
+  function zoomFromPct(pct){ return (Number(pct) || 100) / 100 * baseScale(); }
+
   function zoomFloor(){
-    var user = Math.max(0.1, (Number(cfg.zoomMin) || 50) / 100);
+    /* the smallest zoom is a fraction of the fit, not of the page's own units */
+    var user = baseScale() * Math.max(0.1, (Number(cfg.zoomMin) || 50) / 100);
     /* Off by default. b180 read "the page width should be fixed" as "stop
        zooming out", which was the wrong half of the problem: the page was
        never really changing width, it was the space around it that gave no
@@ -9840,7 +9864,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (cfg.fixedPageWidth !== true) return user;
     return Math.max(user, Math.min(1, fitWidthZoom()));
   }
-  function zoomCeil(){ return Math.max(zoomFloor() + 0.05, (Number(cfg.zoomMax) || 300) / 100); }
+  function zoomCeil(){
+    return Math.max(zoomFloor() + 0.05, baseScale() * ((Number(cfg.zoomMax) || 300) / 100));
+  }
   function clampZoom(z){
     var lo = zoomFloor(), hi = zoomCeil();
     z = Number(z) || 1;
@@ -9878,7 +9904,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     state.zoom = z;
     $("paper").style.setProperty("--z", z);
     if ($("pracPaper")) $("pracPaper").style.setProperty("--z", z);
-    $("zoomLabel").textContent = Math.round(z * 100) + "%";
+    $("zoomLabel").textContent = zoomPct(z) + "%";
     $("zoomOut").disabled = z <= zoomFloor() + 0.001;
     $("zoomIn").disabled = z >= zoomCeil() - 0.001;
     setTimeout(redrawAll, 0);
@@ -9948,7 +9974,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("zoomOut").addEventListener("click", function(){
     stepZoom(-1); setTimeout(saveNoteZoom, 10); zoomBtnPop(this);
   });
-  $("zoomLabel").addEventListener("click", function(){ applyZoom(1); C.setMeta("zoom", 1); });
+  /* tapping the number goes back to the page across the screen, which is what
+     100% now means */
+  $("zoomLabel").addEventListener("click", function(){
+    applyZoom(baseScale());
+    if (state.noteId) C.setMeta("zoom:" + state.noteId, baseScale());
+  });
   $("drawBtn").addEventListener("click", function(){ setMode(ink.mode === "write" ? "auto" : "write"); });
 
   window.addEventListener("resize", function(){
@@ -17086,7 +17117,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* ---- 20. zoom is a property of the page you are on ---- */
   function loadNoteZoom(id){
     return C.getMeta("zoom:" + id, null).then(function(z){
-      applyZoom(z || cfg.defaultZoom || 1);
+      /* A page you have never zoomed inherits the zoom you are already using.
+         It used to fall back to 100%, so scrolling from a page you had zoomed
+         out on into its neighbour snapped straight back in — you had not asked
+         for that, and it happened at every join. A page you HAVE zoomed
+         deliberately still keeps its own. */
+      if (z != null) return applyZoom(z);
+      var carry = (state && state.zoom) || zoomFromPct((cfg.defaultZoom || 1) * 100);
+      applyZoom(carry);
     });
   }
   function saveNoteZoom(){

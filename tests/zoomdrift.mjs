@@ -65,4 +65,37 @@ eq("a swap overtaken by a newer page is let go at once, not left to time out",
 eq("a lock with nothing behind it is treated as stale",
    /if \(!pend\)\{[\s\S]{0,160}if \(handover\.busy\) abandonHandover\(\);/.test(fh));
 
+console.log("what the number on the button means:");
+/* A page is a fixed sheet in its own units, and those are not screen pixels on
+   any device. Showing the raw scale told you the ratio between the page's
+   internal width and a count of CSS pixels nobody can see — on this tablet
+   "100%" was a page that did not fill the writing area, and no setting meant
+   "the page, across the screen, as paper". */
+eq("100% is measured against the page fitting the width",
+   /function baseScale\(\)\{[\s\S]{0,200}fitWidthZoom\(\)/.test(html) &&
+   /function zoomPct\(z\)\{[\s\S]{0,160}\/ b\) \* 100/.test(html));
+eq("the label shows that ratio, not the raw scale",
+   /zoomLabel"\)\.textContent = zoomPct\(z\)/.test(html));
+eq("the floor and the ceiling are fractions of the fit too",
+   /var user = baseScale\(\) \* Math\.max\(0\.1/.test(html) &&
+   /baseScale\(\) \* \(\(Number\(cfg\.zoomMax\)/.test(html));
+eq("tapping the number returns to the page across the screen",
+   /applyZoom\(baseScale\(\)\);/.test(html));
+
+/* Reference: the same sheet, three screens. The number must read 100 on all of
+   them, because on all of them the page is exactly across the writing area. */
+const pct = (scale, fit) => Math.round((scale / fit) * 100);
+eq("100% on a narrow screen", pct(0.62, 0.62) === 100);
+eq("100% on a wide one",      pct(1.51, 1.51) === 100);
+eq("and half of it is half",  pct(0.31, 0.62) === 50);
+
+console.log("zoom stops undoing itself at every join:");
+/* Falling back to 100% meant scrolling from a page you had zoomed out on into
+   its neighbour snapped straight back in, at every join, unasked. */
+eq("a page you have never zoomed inherits the zoom you are using",
+   /if \(z != null\) return applyZoom\(z\);/.test(html) &&
+   /var carry = \(state && state\.zoom\)/.test(html));
+eq("a page you did zoom deliberately still keeps its own",
+   /if \(z != null\) return applyZoom\(z\);/.test(html));
+
 process.exitCode = bad ? 1 : 0;
