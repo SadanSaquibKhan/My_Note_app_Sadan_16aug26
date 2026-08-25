@@ -2926,7 +2926,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b176";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b177";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -6378,9 +6378,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   function flush(){
     clearTimeout(saveTimer);
-    if (typeof flushInk === "function") flushInk();
-    if (typeof flushPractice === "function" && prac.open) flushPractice();
-    if (!state.dirty || !state.note || state.saving) return Promise.resolve();
+    /* These were started and then forgotten. A caller awaiting flush() could
+       navigate away while the sheet's own write was still running, so a fast
+       close or reload outran the save it had just asked for. */
+    var waiting = [];
+    if (typeof flushInk === "function"){
+      var a = flushInk(); if (a && a.then) waiting.push(a);
+    }
+    if (typeof flushPractice === "function" && prac.open){
+      var b = flushPractice(); if (b && b.then) waiting.push(b);
+    }
+    if (!state.dirty || !state.note || state.saving){
+      return waiting.length ? Promise.all(waiting).then(function(){}) : Promise.resolve();
+    }
     state.saving = true;
     var id = state.note.id;
     var patch = {
@@ -8952,6 +8962,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return !!e && (e.pointerType === "pen" || e.pointerType === "eraser");
   }
   function mayDraw(e){
+    /* The working sheet is still fetching what is already on this page. A
+       stroke drawn now would be wiped the moment that arrives, so the pen is
+       refused for the fraction of a second it takes. */
+    if (ink.active === "practice" && typeof pracSurface !== "undefined" &&
+        pracSurface && pracSurface.loading) return false;
     /* a live lasso catch: the pen can move or drop it. A finger only
        moves if it lands on the catch — otherwise it must still scroll. */
     if (ink.tool === "lasso" && typeof lassoHas === "function" && lassoHas()){
@@ -9686,8 +9701,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   var pracSurface = makeSurface("practice", {
     scroller: $("pracPaper"), canvas: $("pracInk"),
     save: function(strokes, removed, restored){
-      if (!prac.rec) return Promise.resolve();
-      return C.savePractice(prac.rec.id, { strokes: strokes, removed: removed || {}, restored: restored || {} });
+      /* Bound to the page these strokes were actually drawn on, captured when
+         the sheet was mounted. Reading prac.rec here instead meant a save that
+         fired 600ms later found whichever page was mounted by then: draw on A,
+         switch A to B, and A's ink was written onto B. */
+      var owner = pracSurface.owner;
+      if (!owner) return Promise.resolve();
+      return C.savePractice(owner, { strokes: strokes, removed: removed || {}, restored: restored || {} });
     }
   });
   wireSurface(pracSurface);
@@ -9752,6 +9772,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function closePractice(){
     return flushPractice().then(function(){
       prac.open = false;
+      /* nothing is mounted now, so a save that somehow arrives late has no
+         page to write to rather than writing to whichever one is open */
+      pracSurface.owner = null;
+      pracSurface.loading = false;
       ink.active = "note";
       document.body.dataset.prac = "";
       var sheet = $("pracSheet");
@@ -9770,7 +9794,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   function flushPractice(){
+    /* Both clocks, not one. The words are on prac.saveTimer and the ink is on
+       the surface's own; clearing only the first left a stroke save in flight
+       across a page switch, free to land on the wrong page. */
     clearTimeout(prac.saveTimer);
+    if (pracSurface){ clearTimeout(pracSurface.saveTimer); pracSurface.dirty = false; }
     if (!prac.rec) return Promise.resolve();
     var id = prac.rec.id;
     return C.savePractice(id, { html: serializeHost($("pracText")),
@@ -9849,14 +9877,25 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      still the page being looked at by the time it arrives. Both guards matter:
      seq catches a newer open, the id catches a page turn inside the sheet. */
   function loadPracInk(id, seq){
+    /* Held shut until the ink is actually installed. The sheet used to accept
+       the pen the moment it appeared, while its ink was still being fetched —
+       so on a slow tablet a stroke drawn straight away showed up, and then
+       vanished for good the instant the fetch resolved and replaced the whole
+       array underneath it. */
+    pracSurface.loading = true;
+    pracSurface.owner = id;
     return C.workInk(id).then(function(k){
       if (seq !== pracSeq) return;
       if (!prac.rec || prac.rec.id !== id) return;
       pracSurface.strokes = k.strokes;
       pracSurface.removed = k.removed;
       pracSurface.restored = k.restored;
+      pracSurface.loading = false;
       pracSurface.redraw();
-    }).catch(function(){});
+    }).catch(function(){
+      /* a failed fetch must not leave the sheet permanently unwritable */
+      if (pracSurface.owner === id) pracSurface.loading = false;
+    });
   }
 
   function gotoPracPage(i){
@@ -15679,10 +15718,15 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     el.hidden = false;
     el.style.top = stripTop() + "px";
     el.style.height = stripHeightFor(st) + "px";
-    /* Hidden and Strip both leave the pen exactly where it was. The Strip is
-       for reading: your writing carries on underneath it, and a band that
-       silently took the pen would be worse than no band. */
-    ink.active = "note";
+    /* The Strip must not touch which surface has the pen, and the line that
+       used to sit here did exactly that. It read as harmless because the Strip
+       is usually raised while the main page is being written on, so assigning
+       "note" looked like a no-op. It is not one when a working sheet is open:
+       showing, resizing or expanding the Strip then handed the pen back to the
+       main page, and the next stroke landed on the lecture instead of on the
+       working page you were looking at. A read-only band owns no surface, so
+       it changes none. Opening and closing the editable sheet is what moves
+       the pen, and only that. */
     if (typeof redrawAll === "function") redrawAll();
     $("sstripMore").textContent = (st === "half") ? "Less" : "More";
   }

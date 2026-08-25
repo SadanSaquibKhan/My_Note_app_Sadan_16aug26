@@ -67,8 +67,16 @@ eq("remembered scroll saves relative to the adjusted visible top", callsViewport
 eq("remembered scroll restores relative to the adjusted visible top", callsViewport(restoreScroll));
 
 console.log("the pen and layout switch only at the intended states:");
-eq("Hidden and Strip keep ink.active on the main note",
-   /(?:hidden|strip)[\s\S]{0,500}ink\.active\s*=\s*["']note["']/i.test(stripCode));
+/* b177 corrected this, and the correction matters more than it looks. The
+   Strip asserting ink.active = "note" reads as harmless — it is usually raised
+   while the main page is being written on, so the assignment looks like a
+   no-op. It is not one when a working sheet is open: showing, resizing or
+   expanding the Strip then handed the pen back to the main page, and the next
+   stroke landed on the lecture instead of the working page you were reading.
+   A read-only band owns no surface, so the right number of times for it to
+   assign ink.active is zero. */
+eq("the Strip never assigns ink.active at all",
+   !/ink\.active\s*=/.test(stripCode));
 /* DELIBERATE DEVIATION, b173. The audit expected a taller Strip to become a
    second writable editor with its own ink.active. It is not built that way,
    for two reasons.
@@ -86,8 +94,7 @@ eq("Hidden and Strip keep ink.active on the main note",
 
    What must stay true is that the Strip never quietly takes the pen. */
 eq("no state of the Strip ever takes the pen from the page underneath",
-   /ink\.active = "note";/.test(stripCode) &&
-   !/(?:half|full)[\s\S]{0,400}ink\.active\s*=\s*["'](?:summary|strip)["']/i.test(stripCode));
+   !/ink\.active\s*=/.test(stripCode));
 eq("opening a short note navigates to it rather than floating a second editor",
    /sstripOpen[\s\S]{0,400}go\(\{ nbId: sum\.notebookId, noteId: sum\.id \}\)/.test(html));
 eq("changing the main page does not close an open summary Strip",
@@ -103,8 +110,14 @@ console.log("live, peek and Strip layout cannot drift apart:");
 eq("Strip shares the existing preview layout selectors/classes",
    stripMarker >= 0 && (/\.prevpeek-body[^\{]*\.nextpeek-body[^\{]*(?:strip|summary)/i.test(html) ||
    /(?:shortStrip|summaryStrip)[^>]*class=["'][^"']*(?:prevpeek-body|peekbody|pagepreview)/i.test(html)));
-eq("Strip height has one source of truth below/folding the docbar",
-   /(?:strip|summary)[\s\S]{0,500}(?:docbar|topbar|toolbar)[\s\S]{0,300}(?:offset|inset|fold)/i.test(stripCode));
+/* Anchored on the function rather than a sliding window around the renderer:
+   b177 added several lines of comment there and pushed stripTop out of the
+   window, which made this look like a regression when nothing about the
+   placement had changed. The intent is unchanged — where the Strip sits must
+   have exactly one source of truth. */
+eq("Strip placement has one source of truth, and it is not a hand-made offset",
+   /function stripTop\(\)\{[\s\S]{0,200}\$\("paper"\)[\s\S]{0,200}getBoundingClientRect\(\)\.top/.test(html) &&
+   /docbar[\s\S]{0,400}(?:offset|fold)/i.test(html));
 
 console.log("reference geometry:");
 const effectiveViewport = (paper, stripHeight) => ({
