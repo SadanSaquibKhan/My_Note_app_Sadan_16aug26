@@ -50,7 +50,9 @@ console.log("it cannot be skipped, and cannot double up:");
    all when there is nothing to move. */
 eq("no flag can stop a late-arriving old row being caught", !/workingMigrated/.test(m));
 eq("a row that already has a page is skipped", /byId\[p\.id\]/.test(m));
-eq("and its ink is never written a second time", /haveInk\[p\.id\]/.test(m));
+/* b174 renamed the map to inkOf, because it now holds the asset itself rather
+   than a yes/no: the repair pass needs the record so it can merge into it. */
+eq("and its ink is never written a second time", /inkOf\[p\.id\]/.test(m));
 eq("the ink id is worked out from the page id, never minted fresh",
    /function workInkId/.test(m) && !/newId\("ink"\)/.test(m));
 eq("a tombstone is migrated as a tombstone, not resurrected",
@@ -62,6 +64,73 @@ eq("it runs at boot before anything is painted",
    /migrateWorkingToNotes\(\)[\s\S]{0,220}purgeExpired/.test(html));
 eq("a failure does not stop the app opening",
    /migrateWorkingToNotes\(\)\.catch/.test(html));
+
+console.log("a page an earlier build already moved is repaired, not skipped:");
+/* b174. The first version of this migration dropped every field it did not know
+   about, wrote a null deletion date over a tombstone, only made an ink record
+   when live strokes were left, and minted that record a fresh id. The hardened
+   mapping that replaced it only ran on rows it had NOT already converted — so
+   everything the first version touched stayed damaged permanently, and no
+   amount of restarting would ever fix it. */
+eq("the scan has two jobs, moving and repairing",
+   /var fresh = \[\], seen = \[\];/.test(m) &&
+   /\(byId\[p\.id\] \? seen : fresh\)\.push\(p\)/.test(m));
+eq("a row that already has a page goes to the repair pass",
+   /seen\.forEach\([\s\S]{0,400}repairMigratedWorking\(p, note\)/.test(m));
+eq("the ink of a repaired row is merged, not replaced",
+   /function repairMigratedInk/.test(m) && /repairMigratedInk\(p, have\)/.test(m));
+/* The page whose strokes had all been rubbed out arrived with no ink record at
+   all, so its erasure map was simply gone. */
+eq("a repaired row with no ink record at all gets one made",
+   /if \(!have\)\{[\s\S]{0,320}practiceToInk\(p\)/.test(m));
+eq("nothing is written when there is nothing to repair",
+   /if \(!outNotes\.length && !outAssets\.length\) return/.test(m));
+
+/* The page is the newer copy of the words; the legacy row is the more complete
+   copy of everything else. Overwriting the words would undo real writing. */
+eq("repair never overwrites the words, the title or where the page is filed",
+   /KEEP_ON_REPAIR = \{[\s\S]{0,240}html:1[\s\S]{0,240}title:1/.test(m) &&
+   /KEEP_ON_REPAIR = \{[\s\S]{0,240}sectionId:1/.test(m));
+eq("repair only fills in a field the page does not have",
+   /if \(note\[k\] === undefined\)\{ note\[k\] = p\[k\]; changed = true; \}/.test(m));
+eq("an old tombstone is only applied if nothing has happened since",
+   /p\.lastEdited \|\| 0\) >= \(note\.lastEdited \|\| 0\)/.test(m));
+
+/* Reference: applying a delete that predates real writing would take that
+   writing away, which is worse than the bug being fixed. */
+const applyTomb = (row, note) =>
+  !!(row.deletedAt && !note.deletedAt && (row.lastEdited || 0) >= (note.lastEdited || 0));
+eq("a tombstone older than the page is ignored",
+   applyTomb({deletedAt: 5, lastEdited: 5}, {lastEdited: 90}) === false);
+eq("a tombstone no older than the page is honoured",
+   applyTomb({deletedAt: 90, lastEdited: 90}, {lastEdited: 90}) === true);
+eq("a page already deleted is left alone",
+   applyTomb({deletedAt: 90, lastEdited: 90}, {deletedAt: 1, lastEdited: 1}) === false);
+
+/* Merging the maps rather than replacing them: strokes drawn since the move are
+   the newer truth, and the height must never shrink under existing ink. */
+const mergeInk = (row, asset) => {
+  const out = { removed: {...(asset.removed||{})}, h: Math.max(asset.h||0, row.h||0) };
+  Object.keys(row.removed||{}).forEach(k => { if (!(k in out.removed)) out.removed[k] = row.removed[k]; });
+  return out;
+};
+const merged = mergeInk({removed:{a:1,b:1}, h:900}, {removed:{b:2}, h:1200});
+eq("erasure maps are unioned, the page's own entry winning",
+   merged.removed.a === 1 && merged.removed.b === 2);
+eq("the taller of the two heights is kept", merged.h === 1200);
+
+console.log("erasing a page for good actually erases it:");
+/* A working page's legacy row is keyed by the page's own id, while its noteId
+   names the page it hangs off. Clearing by that index did both halves of the
+   wrong thing: erasing a working page left its legacy row, so the next boot
+   built the page straight back out of it — a page you permanently deleted
+   returning by itself — and erasing an ordinary page took the legacy rows of
+   every working page hanging off it, including ones deliberately kept. */
+eq("the legacy row goes by primary key", /pr\.delete\(id\);/.test(html));
+eq("it is no longer cleared through the parent index",
+   !/\[\[pr,"by_note"\],\[as,"by_note"\]\]/.test(html));
+eq("assets are still cleared by the page they belong to",
+   /\[\[as,"by_note"\]\]/.test(html));
 
 console.log("the drawer is a section, and sits out of the way:");
 eq("a section can carry a kind", /kind:\s*extra\.kind\s*\|\|\s*null/.test(html));

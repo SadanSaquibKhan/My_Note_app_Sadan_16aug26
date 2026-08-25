@@ -2926,7 +2926,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b173";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b174";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4831,10 +4831,16 @@ var MarginCore = (function(){
       var old = r[0], notes = r[1];
       var byId = {};
       notes.forEach(function(n){ byId[n.id] = n; });
-      var todo = old.filter(function(p){ return p && p.id && !byId[p.id]; });
-      if (!todo.length) return { moved: 0 };
+      var live_ = old.filter(function(p){ return p && p.id; });
+      if (!live_.length) return { moved: 0, repaired: 0 };
+      /* Two jobs, not one. Rows with no page yet are moved. Rows that already
+         have a page are REPAIRED, because the build that first moved them used
+         a thinner mapping and left real damage behind. Only ever moving the
+         unconverted ones is what let that damage become permanent. */
+      var fresh = [], seen = [];
+      live_.forEach(function(p){ (byId[p.id] ? seen : fresh).push(p); });
       var books = {};
-      todo.forEach(function(p){
+      fresh.forEach(function(p){
         var parent = byId[p.noteId];
         if (parent && parent.notebookId) books[parent.notebookId] = 1;
       });
@@ -4844,23 +4850,97 @@ var MarginCore = (function(){
         var drawer = {};
         pairs.forEach(function(x){ drawer[x[0]] = x[1]; });
         return getAll("assets").then(function(assets){
-          var haveInk = {};
-          assets.forEach(function(a){ if (a.kind === "page") haveInk[a.noteId] = 1; });
+          var inkOf = {};
+          assets.forEach(function(a){ if (a.kind === "page" && !a.deletedAt) inkOf[a.noteId] = a; });
           var outNotes = [], outAssets = [];
-          todo.forEach(function(p){
+
+          fresh.forEach(function(p){
             var parent = byId[p.noteId];
             var sec = parent ? drawer[parent.notebookId] : null;
             outNotes.push(practiceToNote(p, parent, sec ? sec.id : null));
             /* never a second ink record for a page that already has one */
-            if (haveInk[p.id]) return;
+            if (inkOf[p.id]) return;
             var ink = practiceToInk(p);
             if (ink) outAssets.push(ink);
           });
+
+          seen.forEach(function(p){
+            var note = byId[p.id];
+            if (repairMigratedWorking(p, note)) outNotes.push(note);
+            var have = inkOf[p.id];
+            if (!have){
+              /* the earlier build only wrote ink when live strokes remained, so
+                 a page whose strokes had all been rubbed out arrived with no
+                 record at all and its erasure map was simply gone */
+              var made = practiceToInk(p);
+              if (made) outAssets.push(made);
+            } else if (repairMigratedInk(p, have)){
+              outAssets.push(have);
+            }
+          });
+
+          if (!outNotes.length && !outAssets.length) return { moved: 0, repaired: 0 };
           return putMany(["notes","assets"], { notes: outNotes, assets: outAssets })
-                   .then(function(){ return { moved: outNotes.length }; });
+                   .then(function(){
+                     return { moved: fresh.length, repaired: seen.length };
+                   });
         });
       });
     });
+  }
+
+  /* ---- repairing a page an earlier build already moved ----
+     The first version of this migration dropped every field it did not know
+     about, wrote a null deletion date straight over a tombstone, only made an ink
+     record when live strokes were left, and minted that record a fresh id. The
+     hardened mapping that replaced it only ever ran on rows it had not already
+     converted, so anything moved by the first version stayed damaged for good.
+
+     This merges what is missing and overwrites nothing. The page is the newer
+     copy of the words; the legacy row is the more complete copy of everything
+     else. Where they disagree about the words, the page wins. */
+  var KEEP_ON_REPAIR = {
+    id:1, html:1, title:1, notebookId:1, sectionId:1, worksFor:1, workOrder:1,
+    lastEdited:1, editedOn:1, deletedAt:1, deletedVia:1,
+    noteId:1, page:1, strokes:1, removed:1, restored:1, h:1, ink:1
+  };
+  function repairMigratedWorking(p, note){
+    if (!p || !note) return false;
+    var changed = false;
+    Object.keys(p).forEach(function(k){
+      if (KEEP_ON_REPAIR[k]) return;
+      if (note[k] === undefined){ note[k] = p[k]; changed = true; }
+    });
+    /* A tombstone is only restored if nothing has happened to the page since it
+       was moved. Applying an old delete over a page you have since written on
+       would take that writing away, which is worse than the bug being fixed. */
+    if (p.deletedAt && !note.deletedAt && (p.lastEdited || 0) >= (note.lastEdited || 0)){
+      note.deletedAt = p.deletedAt;
+      note.deletedVia = p.deletedVia || null;
+      changed = true;
+    }
+    if (changed) touch(note);
+    return changed;
+  }
+  /* The ink half, merged rather than replaced: strokes may well have been drawn
+     on the page since it was moved, and those are the newer truth. */
+  function repairMigratedInk(p, asset){
+    var want = practiceToInk(p);
+    if (!want || !asset) return false;
+    var changed = false;
+    if ((!asset.strokes || !asset.strokes.length) && want.strokes.length){
+      asset.strokes = want.strokes; changed = true;
+    }
+    ["removed", "restored"].forEach(function(k){
+      var src = want[k] || {}, dst = asset[k] || {};
+      Object.keys(src).forEach(function(id){
+        if (!(id in dst)){ dst[id] = src[id]; changed = true; }
+      });
+      asset[k] = dst;
+    });
+    if ((want.h || 0) > (asset.h || 0)){ asset.h = want.h; changed = true; }
+    if (changed) touch(asset);
+    return changed;
   }
 
   /* One old working record, as an ordinary page. */
@@ -5372,8 +5452,19 @@ var MarginCore = (function(){
       var pr = t.objectStore("practices"), as = t.objectStore("assets");
       var sc = t.objectStore("sections");
       ids.forEach(function(id){
+        /* one bad entry used to abort the whole transaction, so nothing at all
+           was erased and the trash quietly stayed full */
+        if (!id) return;
         nb.delete(id); nt.delete(id);
-        [[pr,"by_note"],[as,"by_note"]].forEach(function(pair){
+        /* A working page's legacy row is keyed by the page's OWN id, while its
+           noteId names the page it hangs off. Clearing by that index therefore
+           did both halves of the wrong thing: erasing a working page left its
+           legacy row behind, so the next boot built the page again out of it —
+           a permanently deleted page coming back — and erasing an ordinary page
+           took the legacy rows of every working page hanging off it, including
+           the ones deliberately kept alive. Delete by primary key instead. */
+        pr.delete(id);
+        [[as,"by_note"]].forEach(function(pair){
           var c = pair[0].index(pair[1]).openCursor(IDBKeyRange.only(id));
           c.onsuccess = function(e){ var cur = e.target.result; if (cur){ cur.delete(); cur.continue(); } };
         });
