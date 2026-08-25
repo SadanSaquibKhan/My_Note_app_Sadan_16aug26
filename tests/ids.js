@@ -61,7 +61,8 @@ var NEW = ["favBar","favGrip","favPop","favPick","setFavBar","marksRow","marksCo
            "homeBooks","homeBooksTitle","homeAddGroup","homeAddNb","recentGrip","recentHide",
            "recentShow","railFoot","railFootHide","railFootMin","railFootShow",
            "coverBand","sumBtn","srcBadge",
-           "sstrip","sstripFor","sstripOpen","sstripMore","sstripHide","sstripBody"];
+           "sstrip","sstripFor","sstripOpen","sstripMore","sstripHide","sstripBody",
+           "dockRail","pracFold","pracHead","snap_strip"];
 var bad = NEW.filter(function(k){ return !have[k]; });
 console.log((bad.length ? "\nNEW ELEMENTS MISSING: " + bad.join(", ")
                         : "\nok  all " + NEW.length + " newly added elements are present"));

@@ -1292,7 +1292,6 @@
     background:var(--tint); touch-action:none;
   }
   .pracgrip::after{content:""; width:44px; height:4px; border-radius:2px; background:var(--rule)}
-  body[data-prac="tab"] .pracsheet{height:46px; overflow:hidden}
   .keys{width:100%; border-collapse:collapse; font-size:13.5px}
   .keys td{padding:7px 6px; border-bottom:1px solid var(--rule); vertical-align:top}
   .keys td:first-child{
@@ -1466,7 +1465,45 @@
   }
   .pracsheet.off{transform:translateY(110%); pointer-events:none}
   .pracsheet[hidden]{display:none}
-  body[data-prac="full"] .pracsheet{height:calc(100vh - 46px)}
+  /* The state lives on the sheet itself, with its dock beside it. On body it
+     could only ever describe one sheet, so a top dock and a bottom dock could
+     not both be open without the selectors multiplying.
+
+     These sit here, beside the rule they override, and not where the old
+     body-level Tab rule used to live. That one had been written inside the
+     print stylesheet, so it never applied on screen at all: the Tab state had
+     quietly done nothing for as long as it had existed, which is why a sheet
+     set to Tab stayed exactly as tall as it had been. */
+  .pracsheet[data-state="strip"]{height:132px; overflow:hidden}
+  .shortstrip[data-state="strip"]{height:132px}
+  .pracsheet[data-state="full"]{height:calc(100vh - 46px)}
+  .pracsheet[data-state="half"]{height:52vh}
+  /* a folded header keeps the name and the counter and drops the rest */
+  .prachead.folded > *{display:none}
+  .prachead.folded > .pracmark,
+  .prachead.folded > .pracwhere,
+  .prachead.folded > .pracpage,
+  .prachead.folded > .grow,
+  .prachead.folded > #pracFold,
+  .prachead.folded > #pracClose{display:inline-flex}
+  .foldchev{padding:4px 7px; min-height:26px; font-size:11px}
+  .prachead.folded .foldchev{transform:rotate(-90deg)}
+  /* a sheet docked at the top leaves the way it arrived */
+  .shortstrip[data-dock="top"].off{transform:translateY(-110%); pointer-events:none}
+  .shortstrip{transition:height .22s ease, transform .28s ease}
+  /* the rail of sheets you have open but put away */
+  .dockrail{
+    position:fixed; left:0; right:0; bottom:0; z-index:39;
+    display:flex; gap:6px; padding:4px 10px; background:var(--panel);
+    border-top:1px solid var(--rule); overflow-x:auto; white-space:nowrap;
+  }
+  .dockrail[hidden]{display:none}
+  .dockrail .docktab{
+    flex:0 0 auto; font-size:11px; padding:4px 10px; border-radius:6px 6px 0 0;
+    border:1px solid var(--rule); border-bottom:none; background:var(--bg);
+    color:var(--ink); cursor:pointer; font-family:var(--mono);
+  }
+  .dockrail .docktab.on{background:var(--live-soft); font-weight:600}
   .prachead{
     flex:none; display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     padding:8px 12px; border-bottom:1px solid var(--rule); background:var(--tint);
@@ -2230,6 +2267,8 @@
     </div>
   </section>
 
+  <div class="dockrail" id="dockRail" hidden aria-label="Sheets you have open"></div>
+
   <div class="shortstrip" id="sstrip" hidden aria-label="Short note">
     <div class="shortstrip-head">
       <span class="lbl">SHORT NOTE</span>
@@ -2244,7 +2283,7 @@
 
   <section class="pracsheet" id="pracSheet" hidden aria-label="Practice space">
     <div class="pracgrip" id="pracGrip" title="Drag to resize"></div>
-    <div class="prachead">
+    <div class="prachead" id="pracHead">
       <span class="pracmark">ROUGH WORKING</span>
       <span class="pracwhere" id="pracWhere"></span>
       <span class="grow"></span>
@@ -2254,7 +2293,8 @@
       <button class="ghost" id="pracAdd">+ Page</button>
       <button class="ghost" id="pracDup" title="Copy this page">Copy</button>
       <span class="segmented">
-        <button type="button" id="snap_tab" aria-pressed="false">Tab</button>
+        <button type="button" id="pracFold" class="foldchev" title="Fold this header away">&#9662;</button>
+        <button type="button" id="snap_strip" aria-pressed="false" title="A readable strip">Strip</button>
         <button type="button" id="snap_half" aria-pressed="true">Half</button>
         <button type="button" id="snap_full" aria-pressed="false">Full</button>
       </span>
@@ -2926,7 +2966,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b177";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b178";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9712,13 +9752,163 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
   wireSurface(pracSurface);
 
+  /* Wait for the browser to have actually laid the sheet out, then act once.
+     Two frames is the reliable signal in a real browser; the timeout is there
+     because some embedded webviews never run an animation frame at all, and
+     without it the sheet would simply never finish opening in those. */
+  function afterLayout(fn){
+    var done = false;
+    function go(){ if (done) return; done = true; fn(); }
+    if (typeof requestAnimationFrame === "function"){
+      requestAnimationFrame(function(){ requestAnimationFrame(go); });
+    }
+    setTimeout(go, 120);
+  }
+
+  var SHEET_STATES = ["hidden", "strip", "half", "full"];
+
+  /* How tall each state is, in pixels, from the room the dock actually has.
+     Hidden returns null because a hidden sheet is not sized at all — it is
+     taken out of the way by its own transform. */
+  function sheetHeightFor(state, custom){
+    if (state === "hidden") return null;
+    var room = usablePageViewport();
+    var full = Math.max(200, (room.paperRect ? room.paperRect.height : window.innerHeight));
+    if (state === "strip") return 132;
+    if (state === "full")  return Math.round(full - 46);
+    /* half, and a height you dragged yourself is a half-size override */
+    if (custom) return Math.round(custom);
+    return Math.round(full * 0.52);
+  }
+
   function setSnap(s){
+    if (SHEET_STATES.indexOf(s) < 0) s = "half";
     prac.snap = s;
+    var sheet = $("pracSheet");
+    /* The dock is what the sheet IS — rough working comes up from the bottom —
+       and the state is only how much of it you are showing. Keeping them as
+       two attributes on the sheet means a top dock and a bottom dock can both
+       be open without any selector having to know about the other. */
+    sheet.setAttribute("data-dock", "bottom");
+    sheet.setAttribute("data-state", prac.open ? s : "hidden");
+    /* Cleared first, then set from one calculation. It began as CSS keyed off
+       the state attribute, which is tidier to read and did not work: the height
+       stayed exactly the same in all four states however specific the selector
+       was made. Working out the pixels here instead settles it, matches how the
+       Strip has always sized itself, and means a hand-dragged height is simply
+       this tab's number rather than a fifth state fighting a stylesheet. */
+    sheet.style.height = "";
+    var tabH = dockTabFor(prac.rec && prac.rec.id);
+    var px = sheetHeightFor(s, tabH && tabH.customHeight);
+    if (px != null) sheet.style.height = px + "px";
     document.body.dataset.prac = prac.open ? s : "";
-    ["half","full"].forEach(function(k){
-      $("snap_" + k).setAttribute("aria-pressed", s === k ? "true" : "false");
+    ["strip","half","full"].forEach(function(k){
+      var b = $("snap_" + k);
+      if (b) b.setAttribute("aria-pressed", s === k ? "true" : "false");
     });
-    setTimeout(function(){ pracSurface.redraw(); noteSurface.redraw(); }, 210);
+    /* Half is short, so its header folds itself out of the way; Full has room,
+       so it opens expanded. Either can still be folded by hand afterwards. */
+    if (!prac.foldTouched) setPracFold(s === "half" || s === "strip");
+    var tab = dockTabFor(prac.rec && prac.rec.id);
+    if (tab) tab.state = s;
+    saveDockTabs();
+    afterLayout(function(){ pracSurface.redraw(); noteSurface.redraw(); });
+  }
+
+  function setPracFold(on){
+    var h = $("pracHead");
+    if (!h) return;
+    h.classList.toggle("folded", !!on);
+    var t = dockTabFor(prac.rec && prac.rec.id);
+    if (t) t.folded = !!on;
+  }
+  $("pracFold").addEventListener("click", function(){
+    prac.foldTouched = true;
+    setPracFold(!$("pracHead").classList.contains("folded"));
+  });
+
+  /* ---- the sheets you have open ----
+     One physical sheet, up to three remembered places. A tab holds which page
+     it was showing and where you were on it, so coming back to one lands you
+     where you left rather than at the top — and so a restart can put the same
+     three back. */
+  /* Three, and the reason is not arithmetic: a fourth row turns the rail into
+     another list to read, and the whole point of it is to be glanceable. */
+  var MAX_DOCK_TABS = 3;
+  function dockTabFor(id){
+    if (!id) return null;
+    var found = null;
+    (prac.tabs || []).forEach(function(t){ if (t.id === id) found = t; });
+    return found;
+  }
+  function rememberDockTab(rec, kind){
+    if (!rec || !rec.id) return null;
+    prac.tabs = (prac.tabs || []).filter(function(t){ return t.id !== rec.id; });
+    var tab = {
+      id: rec.id, kind: kind || "working",
+      dock: (kind === "summary") ? "top" : "bottom",
+      pageId: rec.worksFor || null,
+      sourceId: rec.worksFor || null,
+      state: prac.snap || "half",
+      scrollTop: 0, scrollLeft: 0, folded: false, customHeight: 0
+    };
+    prac.tabs.push(tab);
+    /* three is the point: more than that and the rail is another list to read */
+    if (prac.tabs.length > MAX_DOCK_TABS) prac.tabs = prac.tabs.slice(-MAX_DOCK_TABS);
+    saveDockTabs();
+    paintDockRail();
+    return tab;
+  }
+  function captureSheetPlace(){
+    var t = dockTabFor(prac.rec && prac.rec.id);
+    var p = $("pracPaper");
+    if (!t || !p) return;
+    t.scrollTop = p.scrollTop;
+    t.scrollLeft = p.scrollLeft;
+  }
+  /* Only after the words, the pictures and the ink are all in, and the browser
+     has laid them out. Restoring earlier is worse than not restoring at all: an
+     empty host is short, so a saved place is clamped to nearly nothing, and no
+     amount of pictures arriving later puts it back. */
+  function restoreSheetPlace(tab, guardId){
+    if (!tab) return;
+    afterLayout(function(){
+      if (!prac.rec || prac.rec.id !== guardId) return;
+      var p = $("pracPaper");
+      if (!p) return;
+      p.scrollLeft = tab.scrollLeft || 0;
+      p.scrollTop = tab.scrollTop || 0;
+      pracSurface.redraw();
+    });
+  }
+  function saveDockTabs(){
+    try { C.setMeta("dockTabs", prac.tabs || []); } catch (e){}
+  }
+  function loadDockTabs(){
+    return C.getMeta("dockTabs", []).then(function(l){
+      prac.tabs = Array.isArray(l) ? l.slice(-MAX_DOCK_TABS) : [];
+      paintDockRail();
+    }).catch(function(){});
+  }
+  function paintDockRail(){
+    var rail = $("dockRail");
+    if (!rail) return;
+    var tabs = (prac.tabs || []).filter(function(t){ return t && t.id; });
+    if (!tabs.length){ rail.hidden = true; return; }
+    rail.hidden = false;
+    rail.textContent = "";
+    tabs.forEach(function(t){
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "docktab" + (prac.rec && prac.rec.id === t.id ? " on" : "");
+      b.textContent = t.name || (t.kind === "summary" ? "Summary" : "Working");
+      b.title = "Come back to this sheet where you left it";
+      /* the same foldchev chevron the toolbars use, so a folded sheet reads the
+         same way a folded bar does rather than inventing a second language */
+      if (t.folded) b.classList.add("foldchev");
+      b.addEventListener("click", function(){ openPracticeById(t.id); });
+      rail.appendChild(b);
+    });
   }
 
   /* Only the newest open may finish. The ink is fetched now rather than read
@@ -9742,9 +9932,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var sheet = $("pracSheet");
       sheet.hidden = false;
       sheet.classList.add("off");
-      requestAnimationFrame(function(){
-        requestAnimationFrame(function(){ sheet.classList.remove("off"); });
-      });
+      /* afterLayout rather than two raw animation frames: some webviews never
+         deliver one, and the sheet then stayed off-screen for ever */
+      afterLayout(function(){ sheet.classList.remove("off"); });
       setSnap(prac.snap === "full" ? "full" : "half");
       $("pracText").innerHTML = prac.rec.html || "";
       /* Blank first, fill when it arrives. A working page keeps its ink in a
@@ -9754,7 +9944,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       pracSurface.strokes = [];
       pracSurface.removed = {};
       pracSurface.restored = {};
-      loadPracInk(prac.rec.id, seq);
+      var mounting = prac.rec.id;
+      var tab = dockTabFor(mounting) || rememberDockTab(prac.rec, "working");
+      if (tab && tab.name == null){
+        tab.name = (typeof C.workingName === "function" && state.note)
+          ? C.workingName(state.note, prac.idx) : "Working";
+      }
+      loadPracInk(mounting, seq).then(function(){
+        /* the place comes back only once the words, the pictures and the ink
+           have all arrived and been laid out */
+        restoreSheetPlace(tab, mounting);
+      });
+      paintDockRail();
       pracSurface.undo = []; pracSurface.redo = [];
       ink.active = "practice";
       if (typeof hydrateImages === "function") hydrateImages();
@@ -9770,8 +9971,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   function closePractice(){
+    captureSheetPlace();
     return flushPractice().then(function(){
       prac.open = false;
+      saveDockTabs();
+      paintDockRail();
       /* nothing is mounted now, so a save that somehow arrives late has no
          page to write to rather than writing to whichever one is open */
       pracSurface.owner = null;
@@ -9900,18 +10104,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   function gotoPracPage(i){
     if (i < 0 || i >= prac.pages.length) return;
+    /* Where you were on the sheet you are leaving, captured before anything
+       asynchronous starts. Read afterwards it is already the new sheet's
+       scroll position, and the old one is simply gone. */
+    captureSheetPlace();
     flushPractice().then(function(){
       prac.idx = i;
       prac.rec = prac.pages[i];
+      var mounting = prac.rec.id;
       $("pracText").innerHTML = prac.rec.html || "";
       pracSurface.strokes = [];
       pracSurface.removed = {};
       pracSurface.restored = {};
-      loadPracInk(prac.rec.id, pracSeq);
+      var tab = dockTabFor(mounting) || rememberDockTab(prac.rec, "working");
+      loadPracInk(mounting, pracSeq).then(function(){
+        restoreSheetPlace(tab, mounting);
+      });
       pracSurface.undo = []; pracSurface.redo = [];
       if (typeof hydrateImages === "function") hydrateImages();
       pracSurface.redraw();
-      paintPracHead(); paintInkTools();
+      paintPracHead(); paintInkTools(); paintDockRail();
     });
   }
 
@@ -15708,14 +15920,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var el = $("sstrip");
     if (!el) return;
     stripState = st;
+    el.setAttribute("data-dock", "top");
+    el.setAttribute("data-state", st);
     if (st === "hidden"){
-      el.hidden = true;
+      /* a short-note sheet is docked at the top, so it leaves upward: sliding
+         it down would take it right across the page you are reading */
+      el.classList.add("off");
+      afterLayout(function(){ if (stripState === "hidden") el.hidden = true; });
       /* nothing is docked, so the page is whole again */
       if (typeof redrawAll === "function") redrawAll();
       paintSrcBadge();
       return;
     }
     el.hidden = false;
+    el.classList.remove("off");
     el.style.top = stripTop() + "px";
     el.style.height = stripHeightFor(st) + "px";
     /* The Strip must not touch which surface has the pen, and the line that
@@ -18398,18 +18616,30 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
   $("pracGrip").addEventListener("pointermove", function(e){
     if (!sheetDrag) return;
-    var h = Math.max(46, Math.min(window.innerHeight - 60, sheetDrag.h + (sheetDrag.y - e.clientY)));
+    /* Clamped to the room this dock actually has, not the whole window: with a
+       Strip across the top, dragging the bottom sheet to the full window height
+       covered the page entirely and left nothing to work against. */
+    var room = usablePageViewport();
+    var most = Math.max(120, (room.paperRect ? room.paperRect.height : window.innerHeight) - 60);
+    var h = Math.max(46, Math.min(most, sheetDrag.h + (sheetDrag.y - e.clientY)));
     $("pracSheet").style.height = h + "px";
-    document.body.dataset.prac = "free";
+    /* A hand-dragged height is this tab's override of Half, not a fifth state
+       that everything else then has to know about. */
+    var dt = dockTabFor(prac.rec && prac.rec.id);
+    if (dt) dt.customHeight = h;
   });
-  $("pracGrip").addEventListener("pointerup", function(){
-    sheetDrag = null;
-    setTimeout(function(){ pracSurface.redraw(); noteSurface.redraw(); }, 60);
+  /* pointerup alone left the drag armed whenever the browser took the pointer
+     away, which a scroll claiming the gesture or the pen leaving the glass
+     both do */
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach(function(evt){
+    $("pracGrip").addEventListener(evt, function(){
+      if (!sheetDrag) return;
+      sheetDrag = null;
+      saveDockTabs();
+      afterLayout(function(){ pracSurface.redraw(); noteSurface.redraw(); });
+    });
   });
-  $("snap_tab").addEventListener("click", function(){
-    $("pracSheet").style.height = "";
-    setSnap("tab");
-  });
+  $("snap_strip").addEventListener("click", function(){ setSnap("strip"); });
 
   /* ---- 23. marks in the note list for what a note actually holds ---- */
   function noteMarks(n){
@@ -20854,6 +21084,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        This runs once, before a single thing is painted, so nothing ever sees
        the half-moved state. A failure here must not stop the app opening —
        the old records are still there and the next start tries again. */
+    /* the sheets you had open come back with their places before anything is
+       painted, so the rail is right the first time rather than a moment later */
+    loadDockTabs();
     return C.migrateWorkingToNotes().catch(function(e){
       console.warn("working pages could not be moved yet", e);
       return null;

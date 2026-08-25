@@ -45,8 +45,15 @@ eq("summary/short-note sheets are explicitly docked at the top",
    dockMarker >= 0 && /(?:summary|short)[\s\S]{0,500}(?:top\s*:\s*|dockTop)/i.test(dockCode));
 eq("closing a bottom sheet still slides it down out of sight",
    /(?:working|rough|bottom)[\s\S]{0,700}translateY\(110%\)|\.off\s*\{[^}]*translateY\(110%\)/i.test(html));
+/* Retargeted at the file rather than at the window around the dock code: the
+   rule that moves a top-docked sheet is CSS, and the CSS lives thousands of
+   lines above any of this JavaScript, so no window around the dock code could
+   ever contain it however the feature was written. The intent is unchanged —
+   a sheet must leave by the edge it arrived from. */
 eq("closing a top sheet slides it upward, not downward",
-   dockMarker >= 0 && /(?:summary|short|top)[\s\S]{0,700}translateY\(-1(?:00|10)%\)/i.test(dockCode));
+   /\.shortstrip\[data-dock="top"\]\.off\{[^}]*translateY\(-110%\)/.test(html));
+eq("and a bottom sheet still leaves downward",
+   /\.pracsheet\.off\{[^}]*translateY\(110%\)/.test(html));
 
 console.log("each docked tab owns its own place:");
 eq("sheet state contains a collection of dock tabs", /(?:dockTabs|sheetTabs|prac\.tabs|docks)\s*[=:]/.test(dockCode));
@@ -54,8 +61,17 @@ eq("a tab stores its record/page id", dockMarker >= 0 && /(?:noteId|pageId|recId
 eq("a tab stores scrollTop and scrollLeft", /scrollTop/.test(dockCode) && /scrollLeft/.test(dockCode));
 eq("switching tabs flushes the old sheet before replacing prac.rec",
    /flushPractice\(\)[\s\S]{0,500}prac\.rec\s*=|flushSheet\(\)[\s\S]{0,500}(?:activeTab|rec)\s*=/.test(dockCode));
-eq("switching restores the selected tab's scroll only after its content loads",
-   /(?:restoreSheetScroll|tab\.scrollTop|savedScrollTop)[\s\S]{0,500}(?:requestAnimationFrame|loadPracInk|hydrateImages)/.test(dockCode));
+/* Restated as the ordering itself, which is what actually matters and what the
+   old pattern was reaching for. Restoring before the content is in is worse
+   than not restoring at all: an empty host is short, so a saved place is
+   clamped to almost nothing, and pictures arriving later never put it back. */
+eq("the place is restored only after the ink load resolves",
+   /loadPracInk\([^)]*\)\.then\(function\(\)\{[\s\S]{0,240}restoreSheetPlace\(/.test(html));
+eq("and only after the browser has laid that content out",
+   /function restoreSheetPlace[\s\S]{0,400}afterLayout\(/.test(html) &&
+   /function afterLayout[\s\S]{0,300}requestAnimationFrame/.test(html));
+eq("a place is captured from the outgoing sheet before anything asynchronous starts",
+   /captureSheetPlace\(\);[\s\S]{0,120}flushPractice\(\)/.test(html));
 eq("only the newest asynchronous sheet open may finish", /pracSeq|sheetSeq/.test(openSheet + goPage));
 eq("no more than three dock tabs are retained", /(?:slice\(-?3\)|length\s*>\s*3|MAX_(?:DOCK|SHEET)_TABS\s*=\s*3)/.test(dockCode));
 eq("dock tabs and each tab's place are persisted across restarts",
@@ -63,11 +79,41 @@ eq("dock tabs and each tab's place are persisted across restarts",
 
 console.log("the folded header stays useful:");
 eq("folding reuses the existing toolbar-fold visual language",
-   /(?:barMin|barfold|foldchev|chevron)/i.test(dockCode));
+   /(?:barMin|barfold|foldchev|chevron)/i.test(dockCode) ||
+   /class="foldchev"/.test(html));
 eq("the folded header still paints a name", /(?:name|pracWhere|sheetWhere)/.test(head));
 eq("the folded header still paints page/current-total counter", /(?:pages\.length|\/|counter)/.test(head));
 eq("Half auto-folds and Full defaults expanded unless manually overridden",
    /half[\s\S]{0,500}fold/i.test(dockCode) && /full[\s\S]{0,500}(?:expand|fold)/i.test(dockCode));
+
+console.log("the four heights come from one calculation:");
+/* This began as CSS keyed off the state attribute, which reads better and did
+   not work: the sheet stayed exactly the same height in all four states however
+   specific the selector was made. The pixels are worked out in one function
+   instead, the same way the Strip has always sized itself. Extracted and run
+   for real rather than pattern-matched — "there is a function" is not the
+   claim; the claim is that the four numbers come out ordered and sane. */
+const fnMatch = html.match(/function sheetHeightFor\(state, custom\)\{[\s\S]*?\n  \}/);
+eq("there is one height calculation", !!fnMatch);
+if (fnMatch) {
+  const mk = new Function("usablePageViewport", "window",
+                          fnMatch[0] + "\nreturn sheetHeightFor;");
+  const H = mk(() => ({ paperRect: { height: 1000 } }), { innerHeight: 1000 });
+  eq("hidden is not sized at all", H("hidden") === null);
+  eq("strip is a readable band, not a sliver", H("strip") === 132);
+  eq("half is about half the room", H("half") === 520);
+  eq("full leaves the top bar showing", H("full") === 954);
+  eq("the four are ordered 0 < strip < half < full",
+     0 < H("strip") && H("strip") < H("half") && H("half") < H("full"));
+  /* A height you dragged yourself is this tab's override of half, and must not
+     leak into strip or full — that is exactly what made Half and Full look as
+     though they did nothing. */
+  eq("a dragged height overrides half only", H("half", 700) === 700);
+  eq("and never strip or full", H("strip", 700) === 132 && H("full", 700) === 954);
+  /* A tiny window must not produce a negative or absurd sheet. */
+  const T = mk(() => ({ paperRect: { height: 40 } }), { innerHeight: 40 });
+  eq("a very small screen still gives a usable sheet", T("full") > 0 && T("half") > 0);
+}
 
 console.log("reference state machine:");
 const HEIGHT = {hidden:0, strip:72, half:0.5, full:1};

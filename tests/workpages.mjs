@@ -226,8 +226,13 @@ eq("the surface is blanked before the fetch",
 eq("only the newest open may paint", /if \(seq !== pracSeq\) return;/.test(html));
 eq("a page turn inside the sheet is caught too",
    /if \(!prac\.rec \|\| prac\.rec\.id !== id\) return;/.test(html));
+/* b178 stopped re-reading prac.rec at the moment of the call and captures the
+   id into `mounting` first — the same lesson as the owner-bound save in b177.
+   Reading it later is how a fetch started for one sheet lands on another. */
 eq("turning to another working page fetches that one's ink",
-   /function gotoPracPage[\s\S]*?loadPracInk\(prac\.rec\.id/.test(html));
+   /function gotoPracPage[\s\S]*?var mounting = prac\.rec\.id;[\s\S]*?loadPracInk\(mounting/.test(html));
+eq("and the place it restores is guarded by that same captured id",
+   /loadPracInk\(mounting[^)]*\)\.then\(function\(\)\{[\s\S]{0,200}restoreSheetPlace\(tab, mounting\)/.test(html));
 
 console.log("saving splits the words from the ink:");
 /* Both halves read-modify-write the same note record. Run side by side, the
