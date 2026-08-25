@@ -2990,7 +2990,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b181";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b182";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -8623,6 +8623,38 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   };
 
   /* ---- a drawing surface over a scrolling page ---- */
+  /* ---- the page slides sideways as it zooms, the ink does not ----
+     The sheet is centred in the scroller with `margin:0 auto`, so as zoom
+     shrinks it the sheet re-centres: at 100% its left edge sat 13px in, at 50%
+     it sat 212px in. Page coordinates, though, are measured from the SCROLLER's
+     left edge and simply scaled by zoom — so ink drawn at the sheet's left
+     margin rendered 6px in while the typing it was written beside had moved to
+     212px. Handwriting and words drifted about 200px apart, and only when
+     zoomed out, which is exactly what it looked like.
+
+     The compensation is the difference between where the sheet actually is and
+     where a straight scale would have put it. At 100% that difference is zero,
+     so every existing page draws exactly as it always has and nothing stored
+     needs changing; at every other zoom it moves the ink back onto its words. */
+  function sheetDrift(scroller){
+    if (!scroller) return 0;
+    var sheet = scroller.querySelector(".sheet");
+    if (!sheet) return 0;
+    var z = (typeof zoomOf === "function" ? zoomOf() : (state && state.zoom)) || 1;
+    var pr = scroller.getBoundingClientRect();
+    var sr = sheet.getBoundingClientRect();
+    var here = sr.left - pr.left;              /* where it is, on screen */
+    var wide = scroller.clientWidth;
+    /* The sheet's own width, taken from the stylesheet rather than measured.
+       Measuring looks equivalent and is not: past 100% the sheet is wider than
+       the scroller, and the rect that comes back is no use for working out
+       where an unzoomed sheet would have sat. */
+    var pageW = parseFloat(getComputedStyle(document.documentElement)
+                  .getPropertyValue("--page-w")) || 794;
+    var atOne = Math.max(0, (wide - Math.min(pageW, wide)) / 2);
+    return here - atOne * z;                   /* zero at 100% by construction */
+  }
+
   function makeSurface(name, cfg){
     var S = {
       name: name, scroller: cfg.scroller, canvas: cfg.canvas,
@@ -8673,7 +8705,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var r = S.scroller.getBoundingClientRect();
       var z = zoom() || 1;
       return {
-        x: (e.clientX - r.left + S.scroller.scrollLeft) / z,
+        /* the same compensation the canvas uses, so a nib lands where the ink
+           will be drawn rather than where the page used to be */
+        x: (e.clientX - r.left + S.scroller.scrollLeft - sheetDrift(S.scroller)) / z,
         y: (e.clientY - r.top + S.scroller.scrollTop - pad()) / z
       };
     };
@@ -8687,7 +8721,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (!ctx) return null;
       var z = zoom() || 1;
       ctx.setTransform(dpr * z, 0, 0, dpr * z,
-                       -S.scroller.scrollLeft * dpr,
+                       (sheetDrift(S.scroller) - S.scroller.scrollLeft) * dpr,
                        (pad() - S.scroller.scrollTop) * dpr);
       return ctx;
     };
@@ -18359,11 +18393,40 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* called from paintDoc once the swapped-to page is mounted and its bands
      have been rebuilt */
+  /* Let a swap go that is never going to land, and unfreeze the join with it.
+     Everything here is what the 2500ms guard already does; doing it the moment
+     the swap is known to be lost is the whole point. */
+  function abandonHandover(){
+    clearTimeout(handover.guard);
+    handover.pending = null;
+    handover.busy = false;
+    document.body.classList.remove("swapping");
+    var band = $("prevPeek");
+    if (band){ band.style.height = ""; band.style.overflow = ""; }
+    if (typeof paintPrevPeek === "function") paintPrevPeek();
+    if (typeof paintPageEnd === "function") paintPageEnd();
+  }
+
   function finishHandover(){
     var pend = handover.pending;
-    if (!pend || !state.note) return;
+    /* No swap pending, but the lock still on: nothing left is going to clear
+       it except the guard, and a lock with nothing behind it is simply stale.
+       Page turning is refused for as long as it stands. */
+    if (!pend){
+      if (handover.busy) abandonHandover();
+      return;
+    }
+    if (!state.note) return;                    /* the guard will tidy up */
     var here = (typeof currentPageId === "function") ? currentPageId() : state.note.id;
-    if (pend.id !== here && pend.id !== state.note.id) return;
+    if (pend.id !== here && pend.id !== state.note.id){
+      /* A newer page won the race, so this swap will never land. It used to
+         just return, leaving the lock on until the guard fired two and a half
+         seconds later — and every attempt to turn the page in that window was
+         refused. Cross a few joins quickly, which is exactly what zooming out
+         makes you do, and page turning feels as though it has stopped. */
+      abandonHandover();
+      return;
+    }
     handover.pending = null;
     clearTimeout(handover.guard);
     var p = $("paper"), band = $("prevPeek");
