@@ -5221,17 +5221,23 @@ var MarginCore = (function(){
         html = html.split(a.id).join(na.id);
         newAssets.push(na);
       });
-      var copy = {
-        id: newId("nt"),
-        notebookId: intoNotebookId || src.notebookId,
-        sectionId: intoNotebookId && intoNotebookId !== src.notebookId ? null : (src.sectionId || null),
-        title: (src.title ? src.title : displayTitle(src)) + " (copy)",
-        html: html,
-        tags: (src.tags||[]).slice(),
-        pinned: false, starred: false,
-        createdAt: now, lastEdited: now,
-        deletedAt: null, deletedVia: null, editedOn: _device
-      };
+      /* Spread the page first and override only what identifies it. The old
+         version listed the fields it knew about, so Covers, the bookmark and
+         anything added later were silently dropped by copying a page — the
+         copy came back having forgotten what it was a summary of. */
+      var copy = Object.assign({}, src);
+      copy.id = newId("nt");
+      copy.notebookId = intoNotebookId || src.notebookId;
+      copy.sectionId = intoNotebookId && intoNotebookId !== src.notebookId ? null : (src.sectionId || null);
+      copy.title = (src.title ? src.title : displayTitle(src)) + " (copy)";
+      copy.html = html;
+      copy.tags = (src.tags||[]).slice();
+      copy.pinned = false; copy.starred = false;
+      copy.createdAt = now; copy.lastEdited = now;
+      copy.deletedAt = null; copy.deletedVia = null; copy.editedOn = _device;
+      /* structured metadata is deep-copied, or the two pages would share one
+         array and editing either would edit both */
+      if (Array.isArray(src.covers)) copy.covers = JSON.parse(JSON.stringify(src.covers));
       newAssets.forEach(function(a){ if (!a.noteId) a.noteId = copy.id; });
 
       /* The working pages come with it — as pages, pointed at the copy through
@@ -5257,6 +5263,14 @@ var MarginCore = (function(){
           });
           kc.html = kh;
           kidNotes.push(kc);
+        });
+        /* The copied page still names the ORIGINAL sheets in its markers, so
+           every one of them would open the original's working rather than its
+           own copy — two pages quietly sharing one set of sheets. */
+        var pinMap = {};
+        kids.forEach(function(k, i){ if (kidNotes[i]) pinMap[k.id] = kidNotes[i].id; });
+        copy.html = String(copy.html || "").replace(/data-pracid="([^"]*)"/g, function(m0, old){
+          return 'data-pracid="' + (pinMap[old] || old) + '"';
         });
         function write(secId){
           kidNotes.forEach(function(k){ k.sectionId = secId; });
@@ -5348,6 +5362,25 @@ var MarginCore = (function(){
           });
           copy.html = h;
           notes.push(copy);
+        });
+        /* Markers and Covers both name pages by id, and every page here has a
+           new one. Left alone, a copied notebook's markers open the original's
+           sheets and its summaries point at the original's pages — you would
+           edit one believing you were editing the other. A reference that does
+           NOT resolve inside this notebook is deliberately left as it is: it
+           genuinely points somewhere else. */
+        notes.forEach(function(c){
+          c.html = String(c.html || "").replace(/data-pracid="([^"]*)"/g, function(m0, old){
+            return 'data-pracid="' + (idMap[old] || old) + '"';
+          });
+          if (Array.isArray(c.covers)){
+            c.covers = c.covers.map(function(ref){
+              if (!ref || !ref.noteId || !idMap[ref.noteId]) return ref;
+              return { noteId: idMap[ref.noteId],
+                       anchorId: ref.anchorId || null,
+                       notebookId: nb.id };
+            });
+          }
         });
         return putMany(["notebooks","notes","sections","assets"],
                        {notebooks:[nb], notes:notes, sections:sections, assets:newAssets});
@@ -9741,14 +9774,32 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     el.title = parent ? ("Working for " + C.displayTitle(parent)) : "";
   }
 
+  /* Re-linking has to move the page, not just repoint it. Changing worksFor
+     alone left the sheet filed in the old notebook's Working drawer — so it
+     vanished from the drawer of the notebook it now belongs to, and its name
+     still claimed a page it had nothing to do with. */
   function relinkWorkingHere(){
     if (!prac.rec || !state.note) return;
     if (state.note.id === prac.rec.worksFor) return;
     var id = prac.rec.id;
-    C.saveNote(id, { worksFor: state.note.id }).then(function(n){
+    var target = state.note;
+    C.practicePages(target.id).then(function(siblings){
+      return C.ensureWorkingSection(target.notebookId).then(function(sec){
+        return C.saveNote(id, {
+          worksFor:   target.id,
+          notebookId: target.notebookId,
+          sectionId:  sec ? sec.id : null,
+          workOrder:  siblings.length,
+          title:      C.workingName(target, siblings.length)
+        });
+      });
+    }).then(function(n){
       if (prac.rec && prac.rec.id === id) prac.rec = n;
+      /* put a marker on the page it now belongs to, so it can be found again */
       if (typeof ensureWorkPin === "function") ensureWorkPin(id);
+      if (typeof paintWorkPins === "function") paintWorkPins();
       paintPracHead();
+      markDirty(); flush();
       hint("Working page re-linked to this page.");
     }).catch(function(){ say("Could not re-link that working page."); });
   }
@@ -13569,9 +13620,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (ink.active === "practice" && prac.open && $("pracText")) return $("pracText");
     return $("body");
   }
+  /* Which page is actually being written on. A picture dropped into a working
+     sheet belongs to that sheet, not to the page the sheet happens to have been
+     opened from. Giving it to the parent meant duplicating the sheet could miss
+     it, two copies could end up sharing one asset, and erasing either page for
+     good could take the other's picture with it. */
+  function activeNoteId(){
+    if (ink.active === "practice" && prac.open && prac.rec) return prac.rec.id;
+    return state.note ? state.note.id : null;
+  }
   function insertImageFile(file){
     if (!state.note) return Promise.resolve();
-    var noteId = state.note.id;
+    var noteId = activeNoteId();
+    if (!noteId) return Promise.resolve();
     var host = activeTextHost();
     if (host && host.id !== "pracText" && typeof snapText === "function") snapText();
     return shrink(file).then(function(r){
@@ -15647,7 +15708,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function attachFile(file){
     if (!state.note) return Promise.resolve();
     if (file.type && file.type.indexOf("image/") === 0) return insertImageFile(file);
-    return C.createFile(state.note.id, file, file.name, file.type).then(function(a){
+    /* same rule as a picture: it belongs to the page it was attached to */
+    var owner = activeNoteId();
+    if (!owner) return Promise.resolve();
+    return C.createFile(owner, file, file.name, file.type).then(function(a){
       var chip = document.createElement("span");
       chip.className = "filechip";
       chip.setAttribute("contenteditable", "false");

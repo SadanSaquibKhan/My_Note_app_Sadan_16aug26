@@ -119,6 +119,46 @@ eq("erasure maps are unioned, the page's own entry winning",
    merged.removed.a === 1 && merged.removed.b === 2);
 eq("the taller of the two heights is kept", merged.h === 1200);
 
+console.log("copying a page keeps what makes it that page:")
+/* b175. Copying used to rebuild the record from a list of fields it knew about,
+   so Covers, the bookmark and anything added later were silently dropped: a
+   copied summary came back having forgotten what it was a summary of. */
+eq("a copy is spread from the page, not rebuilt from a list of fields",
+   /var copy = Object\.assign\(\{\}, src\);/.test(html));
+eq("structured metadata is deep-copied, not shared with the original",
+   /if \(Array\.isArray\(src\.covers\)\) copy\.covers = JSON\.parse\(JSON\.stringify\(src\.covers\)\);/.test(html));
+/* The copied page still named the ORIGINAL sheets, so every marker on it opened
+   the original's working: two pages quietly sharing one set of sheets. */
+eq("markers on a copied page are repointed at that page's own sheets",
+   /var pinMap = \{\};[\s\S]{0,400}data-pracid="\(\[\^"\]\*\)"/.test(html));
+/* And a copied notebook's markers and Covers both named the original's pages. */
+eq("a copied notebook repoints its markers", /idMap\[old\] \|\| old/.test(html));
+eq("a copied notebook remaps Covers that land inside it",
+   /if \(!ref \|\| !ref\.noteId \|\| !idMap\[ref\.noteId\]\) return ref;/.test(html));
+eq("a reference pointing outside the copy is deliberately left alone",
+   /genuinely points somewhere else/.test(html));
+
+console.log("a picture belongs to the page it was put on:")
+/* It always took state.note.id, so a picture dropped into a working sheet was
+   owned by the page the sheet was opened from. Duplicating the sheet could miss
+   it, two copies could share one asset, and erasing either could take the
+   other's picture. */
+eq("there is one answer to which page is being written on",
+   /function activeNoteId\(\)\{[\s\S]{0,240}prac\.rec\.id/.test(html));
+eq("a picture uses it", /function insertImageFile[\s\S]{0,200}var noteId = activeNoteId\(\);/.test(html));
+eq("an attachment uses it too", /var owner = activeNoteId\(\);/.test(html));
+
+console.log("re-linking moves the page, it does not just repoint it:")
+/* Changing worksFor alone left the sheet in the old notebook's Working drawer,
+   so it vanished from the drawer of the notebook it now belonged to, and its
+   name still claimed a page it had nothing to do with. */
+eq("relink moves the notebook, the drawer, the order and the name",
+   /function relinkWorkingHere[\s\S]{0,900}notebookId: target\.notebookId/.test(html) &&
+   /function relinkWorkingHere[\s\S]{0,900}sectionId:  sec \? sec\.id : null/.test(html) &&
+   /function relinkWorkingHere[\s\S]{0,900}title:      C\.workingName\(target/.test(html));
+eq("and leaves a marker on the page it now belongs to",
+   /function relinkWorkingHere[\s\S]{0,900}ensureWorkPin\(id\)/.test(html));
+
 console.log("erasing a page for good actually erases it:");
 /* A working page's legacy row is keyed by the page's own id, while its noteId
    names the page it hangs off. Clearing by that index did both halves of the
