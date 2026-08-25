@@ -2990,7 +2990,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b182";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b183";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -10479,7 +10479,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     } else { $("body").appendChild(ul); }
     markDirty(); paintFoot();
   });
-  $("body").addEventListener("click", function(e){
+  onEditHost("click", function(e){
     var li = e.target.closest ? e.target.closest("li.todo") : null;
     if (!li) return;
     var r = li.getBoundingClientRect();
@@ -10493,7 +10493,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     [/^#\s$/, ["formatBlock","h1"]], [/^##\s$/, ["formatBlock","h2"]], [/^###\s$/, ["formatBlock","h3"]],
     [/^[-*]\s$/, ["insertUnorderedList"]], [/^1\.\s$/, ["insertOrderedList"]]
   ];
-  $("body").addEventListener("keyup", function(e){
+  onEditHost("keyup", function(e){
     if (e.key !== " ") return;
     var sel = window.getSelection();
     if (!sel || !sel.anchorNode) return;
@@ -10647,7 +10647,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("linkFind").addEventListener("input", buildLinkList);
   $("linkCancel").addEventListener("click", function(){ $("linkDlg").close(); });
 
-  $("body").addEventListener("click", function(e){
+  onEditHost("click", function(e){
     var a = e.target.closest ? e.target.closest("a.ilink") : null;
     if (!a) return;
     e.preventDefault();
@@ -13325,7 +13325,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     markDirty(); flush();
   });
   $("mathCancel").addEventListener("click", function(){ $("mathDlg").close(); });
-  $("body").addEventListener("dblclick", function(e){
+  onEditHost("dblclick", function(e){
     var m = e.target.closest ? e.target.closest("span.math") : null;
     if (m) openMath(m);
   });
@@ -14149,6 +14149,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (ink.active === "practice" && prac.open && $("pracText")) return $("pracText");
     return $("body");
   }
+  /* ---- both places you can be typing ----
+     The editor grew up on the note, so every one of its behaviours was wired
+     straight to that one element: ticking a to-do, expanding `**bold**`, Tab
+     indenting a list, selecting a picture, editing a maths block, following a
+     link, and — worst of the lot — the text undo history. The working sheet had
+     three handlers against the note's twenty, so all of that simply did nothing
+     there. It looked like a different, poorer editor because it was one.
+
+     Binding through here instead means a behaviour added once works in both,
+     and the next one added cannot be accidentally note-only. */
+  function editHosts(){
+    var out = [];
+    var b = $("body"); if (b) out.push(b);
+    var t = $("pracText"); if (t) out.push(t);
+    return out;
+  }
+  function onEditHost(type, fn, capture){
+    editHosts().forEach(function(el){ el.addEventListener(type, fn, capture); });
+  }
+
   /* Which page is actually being written on. A picture dropped into a working
      sheet belongs to that sheet, not to the page the sheet happens to have been
      opened from. Giving it to the parent meant duplicating the sheet could miss
@@ -14710,7 +14730,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("imgMove").addEventListener("click", function(){
     if (moving) cancelMove(); else startMove();
   });
-  $("body").addEventListener("click", function(e){
+  onEditHost("click", function(e){
     if (!moving) return;
     var fig = moving;
     if (e.target === fig || fig.contains(e.target)) return;   /* tapped itself */
@@ -14758,7 +14778,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      the picture up. A tap (no move) still selects. A drag on a picture that
      is already selected still moves it. The pen is left alone: it writes. */
   var imgPend = null;
-  $("body").addEventListener("pointerdown", function(e){
+  onEditHost("pointerdown", function(e){
     var fig = figOf(e.target);
     if (!fig) return;
     if (fig.getAttribute("data-pdfpage") === "1") return;
@@ -14900,7 +14920,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
 
   /* tapping the page, away from any picture, puts it down again */
-  $("body").addEventListener("pointerdown", function(e){
+  onEditHost("pointerdown", function(e){
     if (!pickedImage) return;
     if (figOf(e.target)) return;
     deselectImage();
@@ -15071,7 +15091,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
 
   /* ---- [[ to link ---- */
-  $("body").addEventListener("keyup", function(e){
+  onEditHost("keyup", function(e){
     if (e.key !== "[") return;
     var sel = window.getSelection();
     if (!sel || !sel.anchorNode) return;
@@ -16360,6 +16380,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     while (n && n.parentNode !== $("body")) n = n.parentNode;
     if (n && n.setAttribute) n.setAttribute("data-at", Date.now());
   }
+  /* note only: it walks up to $("body") to find the block to stamp, and a
+     recording is pinned to the note's own lines, not to a working sheet's */
   $("body").addEventListener("input", stampCaretBlock);
 
   function loadAudio(){
@@ -16688,13 +16710,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("textRedo").addEventListener("click", function(){
     if (typeof globalRedo === "function") globalRedo(); else textRedo();
   });
+  /* Deliberately still the note only. snapText serialises $("body") whichever
+     host the keystroke came from, so firing it for the sheet would push the
+     note's unchanged markup into the note's own undo history — snapshots of
+     nothing, taken because you typed somewhere else. The sheet needs an undo
+     history of its own before this can be shared, and that is its own job. */
   $("body").addEventListener("input", function(){
     clearTimeout(textHist.timer);
     textHist.timer = setTimeout(snapText, 500);
   });
 
   /* ---- 6. Tab should indent a list, not jump out of the page ---- */
-  $("body").addEventListener("keydown", function(e){
+  onEditHost("keydown", function(e){
     if (e.key === "Tab"){
       e.preventDefault();
       document.execCommand(e.shiftKey ? "outdent" : "indent", false);
@@ -16966,7 +16993,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
 
   /* ---- 16. removing an attachment ---- */
-  $("body").addEventListener("dblclick", function(e){
+  onEditHost("dblclick", function(e){
     var chip = e.target.closest ? e.target.closest(".filechip") : null;
     if (!chip) return;
     if (!confirm("Take this attachment out of the note?")) return;
@@ -19580,7 +19607,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("imgCaption").addEventListener("click", captionImage);
 
   /* ---- 19. renaming an attachment ---- */
-  $("body").addEventListener("contextmenu", function(e){
+  onEditHost("contextmenu", function(e){
     var chip = e.target.closest ? e.target.closest(".filechip") : null;
     if (!chip) return;
     e.preventDefault();
