@@ -16,6 +16,12 @@
        purpose: enough to tell apart, not enough to read as a different app. */
     --ground-work:#e5e0d3;
     --ground-short:#d8e1ea;
+    /* Beyond the edge of the sheet is desk, not page. The two had been the
+       same colour, so zooming out produced a wide expanse that looked like it
+       might still be writable and simply was not — nothing said where the
+       paper stopped. Darker than any of the papers, in both themes, so the
+       sheet always reads as the lit thing lying on top of it. */
+    --desk:#a9b0ab;
     --panel:#f5f7f4;
     --field:#ffffff;
     --ink:#121614;
@@ -47,6 +53,7 @@
     --ground:#151917;
     --ground-work:#1b1813;
     --ground-short:#131a20;
+    --desk:#0a0c0b;
     --panel:#1e2321;
     --field:#141817;
     --ink:#e7ebe8;
@@ -459,10 +466,13 @@
      same treatment, so a run of pages looks like one continuous notebook.
      Painting it on the sheet also means it simply moves with the writing:
      no background-attachment to get wrong. */
-  .paper{--rule-gap:var(--lead); background:var(--ground)}
-  /* the ordinary page keeps --ground; the two drawers get their own */
-  body[data-pagekind="working"] #paper{background:var(--ground-work)}
-  body[data-pagekind="summary"] #paper{background:var(--ground-short)}
+  .paper{--rule-gap:var(--lead); background:var(--desk)}
+  /* Each template already rules the sheet and builds it on --field. Setting
+     that one colour per kind tints the paper and keeps every line exactly where
+     it was; overriding `background` here instead would tint it and wipe the
+     ruling with it. */
+  body[data-pagekind="working"] .paper > .sheet{--field:var(--ground-work)}
+  body[data-pagekind="summary"] .paper > .sheet{--field:var(--ground-short)}
   .shortstrip, .shortstrip-body{background:var(--ground-short)}
   .sheet, .peekpage{background:var(--field); box-shadow:0 0 0 1px var(--rule)}
   .tpl-blank .sheet, .tpl-blank .peekpage{background:var(--field)}
@@ -1532,7 +1542,8 @@
   #sectionList .row.drawerrow .rowtitle{font-style:italic; opacity:.85}
   #sectionList .row.drawerrow .swatch{border-radius:3px}
   .pracpage{font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--ink-2); flex:none}
-  .paper.prac{background:var(--ground-work); overflow-y:auto; -webkit-overflow-scrolling:touch}
+  .paper.prac{background:var(--desk); overflow-y:auto; -webkit-overflow-scrolling:touch}
+  .paper.prac > .sheet.prac{--field:var(--ground-work)}
   .sheet.prac{
     max-width:var(--page-w); margin:0 auto;
     padding:0 clamp(16px,4vw,44px) 24px; zoom:var(--z,1);
@@ -1602,10 +1613,11 @@
     flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch;
     scrollbar-width:none; -ms-overflow-style:none;
     overscroll-behavior:contain;
-    background:
-      linear-gradient(var(--paper-rule) 1px, transparent 1px) 0 0/100% var(--lead),
-      var(--field);
-    background-attachment:local;
+    /* Plain desk. This used to draw the same ruled lines the template already
+       draws on the sheet, across the full width of the scroller — so the ruling
+       ran on past the edge of the paper and there was nothing to say where the
+       page stopped. Zooming out just produced more of the same surface. */
+    background:var(--desk);
   }
   .paper::-webkit-scrollbar{display:none}
   /* The room to write past the last line used to be padding on the sheet,
@@ -2978,7 +2990,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b180";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b181";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9785,9 +9797,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      something quietly taken away. */
   function zoomFloor(){
     var user = Math.max(0.1, (Number(cfg.zoomMin) || 50) / 100);
-    if (cfg.fixedPageWidth === false) return user;
-    /* never past fit-width, and never above 100%, so actual size is always
-       reachable however wide the screen happens to be */
+    /* Off by default. b180 read "the page width should be fixed" as "stop
+       zooming out", which was the wrong half of the problem: the page was
+       never really changing width, it was the space around it that gave no
+       sign of where the paper ended. That is fixed by making the desk look
+       like a desk, below — so zooming out is worth having again, and this only
+       stops it for anyone who genuinely wants the sheet pinned to the width. */
+    if (cfg.fixedPageWidth !== true) return user;
     return Math.max(user, Math.min(1, fitWidthZoom()));
   }
   function zoomCeil(){ return Math.max(zoomFloor() + 0.05, (Number(cfg.zoomMax) || 300) / 100); }
@@ -10743,9 +10759,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     curvePct: 60,      /* how much the joins between points are rounded */
     stabilise: 30,     /* how far the drawn line trails the nib */
     zoomMin: 50,       /* zoom limits, per cent, honoured by buttons and pinch */
-    /* The page keeps its width however far you zoom out. Turn this off to go
-       on shrinking the sheet below the width of the writing area. */
-    fixedPageWidth: true,
+    /* Stop zooming out once the sheet fits the width. Off by default: the
+       desk around the page now says plainly where the paper ends, which is
+       what was actually wanted, and zooming out to see more of a page is
+       worth keeping. */
+    fixedPageWidth: false,
     zoomMax: 300,
     simpleSet: true,   /* Settings opens on the short list */
     simpleBars: true,  /* toolbars show the frequent buttons first */
