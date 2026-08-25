@@ -2926,7 +2926,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b175";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b176";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4048,8 +4048,13 @@ var MarginCore = (function(){
   }
   function suggestSectionName(notebookId){
     return sectionsIn(notebookId).then(function(list){
+      /* Only the sections you can see are numbered. Counting the drawers made
+         the next suggestion skip numbers — a notebook with Working and Summary
+         offered Sec4 when you had two sections — which reads like something has
+         been deleted. */
+      var visible = ordinarySections(list);
       var max = 1;
-      list.forEach(function(s, i){
+      visible.forEach(function(s, i){
         var n = sectionNumber(s, i);
         if (n > max) max = n;
       });
@@ -4398,15 +4403,23 @@ var MarginCore = (function(){
     opts = opts || {};
     q = (q || "").trim();
     if (!q) return Promise.resolve([]);
-    return Promise.all([allNotes(), allNotebooks(),
-                        opts.includePractice ? getAll("practices") : Promise.resolve([])])
+    return Promise.all([allNotes(), allNotebooks(), getAll("sections")])
       .then(function(r){
         var nbName = {};
         r[1].forEach(function(nb){ nbName[nb.id] = nb.name; });
+        var dIds = drawerSectionIds(r[2]);
+        var byId = {};
+        r[0].forEach(function(n){ byId[n.id] = n; });
         var hits = [];
         r[0].forEach(function(n){
           if (opts.starredOnly && !n.starred) return;
           if (opts.notebookId && n.notebookId !== opts.notebookId) return;
+          /* Rough working is where you try things that turn out to be wrong.
+             Having it answer every ordinary search alongside the clean notes
+             buries what you were looking for, so it is asked for rather than
+             assumed. Once working pages became real pages they arrived in
+             these results by default, which is the bug. */
+          if (isDrawerPage(n, dIds)) return;
           if (matchNote(n, q)){
             hits.push({ note:n, where:"note", notebook:nbName[n.notebookId] || "",
                         snippet: snippet(n.html, q) });
@@ -4415,17 +4428,18 @@ var MarginCore = (function(){
         if (opts.includePractice){
           var seen = {};
           hits.forEach(function(h){ seen[h.note.id] = 1; });
-          var byId = {};
-          r[0].forEach(function(n){ byId[n.id] = n; });
-          r[2].filter(live).forEach(function(p){
-            if (seen[p.noteId]) return;
-            var n = byId[p.noteId];
-            if (!n) return;
-            if (matchNote({title:"", html:p.html, tags:[]}, q)){
-              seen[n.id] = 1;
-              hits.push({ note:n, where:"practice", notebook:nbName[n.notebookId] || "",
-                          snippet: snippet(p.html, q) });
-            }
+          /* the current working pages, not the legacy store: that is read once
+             at boot to be converted and holds nothing afterwards */
+          r[0].forEach(function(w){
+            if (!live(w) || !isWorkingPage(w)) return;
+            var parent = byId[w.worksFor];
+            if (opts.notebookId && w.notebookId !== opts.notebookId) return;
+            if (seen[w.id]) return;
+            if (!matchNote({ title:"", html:w.html, tags:[] }, q)) return;
+            seen[w.id] = 1;
+            hits.push({ note: parent || w, where:"practice",
+                        notebook: nbName[w.notebookId] || "",
+                        snippet: snippet(w.html, q) });
           });
         }
         return hits;
@@ -4438,10 +4452,31 @@ var MarginCore = (function(){
      stroke count has to be looked up now rather than read off the record: the
      ink lives in a "page" asset, the same place an ordinary page keeps it. */
   function practiceAll(){
-    return Promise.all([getAll("notes"), getAll("notebooks"), getAll("assets")])
+    return Promise.all([getAll("notes"), getAll("notebooks"), getAll("assets"),
+                        getAll("sections")])
       .then(function(r){
         var note = {}, nb = {}, marks = {};
         r[0].forEach(function(n){ note[n.id] = n; });
+        /* Where each page actually sits in its notebook, worked out the same
+           way the page list works it out. Reading the order out of an SxPy
+           title instead only holds while every page is auto-named: rename one,
+           or reorder the notebook, and the sheets sort by a number that no
+           longer means anything. */
+        var rank = {}, seenBook = {};
+        r[0].forEach(function(n){
+          if (!n.notebookId || seenBook[n.notebookId]) return;
+          seenBook[n.notebookId] = 1;
+          var pages = ordinaryPages(r[0].filter(function(x){
+            return x.notebookId === n.notebookId && live(x);
+          }), r[3]);
+          var secs = (r[3] || []).filter(function(x){ return x.notebookId === n.notebookId; });
+          var flat = [];
+          notesBySection(pages, secs).forEach(function(g){
+            if (isDrawer(g.section)) return;
+            flat = flat.concat(g.notes);
+          });
+          flat.forEach(function(x, i){ rank[x.id] = i; });
+        });
         r[1].forEach(function(x){ nb[x.id] = x; });
         r[2].forEach(function(a){
           if (a.kind === "page" && live(a)) marks[a.noteId] = (a.strokes || []).length;
@@ -4464,9 +4499,10 @@ var MarginCore = (function(){
              hangs off, and only then its own sheet number. A sheet whose page
              is gone has no place in that order, so it goes to the end. */
           function parentOrder(x){
-            if (!x.note) return [1, 9e15, 9e15];
-            var sp = splitSecPage(x.note.title);
-            return sp ? [0, sp.s, sp.p] : [0, 9e14, x.note.createdAt || 0];
+            if (!x.note) return [1, 9e15, 9e15];          /* its page is gone: last */
+            var at = rank[x.note.id];
+            if (at == null) return [0, 9e14, x.note.createdAt || 0];
+            return [0, 0, at];
           }
           var pa = parentOrder(a), pb = parentOrder(b);
           return (pa[0] - pb[0]) || (pa[1] - pb[1]) || (pa[2] - pb[2]) ||
@@ -5746,7 +5782,12 @@ var MarginCore = (function(){
       var ids = {};
       notes.forEach(function(n){ ids[n.id] = 1; });
       return Promise.all([getAll("practices"), getAll("assets")]).then(function(rr){
-        var pracs = rr[0].filter(function(p){ return ids[p.noteId]; });
+        /* A working page travels in `notes` now, because it is one. Shipping
+           its legacy row beside it puts both halves of the same sheet in one
+           file, and importing that file gives you each sheet twice. Only a row
+           that has genuinely never been converted is still worth carrying, and
+           after boot there are none. */
+        var pracs = rr[0].filter(function(p){ return ids[p.noteId] && !ids[p.id]; });
         var assets = rr[1].filter(function(a){ return ids[a.noteId]; });
         return encodeAssets(assets, skipAudio).then(function(withData){
           return {
