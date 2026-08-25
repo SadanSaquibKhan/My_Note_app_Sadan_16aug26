@@ -2966,7 +2966,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b178";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b179";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4995,7 +4995,13 @@ var MarginCore = (function(){
       note.deletedVia = p.deletedVia || null;
       changed = true;
     }
-    if (changed) touch(note);
+    /* Deliberately NOT touched. Repair is this device rebuilding what an
+       earlier build dropped on the way in — it is not an edit you made, and
+       stamping it as one is a way to lose real writing. A device that had been
+       switched off would boot, copy one missing field into its stale copy, and
+       walk away with the newest clock on the whole record; last-writer-wins
+       would then hand that stale copy to every other device. Each device
+       repairs from its own legacy rows, so nothing needs to travel. */
     return changed;
   }
   /* The ink half, merged rather than replaced: strokes may well have been drawn
@@ -5015,7 +5021,7 @@ var MarginCore = (function(){
       asset[k] = dst;
     });
     if ((want.h || 0) > (asset.h || 0)){ asset.h = want.h; changed = true; }
-    if (changed) touch(asset);
+    /* same reasoning as the page above: rebuilt locally, never stamped */
     return changed;
   }
 
@@ -6080,6 +6086,129 @@ var MarginCore = (function(){
      so a picture travels as several small `imgdata` rows and is glued back
      on pull. Audio never uses this path. */
   var IMGDATA_CHUNK = 40000;
+  /* ---- a picture travels as two separate streams of bytes ----
+     A cropped picture has two: the crop you look at, and the pristine original
+     that Uncrop puts back. Only the first was ever sent, so a crop reached the
+     other device and Uncrop there had nothing to restore — silently, and only
+     discovered by someone trying it.
+
+     The display bytes keep their old row ids exactly, so an older build still
+     understands them and nothing already uploaded is stranded. The pristine
+     bytes live in a reserved namespace beginning with a colon, and deliberately
+     carry no `assetId` in the body: an older build works out the owner from
+     `assetId || id.split(":")[0]`, which for these rows yields an empty string,
+     so it ignores them rather than mistaking pristine bytes for display bytes
+     and overwriting the picture. Margin's own ids are `img_…`, so they cannot
+     collide with that namespace. */
+  var IMG_SLOTS = { blob: 1, orig: 1 };
+  var ORIG_PREFIX = ":orig:";
+  function imageChunkId(assetId, slot, i){
+    return (slot === "orig")
+      ? ORIG_PREFIX + encodeURIComponent(assetId) + ":" + i
+      : assetId + ":" + i;
+  }
+  function imageRevision(updatedAt, device){
+    return String(Number(updatedAt) || 0) + "@" + String(device || "");
+  }
+  function imageSlotChunks(assetId, slot, dataUrl, updatedAt, device, chunk, rev){
+    if (!IMG_SLOTS[slot]) throw new Error("Unknown image byte slot: " + slot);
+    chunk = chunk || IMGDATA_CHUNK;
+    rev = rev || imageRevision(updatedAt, device);
+    /* No bytes for this slot. One tombstone at index zero speaks for the whole
+       slot: a client cannot know how many stale tail rows a server still holds,
+       so requiring one tombstone each would be a promise it cannot keep. */
+    if (dataUrl == null){
+      return [{
+        store: "imgdata",
+        id: imageChunkId(assetId, slot, 0),
+        updated_at: updatedAt || 0,
+        deleted: 1,
+        device: device || null,
+        body: { ownerId: assetId, slot: slot, i: 0, n: 0, present: false, rev: rev }
+      }];
+    }
+    var text = String(dataUrl);
+    var n = Math.max(1, Math.ceil(text.length / chunk) || 1);
+    var out = [], i;
+    for (i = 0; i < n; i++){
+      var body = {
+        ownerId: assetId, slot: slot, i: i, n: n,
+        present: true, rev: rev,
+        data: text.slice(i * chunk, (i + 1) * chunk)
+      };
+      /* only the display slot names the asset, and only so older builds keep
+         understanding it */
+      if (slot === "blob") body.assetId = assetId;
+      out.push({
+        store: "imgdata",
+        id: imageChunkId(assetId, slot, i),
+        updated_at: updatedAt || 0,
+        deleted: 0,
+        device: device || null,
+        body: body
+      });
+    }
+    return out;
+  }
+  function ownerFromOrigId(id){
+    id = String(id || "");
+    if (id.indexOf(ORIG_PREFIX) !== 0) return "";
+    var rest = id.slice(ORIG_PREFIX.length);
+    var cut = rest.lastIndexOf(":");
+    if (cut < 0) return "";
+    try { return decodeURIComponent(rest.slice(0, cut)); } catch (e){ return ""; }
+  }
+  /* Understands both the rows this build writes and the ones every build
+     before it wrote, which had no slot at all and were always display bytes. */
+  function decodeImageRow(row){
+    if (!row || row.store !== "imgdata") return null;
+    var body = (row.body && typeof row.body === "object") ? row.body : {};
+    var slot = body.slot;
+    if (!IMG_SLOTS[slot]) slot = (String(row.id || "").indexOf(ORIG_PREFIX) === 0) ? "orig" : "blob";
+    var ownerId = body.ownerId || body.assetId || "";
+    if (!ownerId && slot === "orig") ownerId = ownerFromOrigId(row.id);
+    if (!ownerId && slot === "blob"){
+      var id = String(row.id || "");
+      var cut = id.lastIndexOf(":");
+      ownerId = cut > 0 ? id.slice(0, cut) : "";
+    }
+    if (!ownerId) return null;
+    return {
+      ownerId: ownerId, slot: slot,
+      i: Number(body.i), n: Number(body.n),
+      data: body.data || "",
+      rev: body.rev || imageRevision(row.updated_at, row.device),
+      present: body.present !== false && !row.deleted,
+      deleted: !!row.deleted || body.present === false,
+      updatedAt: Number(row.updated_at) || 0
+    };
+  }
+  /* Index zero is the header that says which generation this is and how many
+     parts it has. A picture recropped smaller leaves the old longer tail behind
+     on the server, and gluing those on would produce bytes that are not any
+     picture at all — so only parts carrying the head's own revision may join,
+     and a generation missing a part stays unfinished rather than wrong. */
+  function joinImageSlot(parts){
+    var byIndex = {};
+    (parts || []).forEach(function(part){
+      if (!part || !(part.i >= 0)) return;
+      var have = byIndex[part.i];
+      if (!have || (part.updatedAt || 0) >= (have.updatedAt || 0)) byIndex[part.i] = part;
+    });
+    var head = byIndex[0];
+    if (!head) return { done: false, data: null, cleared: false };
+    if (head.deleted || head.present === false) return { done: true, data: null, cleared: true };
+    var n = Number(head.n);
+    if (!(n > 0)) return { done: false, data: null, cleared: false };
+    var out = "", i;
+    for (i = 0; i < n; i++){
+      var part = byIndex[i];
+      if (!part || part.rev !== head.rev || part.deleted) return { done: false, data: null, cleared: false };
+      out += part.data || "";
+    }
+    return { done: true, data: out, cleared: false };
+  }
+
   function imageDataChunks(assetId, dataUrl, updatedAt, device, chunk){
     chunk = chunk || IMGDATA_CHUNK;
     var s = dataUrl || "";
@@ -6236,6 +6365,9 @@ var MarginCore = (function(){
     roundPts:roundPts, inkBounds:inkBounds, penWidth:penWidth,
     applyOp:applyOp, revertOp:revertOp,
     createInk:createInk, getPageInk:getPageInk, getAsset:getAsset, assetsFor:assetsFor, saveAsset:saveAsset,
+    imageSlotChunks:imageSlotChunks, decodeImageRow:decodeImageRow,
+    joinImageSlot:joinImageSlot, imageChunkId:imageChunkId,
+    imageRevision:imageRevision,
     createImage:createImage, imagesFor:imagesFor, blobToData:blobToData, dataToBlob:dataToBlob,
     createFile:createFile, filesFor:filesFor, createAudio:createAudio, audioFor:audioFor,
     offsetInAudio:offsetInAudio, audioAt:audioAt,
@@ -20806,26 +20938,59 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var assetHits = [];
     var secHit = false;
     var imgParts = {};
-    function finishImage(aid, more){
-      var key = "syncImg:" + aid;
-      return C.getMeta(key, []).then(function(arr){
-        arr = Array.isArray(arr) ? arr.slice() : [];
-        (more || []).forEach(function(p){
-          if (p && p.i != null) arr[p.i] = { i: p.i, n: p.n, data: p.data || "" };
+    /* Write one byte slot and nothing else. Deliberately not putSynced: that
+       calls keepLocalBytes, which restores a local `orig` whenever an incoming
+       light row lacks one. That is right for a light row — absence there means
+       "not carried", not "deleted" — and exactly wrong for a tombstone that
+       says the original is genuinely gone. It also leaves the record's clock
+       alone, because receiving bytes someone else sent is not an edit. */
+    function setSyncedImageSlot(aid, slot, value){
+      return C.getAsset(aid).then(function(a){
+        if (!a) return false;
+        if (slot === "orig") a.orig = value || null;
+        else a.blob = value || null;
+        return C.putRaw("assets", a).then(function(){ return true; });
+      });
+    }
+
+    function slotKey(aid, slot){
+      return "syncImg:" + encodeURIComponent(aid) + ":" + slot;
+    }
+    function finishImage(aid, slot, more){
+      slot = slot || "blob";
+      var key = slotKey(aid, slot);
+      /* the single accumulator earlier builds used was always display bytes */
+      var legacyKey = (slot === "blob") ? ("syncImg:" + aid) : null;
+      return C.getMeta(key, null).then(function(arr){
+        if (arr == null && legacyKey){
+          return C.getMeta(legacyKey, []).then(function(old){
+            return C.setMeta(legacyKey, []).then(function(){
+              return Array.isArray(old) ? old : [];
+            });
+          });
+        }
+        return Array.isArray(arr) ? arr : [];
+      }).then(function(arr){
+        arr = arr.slice();
+        (more || []).forEach(function(part){
+          if (part && part.i >= 0) arr[part.i] = part;
         });
         var filled = [];
-        arr.forEach(function(p){ if (p) filled.push(p); });
-        var data = C.joinImageData(filled);
-        if (!data) return C.setMeta(key, arr);
-        return C.getAsset(aid).then(function(a){
-          if (!a) return C.setMeta(key, arr);
-          var blob = C.dataToBlob(data);
-          if (!blob) return C.setMeta(key, arr);
-          a.blob = blob;
+        arr.forEach(function(part){ if (part) filled.push(part); });
+        var res = C.joinImageSlot(filled);
+        if (!res.done) return C.setMeta(key, arr);
+        if (res.cleared){
+          /* the original is gone: drop what was being collected as well, or a
+             later part of the old generation would quietly rebuild it */
           return C.setMeta(key, []).then(function(){
-            return C.putSynced("assets", a).then(function(){ assetHits.push(aid); });
-          });
-        });
+            return setSyncedImageSlot(aid, slot, null);
+          }).then(function(ok){ if (ok && assetHits.indexOf(aid) < 0) assetHits.push(aid); });
+        }
+        var blob = C.dataToBlob(res.data);
+        if (!blob) return C.setMeta(key, arr);
+        return C.setMeta(key, []).then(function(){
+          return setSyncedImageSlot(aid, slot, blob);
+        }).then(function(ok){ if (ok && assetHits.indexOf(aid) < 0) assetHits.push(aid); });
       });
     }
     var list = (rows || []).map(parsePullBody);
@@ -20844,12 +21009,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         if (!row || !row.store || row.id == null) return;
         var incoming = row.body || {};
         if (row.store === "imgdata"){
-          var aid = incoming.assetId || String(row.id).split(":")[0];
-          if (!aid) return;
-          if (!imgParts[aid]) imgParts[aid] = [];
-          imgParts[aid].push({
-            i: incoming.i, n: incoming.n, data: incoming.data || ""
-          });
+          /* grouped by the pair, never by the picture alone: the display bytes
+             and the pristine bytes are two separate generations and joining
+             them into one pile makes neither of them assemble */
+          var part = C.decodeImageRow(row);
+          if (!part) return;
+          var gkey = part.ownerId + "\u0000" + part.slot;
+          if (!imgParts[gkey]) imgParts[gkey] = { ownerId: part.ownerId, slot: part.slot, parts: [] };
+          imgParts[gkey].parts.push(part);
           return;
         }
         if (!incoming.id) incoming.id = row.id;
@@ -20870,16 +21037,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
             if (row.store === "notes") noteHits.push(row.id);
             if (row.store === "assets"){
               assetHits.push(row.id);
-              return finishImage(row.id, []);
+              /* both slots: a shell arriving after its bytes must finish either */
+              return finishImage(row.id, "blob", []).then(function(){
+                return finishImage(row.id, "orig", []);
+              });
             }
             if (row.store === "sections" || row.store === "notebooks") secHit = true;
           });
         });
       });
     }, Promise.resolve()).then(function(){
-      var ids = Object.keys(imgParts);
-      return ids.reduce(function(p, aid){
-        return p.then(function(){ return finishImage(aid, imgParts[aid]); });
+      /* one pass per (picture, slot): each is its own generation and each
+         finishes, or waits, entirely on its own */
+      var groups = Object.keys(imgParts);
+      return groups.reduce(function(p, gkey){
+        return p.then(function(){
+          var g = imgParts[gkey];
+          return finishImage(g.ownerId, g.slot, g.parts);
+        });
       }, Promise.resolve());
     }).then(function(){
       return { applied: list.length, cfg: cfgHit, notes: noteHits, sections: secHit, assets: assetHits };
@@ -20894,11 +21069,28 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         if (!row || row.store !== "assets") return;
         return C.getAsset(row.id).then(function(a){
           if (!a || a.kind !== "image" || !a.blob || a.deletedAt) return;
+          var when = row.updated_at || a.lastEdited;
           return C.blobToData(a.blob).then(function(data){
-            if (!data) return;
-            extra.push.apply(extra, C.imageDataChunks(
-              a.id, data, row.updated_at || a.lastEdited, row.device
-            ));
+            if (data){
+              extra.push.apply(extra, C.imageSlotChunks(
+                a.id, "blob", data, when, row.device
+              ));
+            }
+            /* The pristine bytes an Uncrop restores. When there is no original
+               — never cropped, or just uncropped — the tombstone still goes,
+               because absence is not a message: without it the other device
+               would keep an original this one no longer has. */
+            if (!a.orig){
+              extra.push.apply(extra, C.imageSlotChunks(
+                a.id, "orig", null, when, row.device
+              ));
+              return;
+            }
+            return C.blobToData(a.orig).then(function(od){
+              extra.push.apply(extra, C.imageSlotChunks(
+                a.id, "orig", od || null, when, row.device
+              ));
+            });
           });
         });
       });
