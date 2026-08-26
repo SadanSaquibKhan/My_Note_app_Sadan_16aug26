@@ -14,8 +14,16 @@
        read a single label. Warm for rough working, cool for a short note, and
        the ordinary page left exactly as it was. Kept close to --ground on
        purpose: enough to tell apart, not enough to read as a different app. */
-    --ground-work:#e5e0d3;
-    --ground-short:#d8e1ea;
+    /* Both are a whisper of white, not a shade of the desk. The first attempt
+       tinted these against --ground, the colour behind the page — but a sheet
+       is built on --field, which is plain white, so anything mixed toward the
+       desk landed far below the paper it was meant to sit beside and read as
+       dull rather than as a different kind of paper. Warm for rough working,
+       cool for a short note, and white left alone for the note itself: three
+       papers you can tell apart at a glance without either of them looking
+       like a page that has been greyed out. */
+    --ground-work:#fffaf0;
+    --ground-short:#f3f8ff;
     /* Beyond the edge of the sheet is desk, not page. The two had been the
        same colour, so zooming out produced a wide expanse that looked like it
        might still be writable and simply was not — nothing said where the
@@ -51,8 +59,9 @@
   }
   body.dark{
     --ground:#151917;
-    --ground-work:#1b1813;
-    --ground-short:#131a20;
+    /* the same two steps, taken up from --field rather than down from it */
+    --ground-work:#1c1815;
+    --ground-short:#151c24;
     --desk:#0a0c0b;
     --panel:#1e2321;
     --field:#141817;
@@ -511,7 +520,7 @@
   .prevpeek[hidden]{display:none}
   .peekpage{
     position:relative; max-width:var(--page-w); margin:0 auto;
-    padding:0 clamp(16px,4vw,44px) 24px;
+    padding:0 clamp(14px,4.5%,44px) 24px;
     min-height:var(--page-h);
   }
   .peekink{position:absolute; inset:0; width:100%; height:100%; pointer-events:none}
@@ -1546,7 +1555,7 @@
   .paper.prac > .sheet.prac{--field:var(--ground-work)}
   .sheet.prac{
     max-width:var(--page-w); margin:0 auto;
-    padding:0 clamp(16px,4vw,44px) 24px; zoom:var(--z,1);
+    padding:0 clamp(14px,4.5%,44px) 24px; zoom:var(--z,1);
   }
   #pracText{
     min-height:var(--page-h); outline:none; font-size:16px; line-height:var(--lead);
@@ -1627,7 +1636,7 @@
   /* A4 across at 96dpi, and taller than A4 down it — a long page, the way a
      Samsung Notes page runs on rather than stopping at a printed sheet. */
   :root{--page-w:794px; --page-h:1500px}
-  .sheet{max-width:var(--page-w); margin:0 auto; padding:0 clamp(16px,4vw,44px) 24px; zoom:var(--z,1)}
+  .sheet{max-width:var(--page-w); margin:0 auto; padding:0 clamp(14px,4.5%,44px) 24px; zoom:var(--z,1)}
   #body{
     min-height:var(--page-h); outline:none; font-size:16px; line-height:var(--lead);
     padding-top:calc(var(--lead) - 5px); padding-bottom:20vh;
@@ -2990,7 +2999,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b184";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b185";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9797,7 +9806,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
 
   /* ---- zoom ---- */
-  var ZOOMS = [0.75, 0.9, 1, 1.15, 1.35, 1.6, 2];
+  /* Rungs on the ladder, as ratios of the page fitting the writing area — the
+     same thing the number on the button shows. They used to be raw scales, so
+     stepping off a fitted page landed on whichever rung happened to be nearest
+     in the old units and the label jumped to some unrelated number. */
+  var ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
   /* The limits are settings, in per cent, and every route into a zoom goes
      through clampZoom: the buttons, the pinch gesture and a restored note all
      land inside them. Guarded against a saved config with the pair inverted,
@@ -9808,13 +9821,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      two. */
   function fitWidthZoom(){
     var paper = $("paper");
-    var sheet = paper && paper.querySelector(".sheet");
-    if (!paper || !sheet) return 1;
-    var z = state.zoom || 1;
-    var atOne = sheet.getBoundingClientRect().width / (z || 1);
+    if (!paper) return 1;
+    /* Taken from the stylesheet, never measured off the sheet. The sheet is
+       capped at --page-w but also constrained by the scroller, so whenever the
+       scroller is the narrower of the two its rendered width is simply the
+       scroller's width — at every zoom. Dividing that by the zoom therefore
+       gave a "natural width" that shrank as you zoomed in, so the fit came out
+       equal to the current zoom, the label read 100% at every level, and each
+       press changed the number underneath while nothing on screen moved. */
+    var pageW = parseFloat(getComputedStyle(document.documentElement)
+                  .getPropertyValue("--page-w")) || 794;
     var avail = paper.clientWidth;
-    if (!(atOne > 0) || !(avail > 0)) return 1;
-    return avail / atOne;
+    if (!(avail > 0) || !(pageW > 0)) return 1;
+    return avail / pageW;
   }
   /* The page is a fixed sheet, the way real paper is: zoom moves it nearer or
      further away, it never reflows it — the writing would slide about against
@@ -9939,19 +9958,27 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   $("zoomPop").addEventListener("pointerdown", function(e){ e.stopPropagation(); keepZoomPop(); }, true);
   $("zoomPop100").addEventListener("click", function(){
-    applyZoom(1); C.setMeta("zoom", 1); saveNoteZoom();
+    /* 100% is the page across the writing area, so this is the same thing the
+       number itself does. It used to set a raw 1, which after the change of
+       meaning was simply some other zoom. */
+    applyZoom(baseScale()); C.setMeta("zoom", 1); saveNoteZoom();
     $("zoomPopNow").textContent = "100%";
     keepZoomPop();
   });
   $("zoomPopFit").addEventListener("click", function(){
-    applyZoom(zoomFloor()); C.setMeta("zoom", state.zoom); saveNoteZoom();
-    $("zoomPopNow").textContent = Math.round(state.zoom * 100) + "%";
+    applyZoom(zoomFloor());
+    C.setMeta("zoom", state.zoom / (baseScale() || 1)); saveNoteZoom();
+    $("zoomPopNow").textContent = zoomPct(state.zoom) + "%";
     keepZoomPop();
   });
 
   function stepZoom(dir){
-    var cur = state.zoom, next = null;
-    var lo = zoomFloor(), hi = zoomCeil();
+    /* Worked out as ratios of the fit, then converted once at the end. Mixing
+       the two is what made a step from "100%" land somewhere that did not read
+       as a step at all. */
+    var b = baseScale() || 1;
+    var cur = (state.zoom || b) / b, next = null;
+    var lo = zoomFloor() / b, hi = zoomCeil() / b;
     /* Only offer rungs inside the limits, and if the ladder has none left in
        that direction go to the limit itself rather than refusing to move. */
     if (dir > 0){
@@ -9962,7 +9989,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (next == null && cur > lo + 0.001) next = lo;
     }
     if (next == null) return;
-    applyZoom(next); C.setMeta("zoom", state.zoom);
+    applyZoom(next * b);
+    C.setMeta("zoom", next);        /* stored as a ratio, so it travels */
   }
   function zoomBtnPop(btn){
     var r = btn.getBoundingClientRect();
@@ -17122,13 +17150,19 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
          out on into its neighbour snapped straight back in — you had not asked
          for that, and it happened at every join. A page you HAVE zoomed
          deliberately still keeps its own. */
-      if (z != null) return applyZoom(z);
-      var carry = (state && state.zoom) || zoomFromPct((cfg.defaultZoom || 1) * 100);
-      applyZoom(carry);
+      var b = baseScale() || 1;
+      if (z != null) return applyZoom(z * b);
+      /* A page you have never zoomed inherits the zoom you are already using.
+         It used to fall back to 100%, so scrolling from a page you had zoomed
+         out on into its neighbour snapped straight back in, at every join. */
+      applyZoom((state && state.zoom) || (cfg.defaultZoom || 1) * b);
     });
   }
   function saveNoteZoom(){
-    if (state.noteId) C.setMeta("zoom:" + state.noteId, state.zoom);
+    /* Kept as a ratio of the fit rather than a raw scale. A raw one means
+       something different on every screen, so a page zoomed on the tablet came
+       back at some other size on the laptop. */
+    if (state.noteId) C.setMeta("zoom:" + state.noteId, state.zoom / (baseScale() || 1));
     savePlace();
   }
 
@@ -21447,7 +21481,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (mod && (k === "1" || k === "2" || k === "3")){ e.preventDefault(); $("fmtH" + k).click(); return; }
     if (mod && (k === "=" || k === "+")){ e.preventDefault(); stepZoom(1); setTimeout(saveNoteZoom, 10); return; }
     if (mod && k === "-"){ e.preventDefault(); stepZoom(-1); setTimeout(saveNoteZoom, 10); return; }
-    if (mod && k === "0"){ e.preventDefault(); applyZoom(1); saveNoteZoom(); return; }
+    if (mod && k === "0"){ e.preventDefault(); applyZoom(baseScale()); saveNoteZoom(); return; }
     if (mod && k === ";"){ e.preventDefault(); insertDate(); return; }
 
     if (e.key === "Escape" && !document.querySelector("dialog[open]")){
@@ -21491,7 +21525,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
                         C.getMeta("inkMode", "auto"), C.getMeta("inkLock", false),
                         C.getMeta("hideLists", true)]);
   }).then(function(prefs){
-    applyZoom(prefs[0] || 1);
+    /* the stored preference is a ratio of the fit; at boot the page may not be
+       measurable yet, in which case baseScale falls back to 1 and this is
+       exactly what it always was */
+    applyZoom((prefs[0] || 1) * (baseScale() || 1));
     ink.input = prefs[1] || "penmouse";
     ink.mode = prefs[2] || "auto";
     ink.lock = !!prefs[3];

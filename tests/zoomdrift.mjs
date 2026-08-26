@@ -92,10 +92,35 @@ eq("and half of it is half",  pct(0.31, 0.62) === 50);
 console.log("zoom stops undoing itself at every join:");
 /* Falling back to 100% meant scrolling from a page you had zoomed out on into
    its neighbour snapped straight back in, at every join, unasked. */
+/* b185 made a remembered zoom a ratio of the fit rather than a raw scale, so
+   these two now read `z * b`. Same behaviour, one multiplication later: a raw
+   scale means something different on every screen, so a page zoomed on the
+   tablet came back a different size on the laptop. */
 eq("a page you have never zoomed inherits the zoom you are using",
-   /if \(z != null\) return applyZoom\(z\);/.test(html) &&
-   /var carry = \(state && state\.zoom\)/.test(html));
+   /applyZoom\(\(state && state\.zoom\) \|\| \(cfg\.defaultZoom \|\| 1\) \* b\)/.test(html));
 eq("a page you did zoom deliberately still keeps its own",
-   /if \(z != null\) return applyZoom\(z\);/.test(html));
+   /if \(z != null\) return applyZoom\(z \* b\);/.test(html));
+eq("and what is remembered is a ratio, so it means the same on any screen",
+   /setMeta\("zoom:" \+ state\.noteId, state\.zoom \/ \(baseScale\(\) \|\| 1\)\)/.test(html));
+
+console.log("every control agrees what 100% is:");
+/* The ladder, the presets, Ctrl+0 and the boot default all still worked in the
+   old raw scale, so several of them reset to something that was no longer
+   100% — which is what "sometimes it zooms back on its own" was. */
+eq("the ladder is rungs of the fit", /var ZOOMS = \[0\.5, 0\.75, 1, 1\.25/.test(html));
+eq("stepping works in ratios and converts once at the end",
+   /var cur = \(state\.zoom \|\| b\) \/ b, next = null;/.test(html) &&
+   /applyZoom\(next \* b\);/.test(html));
+eq("the 100% preset goes to the fit", /applyZoom\(baseScale\(\)\); C\.setMeta\("zoom", 1\)/.test(html));
+eq("Ctrl+0 goes to the fit", /k === "0"\)\{ e\.preventDefault\(\); applyZoom\(baseScale\(\)\)/.test(html));
+eq("and boot treats its stored preference as a ratio",
+   /applyZoom\(\(prefs\[0\] \|\| 1\) \* \(baseScale\(\) \|\| 1\)\)/.test(html));
+
+console.log("the page's margins are the page's, not the screen's:");
+/* 4vw is a slice of the window. With the side panels open the page is far
+   narrower than the window, so the margins stayed at their maximum and ate
+   88px of a 640px page — a seventh of it, gone to white space. */
+eq("side padding is a share of the page", /clamp\(14px,4\.5%,44px\)/.test(html));
+eq("and the old screen-derived one is gone", !/clamp\(16px,4vw,44px\)/.test(html));
 
 process.exitCode = bad ? 1 : 0;
