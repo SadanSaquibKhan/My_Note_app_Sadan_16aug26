@@ -1362,6 +1362,11 @@
   #body span.pracpin::before{content:"\25E7"; font-size:14px}
   #body span.pracpin::after{content:attr(data-name)}
   #body span.pracpin.on{background:var(--live); color:var(--panel)}
+  /* warm for rough working, cool for a short note — the same pairing the two
+     papers use, so the marker and the sheet it opens match */
+  #body span.pracpin[data-kind="working"]{color:#8a6d3b}
+  #body span.pracpin[data-kind="summary"]{color:#2f6f9f}
+  #body span.pracpin[data-kind="summary"]::before{content:"\2637"}
   /* an anchor Margin dropped itself, so a way back can be exact: no glyph,
      but still a real box for the jump to scroll to */
   #body span.anchor.autoanchor{font-size:0; padding:0; color:transparent}
@@ -1495,6 +1500,15 @@
     transition:height .22s ease, transform .28s ease;
   }
   .pracsheet.off{transform:translateY(110%); pointer-events:none}
+  /* A short note arrives from the top and leaves the same way. Sliding it down
+     would take it right across the page you are reading. */
+  .pracsheet[data-dock="top"]{
+    top:0; bottom:auto;
+    border-top:none; border-bottom:2px solid var(--live);
+    box-shadow:0 14px 40px var(--shadow);
+  }
+  .pracsheet[data-dock="top"].off{transform:translateY(-110%)}
+  .pracsheet[data-kind="summary"] .paper.prac > .sheet.prac{--field:var(--ground-short)}
   .pracsheet[hidden]{display:none}
   /* The state lives on the sheet itself, with its dock beside it. On body it
      could only ever describe one sheet, so a top dock and a bottom dock could
@@ -1547,6 +1561,7 @@
   /* the source page is gone: say so where the name would have been, and make
      it obviously tappable rather than a dead label */
   .pracwhere.relink{color:var(--warn, #c2410c); cursor:pointer; text-decoration:underline dotted; font-weight:600}
+  .pracwhere.goback{color:var(--live); cursor:pointer; font-weight:600}
   /* a drawer row in the section list is a drawer, not Sec 3 */
   #sectionList .row.drawerrow .rowtitle{font-style:italic; opacity:.85}
   #sectionList .row.drawerrow .swatch{border-radius:3px}
@@ -2999,7 +3014,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b186";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b187";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4271,6 +4286,53 @@ var MarginCore = (function(){
       });
     });
   }
+  /* ---- every short note in a notebook, in the order of what they cover ----
+     Asking "which short notes cover this page" gives you one or two. But a
+     short note is written about a stretch of pages, so the useful thing is the
+     whole run: write one on P2 about pages 2 to 4, another on P5 about 5 to 8,
+     and scrolling back from the second must reach the first. They are pages in
+     one drawer, so the run already exists — this is only the order.
+
+     Ordered by the first page each one covers, using the notebook's real page
+     order rather than anything in a title. A short note whose pages have all
+     been deleted keeps its writing and goes to the end, where it can be found
+     and re-linked rather than lost among the others. */
+  function summaryRun(notebookId){
+    if (!notebookId) return Promise.resolve([]);
+    return Promise.all([getAll("notes"), getAll("sections")]).then(function(r){
+      var notes = r[0], sections = r[1];
+      var here = notes.filter(function(n){ return live(n) && n.notebookId === notebookId; });
+      var secs = (sections || []).filter(function(x){ return x.notebookId === notebookId; });
+      /* where each ordinary page sits, worked out the way the page list does */
+      var rank = {}, flat = [];
+      notesBySection(ordinaryPages(here, secs), secs).forEach(function(g){
+        if (isDrawer(g.section)) return;
+        flat = flat.concat(g.notes);
+      });
+      flat.forEach(function(n, i){ rank[n.id] = i; });
+
+      var run = here.filter(isSummaryPage);
+      run.sort(function(a, b){
+        function firstCovered(x){
+          var best = null;
+          (x.covers || []).forEach(function(c){
+            if (!c || rank[c.noteId] == null) return;
+            if (best == null || rank[c.noteId] < best) best = rank[c.noteId];
+          });
+          return best;
+        }
+        var fa = firstCovered(a), fb = firstCovered(b);
+        /* one that covers nothing still here belongs at the end, not first */
+        if (fa == null && fb == null) return (a.createdAt||0) - (b.createdAt||0);
+        if (fa == null) return 1;
+        if (fb == null) return -1;
+        if (fa !== fb) return fa - fb;
+        return (a.createdAt||0) - (b.createdAt||0);
+      });
+      return run;
+    });
+  }
+
   /* A Cover that no longer resolves is shown, never dropped. The summary is
      often the more valuable half of the pair. */
   function resolveCover(ref){
@@ -6422,6 +6484,7 @@ var MarginCore = (function(){
     ensureSummarySection:ensureSummarySection, isSummaryPage:isSummaryPage,
     createSummaryFor:createSummaryFor, addCover:addCover, dropCover:dropCover,
     summariesFor:summariesFor, resolveCover:resolveCover, coverRef:coverRef,
+    summaryRun:summaryRun,
     isDrawerPage:isDrawerPage, ordinaryPages:ordinaryPages,
     ordinarySections:ordinarySections, drawerSectionIds:drawerSectionIds,
     reviveAsset:reviveAsset, tombstoneAssets:tombstoneAssets, bumpNote:bumpNote,
@@ -10099,7 +10162,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        and the state is only how much of it you are showing. Keeping them as
        two attributes on the sheet means a top dock and a bottom dock can both
        be open without any selector having to know about the other. */
-    sheet.setAttribute("data-dock", "bottom");
+    /* The dock IS the kind: rough working comes up from the bottom, a short
+       note down from the top, so you know which you are looking at before
+       reading a word of it. */
+    sheet.setAttribute("data-kind", prac.kind || "working");
+    sheet.setAttribute("data-dock", (prac.kind === "summary") ? "top" : "bottom");
     sheet.setAttribute("data-state", prac.open ? s : "hidden");
     /* Cleared first, then set from one calculation. It began as CSS keyed off
        the state attribute, which is tidier to read and did not work: the height
@@ -10240,14 +10307,30 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      would otherwise paint the sheet you left over the one you asked for. */
   var pracSeq = 0;
 
-  function openPractice(page){
+  /* ---- one sheet, two kinds ----
+     Rough working and a short note are the same thing in different clothes: a
+     real page in a drawer, opened over the notes it belongs to. The only
+     differences worth having are the edge it arrives from, the colour of its
+     paper, and which pages it lists.
+
+     Working lists the sheets of the page you are on, because that is what rough
+     working is for. A short note lists **every short note in the notebook**, in
+     the order of what they cover — so one written on P2 about pages 2 to 4 and
+     another written on P5 about 5 to 8 are one run, and scrolling back from the
+     second reaches the first. That is the whole point of them. */
+  function sheetPageList(kind, note){
+    if (kind === "summary") return C.summaryRun(note.notebookId);
+    return C.practicePages(note.id).then(function(list){
+      if (list.length) return list;
+      return C.getPractice(note.id, { create:true }).then(function(p){ return [p]; });
+    });
+  }
+
+  function openPractice(page, kind){
     if (!state.note) return Promise.resolve();
-    var nid = state.note.id;
+    prac.kind = kind || prac.kind || "working";
     var seq = ++pracSeq;
-    return C.practicePages(nid).then(function(list){
-      if (!list.length) return C.getPractice(nid, { create:true }).then(function(p){ return [p]; });
-      return list;
-    }).then(function(list){
+    return sheetPageList(prac.kind, state.note).then(function(list){
       if (seq !== pracSeq) return;
       prac.pages = list;
       prac.idx = Math.max(0, Math.min(list.length - 1, page == null ? 0 : page));
@@ -10343,8 +10426,17 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
 
   function paintPracHead(){
-    var name = (typeof C.workingName === "function" && state.note)
-      ? C.workingName(state.note, prac.idx) : ("w" + (prac.idx + 1));
+    /* A working sheet is named after the page it hangs off — S2P3w1 — because
+       that is the only thing that says what it is for. A short note is not
+       hanging off one page, it is written about a stretch of them, so that
+       name would be a lie: it said S1P5w2 for a note covering pages 2 to 4. */
+    var name = (prac.kind === "summary")
+      ? ("Short note " + (prac.idx + 1))
+      : ((typeof C.workingName === "function" && state.note)
+           ? C.workingName(state.note, prac.idx) : ("w" + (prac.idx + 1)));
+    /* the sheet says which kind it is, because it is the same sheet either way */
+    var mark = $("pracSheet") && $("pracSheet").querySelector(".pracmark");
+    if (mark) mark.textContent = (prac.kind === "summary") ? "SHORT NOTE" : "ROUGH WORKING";
     $("pracPage").textContent = name + "  ·  " + (prac.idx + 1) + "/" + prac.pages.length;
     $("pracPrev").disabled = prac.idx <= 0;
     $("pracNext").disabled = prac.idx >= prac.pages.length - 1;
@@ -10360,10 +10452,33 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!el) return;
     el.classList.remove("relink");
     el.onclick = null;
-    var src = prac.rec && prac.rec.worksFor;
+    /* A working sheet points back at the one page it belongs to. A short note
+       points back at the first page it covers, and the Covers band inside it
+       lists the rest — one tap out for the common case, the choice still there
+       when you want it. */
+    var rec = prac.rec;
+    var src = rec && rec.worksFor;
+    if (!src && rec && Array.isArray(rec.covers) && rec.covers.length){
+      for (var ci = 0; ci < rec.covers.length && !src; ci++){
+        var ref = rec.covers[ci];
+        if (ref && ref.noteId) src = ref.noteId;
+      }
+    }
     var parent = src ? ((state.notes || []).filter(function(n){
       return n.id === src && !n.deletedAt;
     })[0] || null) : null;
+    if (parent){
+      /* Tapping where it came from is the way back. It is the same gesture as
+         the marker that opened it, in reverse, so there is nothing new to
+         learn and no extra control in a header that is already short. */
+      el.classList.add("goback");
+      el.onclick = function(){
+        closePractice();
+        if (state.note && state.note.id === parent.id) return;
+        pushBackTrail();
+        go({ nbId: parent.notebookId, noteId: parent.id });
+      };
+    }
     if (src && !parent){
       el.textContent = "Source missing \u2014 Relink";
       el.title = "The page this working was started from is gone. " +
@@ -10372,8 +10487,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       el.onclick = relinkWorkingHere;
       return;
     }
-    el.textContent = name;
-    el.title = parent ? ("Working for " + C.displayTitle(parent)) : "";
+    el.textContent = parent ? ("\u2190 " + C.displayTitle(parent)) : name;
+    el.title = parent ? ("Go to " + C.displayTitle(parent)) : "";
   }
 
   /* Re-linking has to move the page, not just repoint it. Changing worksFor
@@ -10459,23 +10574,43 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("pracBtn").addEventListener("click", function(){
     if (!state.note) return;
     if (prac.open){ closePractice(); return; }
-    openPractice(0).then(function(){
-      if (prac.rec) ensureWorkPin(prac.rec.id);
+    /* Says which kind out loud. prac.kind is remembered between opens so that
+       turning pages inside a sheet stays in that sheet — which meant this
+       button inherited whichever kind was last open, and pressing Practice
+       after reading a short note opened another short note. */
+    openPractice(0, "working").then(function(){
+      if (prac.rec) ensureWorkPin(prac.rec.id, null, null, "working");
     });
   });
   $("pracClose").addEventListener("click", closePractice);
   $("pracPrev").addEventListener("click", function(){ gotoPracPage(prac.idx - 1); });
   $("pracNext").addEventListener("click", function(){ gotoPracPage(prac.idx + 1); });
-  $("pracAdd").addEventListener("click", function(){
-    if (!state.note) return;
-    flushPractice().then(function(){ return C.addPracticePage(state.note.id); })
-      .then(function(p){
-        if (p && typeof ensureWorkPin === "function") ensureWorkPin(p.id);
-        return openPractice(prac.pages.length);
-      })
-      .then(function(){ return C.practiceSummary(); })
-      .then(function(m){ state.prac = m; paintPracBadge(); refreshLists(); });
-  });
+  /* One way to add a page, used by the button and by reaching the end of the
+     last one. Which kind it makes follows the sheet you are in. */
+  function addSheetPage(){
+    if (!state.note) return Promise.resolve();
+    var kind = prac.kind || "working";
+    var parent = state.note;
+    return flushPractice().then(function(){
+      if (kind === "summary"){
+        /* another page of the same run, stamped with where you are now */
+        return C.createSummaryFor(parent.worksFor || parent.id, null);
+      }
+      return C.addPracticePage(parent.id);
+    }).then(function(made){
+      if (made && typeof ensureWorkPin === "function") ensureWorkPin(made.id, null, null, kind);
+      return sheetPageList(kind, parent).then(function(list){
+        var at = list.length - 1;
+        list.forEach(function(r, i){ if (made && r.id === made.id) at = i; });
+        return openPractice(at, kind);
+      });
+    }).then(function(){
+      return C.practiceSummary();
+    }).then(function(m){
+      state.prac = m; paintPracBadge(); refreshLists();
+    }).catch(dbFail("Could not add a page"));
+  }
+  $("pracAdd").addEventListener("click", function(){ addSheetPage(); });
   ["half","full"].forEach(function(k){
     $("snap_" + k).addEventListener("click", function(){ setSnap(k); });
   });
@@ -15253,7 +15388,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         if (!p.note) return;
         flush();
         go({ nbId: p.note.notebookId, noteId: p.note.id });
-        setTimeout(function(){ openPractice(p.practice.workOrder || 0); }, 400);
+        setTimeout(function(){ openPractice(p.practice.workOrder || 0, "working"); }, 400);
       });
       host.appendChild(b);
     });
@@ -15795,15 +15930,21 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (r && $("body").contains(r.startContainer)) r.insertNode(el);
     else $("body").appendChild(el);
   }
-  function ensureWorkPin(pracId, x, y){
+  function ensureWorkPin(pracId, x, y, kind){
     var host = $("body");
     if (!host || !pracId) return null;
     var exist = host.querySelector('span.pracpin[data-pracid="' + pracId + '"]');
-    if (exist){ paintWorkPins(); return exist; }
+    if (exist){
+      if (kind) exist.setAttribute("data-kind", kind);
+      paintWorkPins(); return exist;
+    }
     var el = document.createElement("span");
     el.className = "pracpin";
     el.setAttribute("contenteditable", "false");
     el.setAttribute("data-pracid", pracId);
+    /* Both kinds leave a marker in the same place and behave the same way, so
+       the colour is the only thing telling you which one a tap will open. */
+    el.setAttribute("data-kind", kind || "working");
     if (x != null && y != null) insertPinAt(el, x, y);
     else host.appendChild(el);
     paintWorkPins();
@@ -15851,7 +15992,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           say("That working page is no longer there.");
           return;
         }
-        return openPractice(i);
+        return openPractice(i, rec.worksFor ? "working" : "summary");
       });
     }).catch(function(){});
   }
@@ -16160,7 +16301,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         /* the badge raises the Strip rather than navigating: reading the short
            note should not cost you the page you are writing on */
         if (sums && typeof paintShortStrip === "function") paintShortStrip(true);
-        else if (typeof openPractice === "function") openPractice(0);
+        else if (typeof openPractice === "function") openPractice(0, "working");
       };
     }).catch(function(){});
   }
@@ -16246,24 +16387,34 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* Sum up: made from where you are standing, so nothing has to be tagged.
      If a short note already covers this page, it opens that one instead of
      quietly making a second. */
+  /* Open the run at whichever short note we want to be looking at. */
+  function openSummaryAt(noteId){
+    if (!state.note) return Promise.resolve();
+    return C.summaryRun(state.note.notebookId).then(function(run){
+      var at = 0;
+      run.forEach(function(r, i){ if (noteId && r.id === noteId) at = i; });
+      return openPractice(at, "summary");
+    });
+  }
+
+  /* Opening a short note opens a sheet now, exactly as rough working does. It
+     used to navigate away from the page you were summarising — which took the
+     very thing you were writing about off the screen. */
   $("sumBtn").addEventListener("click", function(){
     if (!state.note) return;
     var src = state.note.id;
     if (C.isSummaryPage(state.note)) return say("You are already in a short note.");
     flush().then(function(){ return C.summariesFor(src); }).then(function(list){
-      if (list.length){
-        pushBackTrail();
-        go({ nbId: list[0].notebookId, noteId: list[0].id });
-        hint("Opened the short note that covers this page.");
-        return;
-      }
+      if (list.length) return openSummaryAt(list[0].id);
       var spot = anchorHere("summed here");
       markDirty();
       return flush().then(function(){
         return C.createSummaryFor(src, spot && spot.ref ? String(spot.ref).split("#")[1] : null);
       }).then(function(sum){
-        pushBackTrail();
-        go({ nbId: sum.notebookId, noteId: sum.id });
+        if (typeof ensureWorkPin === "function") ensureWorkPin(sum.id, null, null, "summary");
+        markDirty(); flush();
+        return openSummaryAt(sum.id);
+      }).then(function(){
         hint("Short note started. It remembers the page you came from.");
       });
     }).catch(dbFail("Could not start a short note"));
@@ -19884,7 +20035,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
           });
         });
       })
-      .then(function(){ return openPractice(prac.pages.length); })
+      .then(function(){ return openPractice(prac.pages.length, "working"); })
       .then(function(){ hint("Working page copied."); });
   });
 

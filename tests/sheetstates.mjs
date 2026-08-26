@@ -59,8 +59,18 @@ console.log("each docked tab owns its own place:");
 eq("sheet state contains a collection of dock tabs", /(?:dockTabs|sheetTabs|prac\.tabs|docks)\s*[=:]/.test(dockCode));
 eq("a tab stores its record/page id", dockMarker >= 0 && /(?:noteId|pageId|recId)/.test(dockCode));
 eq("a tab stores scrollTop and scrollLeft", /scrollTop/.test(dockCode) && /scrollLeft/.test(dockCode));
-eq("switching tabs flushes the old sheet before replacing prac.rec",
-   /flushPractice\(\)[\s\S]{0,500}prac\.rec\s*=|flushSheet\(\)[\s\S]{0,500}(?:activeTab|rec)\s*=/.test(dockCode));
+/* b186 put a database read and a possible navigation between the flush and the
+   mount, so the two sit further apart in the source than they did. The ordering
+   is unchanged and is what matters, so it is stated directly now: the outgoing
+   sheet's place is taken and its writing saved before anything replaces the
+   record underneath it. */
+eq("the place is captured before anything asynchronous starts",
+   /captureSheetPlace\(\)[\s\S]{0,120}flushPractice\(\)/.test(html));
+eq("every path that replaces the mounted sheet saves it first",
+   (html.match(/captureSheetPlace\(\)/g) || []).length >= 3);
+eq("and the mount happens after that save resolves, not beside it",
+   /flushPractice\(\)\.then\(function\(\)\{[\s\S]{0,400}prac\.rec = /.test(html) ||
+   /flushPractice\(\)\.then\([\s\S]{0,600}openPractice\(/.test(html));
 /* Restated as the ordering itself, which is what actually matters and what the
    old pattern was reaching for. Restoring before the content is in is worse
    than not restoring at all: an empty host is short, so a saved place is
