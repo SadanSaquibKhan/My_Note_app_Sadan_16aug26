@@ -2999,7 +2999,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b185";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b186";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -6603,7 +6603,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       html: serializeBody(),
       pinned: $("pinBtn").getAttribute("aria-pressed") === "true"
     };
-    return C.saveNote(id, patch).then(function(saved){
+    /* The ink and sheet writes started above are waited for here too. They were
+       awaited only on the branch where the note itself was clean, so the one
+       case that matters — a page dirty in both — returned as soon as the words
+       were down and left the drawing still going. */
+    if (waiting.length) waiting.push(C.saveNote(id, patch));
+    return (waiting.length ? Promise.all(waiting).then(function(r){ return r[r.length - 1]; })
+                           : C.saveNote(id, patch)).then(function(saved){
       state.saving = false;
       if (state.note && state.note.id === id) state.note = saved;
       markSaved();
@@ -10061,15 +10067,28 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* How tall each state is, in pixels, from the room the dock actually has.
      Hidden returns null because a hidden sheet is not sized at all — it is
      taken out of the way by its own transform. */
-  function sheetHeightFor(state, custom){
+  /* Pure. Given the numbers, how tall is this state? It takes them rather than
+     fetching them on purpose: the version that fetched could be — and was —
+     tested by handing it a field production never returned, so the suite stayed
+     green while production quietly measured the whole window instead of the
+     page. A resolver that cannot reach out cannot be lied to. */
+  function sheetHeight(state, paperHeight, oppositeInset, custom){
     if (state === "hidden") return null;
-    var room = usablePageViewport();
-    var full = Math.max(200, (room.paperRect ? room.paperRect.height : window.innerHeight));
-    if (state === "strip") return 132;
-    if (state === "full")  return Math.round(full - 46);
-    /* half, and a height you dragged yourself is a half-size override */
-    if (custom) return Math.round(custom);
-    return Math.round(full * 0.52);
+    var room = Math.max(120, (paperHeight || 0) - (oppositeInset || 0));
+    if (state === "strip") return Math.min(132, room);
+    if (state === "full")  return Math.max(120, Math.round(room - 46));
+    /* a height you dragged yourself is a half-size override, and still has to
+       fit in the room this dock actually has */
+    if (custom) return Math.max(120, Math.min(Math.round(custom), room));
+    return Math.max(120, Math.round(room * 0.52));
+  }
+  /* the measuring happens here, at the call site, where it belongs */
+  function sheetHeightFor(state, custom){
+    var v = usablePageViewport();
+    var ph = (v.paperRect && v.paperRect.height) || window.innerHeight || 800;
+    /* the OTHER dock's inset only. A sheet sized against its own inset shrinks
+       itself every time it is asked how tall it should be. */
+    return sheetHeight(state, ph, v.topInset || 0, custom);
   }
 
   function setSnap(s){
@@ -10177,8 +10196,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   }
   function loadDockTabs(){
     return C.getMeta("dockTabs", []).then(function(l){
-      prac.tabs = Array.isArray(l) ? l.slice(-MAX_DOCK_TABS) : [];
-      paintDockRail();
+      var raw = Array.isArray(l) ? l.slice(-MAX_DOCK_TABS) : [];
+      if (!raw.length){ prac.tabs = []; paintDockRail(); return; }
+      /* Checked before it is offered. A restart used to put back whatever was
+         written last time, so a tab for a page since deleted — or one in a
+         notebook that is no longer here — sat in the rail waiting to open
+         something else instead. */
+      return Promise.all(raw.map(function(t){
+        if (!t || !t.id) return null;
+        return C.getNote(t.id).then(function(n){
+          return (n && !n.deletedAt && n.worksFor) ? t : null;
+        }).catch(function(){ return null; });
+      })).then(function(checked){
+        prac.tabs = checked.filter(Boolean);
+        if (prac.tabs.length !== raw.length) saveDockTabs();
+        paintDockRail();
+      });
     }).catch(function(){});
   }
   function paintDockRail(){
@@ -10276,7 +10309,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       var sheet = $("pracSheet");
       if (sheet){
         sheet.classList.add("off");
+        /* Stamped with the open it belongs to. Close one sheet and open another
+           inside the animation and the first one's timer arrived afterwards and
+           hid the sheet that had just appeared. */
+        var era = ++pracSeq;
         setTimeout(function(){
+          if (era !== pracSeq) return;
           sheet.hidden = true;
           sheet.classList.remove("off");
         }, 280);
@@ -15772,13 +15810,50 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     markDirty();
     return el;
   }
+  /* A tab that names a page which is gone is worse than no tab: it used to
+     open whatever happened to be first. */
+  function forgetDockTab(id){
+    prac.tabs = (prac.tabs || []).filter(function(t){ return t && t.id !== id; });
+    saveDockTabs();
+    paintDockRail();
+  }
+
   function openPracticeById(id){
-    if (!state.note) return Promise.resolve();
-    return C.practicePages(state.note.id).then(function(list){
-      var i = 0;
-      list.forEach(function(p, k){ if (p.id === id) i = k; });
-      return openPractice(i);
-    });
+    if (!id) return Promise.resolve();
+    /* Resolved by the sheet's OWN id. It used to search only the sheets of the
+       page you happened to be on, and when the id was not among them `i` stayed
+       at zero — so a tab naming a sheet on another page silently opened that
+       page's first sheet instead. You would then write into the wrong working
+       page believing it was the one you asked for. */
+    return C.getNote(id).then(function(rec){
+      if (!rec || rec.deletedAt || !rec.worksFor){
+        forgetDockTab(id);
+        say("That working page is no longer there.");
+        return;
+      }
+      /* Save the sheet being replaced, and keep where you were on it, BEFORE
+         the record underneath it changes. The tab path skipped both, so a
+         stroke drawn a moment earlier could be written under the new owner. */
+      captureSheetPlace();
+      return flushPractice().then(function(){
+        if (state.note && state.note.id === rec.worksFor) return null;
+        /* the sheet belongs to another page: go to that page first, or it
+           would open over notes it has nothing to do with */
+        go({ nbId: rec.notebookId, noteId: rec.worksFor });
+        return new Promise(function(res){ setTimeout(res, 420); });
+      }).then(function(){
+        return C.practicePages(rec.worksFor);
+      }).then(function(list){
+        var i = -1;
+        list.forEach(function(pp, k){ if (pp.id === id) i = k; });
+        if (i < 0){
+          forgetDockTab(id);
+          say("That working page is no longer there.");
+          return;
+        }
+        return openPractice(i);
+      });
+    }).catch(function(){});
   }
   function toggleWorkFromPin(pin){
     var id = pin && pin.getAttribute("data-pracid");
@@ -18055,22 +18130,41 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var shortStrip = document.getElementById("sstrip");
     if (shortStrip && !shortStrip.hidden){
       var sr = shortStrip.getBoundingClientRect();
-      topInset = Math.max(0, Math.min(r.bottom, sr.bottom) - r.top);
+      /* Both ends of the overlap, not just the near one. Taking the strip's
+         bottom against the paper's top alone says "it covers everything down to
+         here" even when the strip is nowhere near the paper — a fixed overlay
+         that a transform has pushed below the page then reported as covering
+         the whole of it, and every measurement built on that was wrong. */
+      topInset = Math.max(0, Math.min(r.bottom, sr.bottom) - Math.max(r.top, sr.top));
     }
     /* the working sheet, docked across the bottom */
     var sheet = document.getElementById("pracSheet");
     if (sheet && !sheet.hidden && !sheet.classList.contains("off")){
       var br = sheet.getBoundingClientRect();
-      bottomInset = Math.max(0, r.bottom - Math.max(r.top, br.top));
+      bottomInset = Math.max(0, Math.min(r.bottom, br.bottom) - Math.max(r.top, br.top));
     }
     var full = p.clientHeight || r.height || 0;
+    /* Two overlays cannot between them cover more than the page. Without this
+       a mis-measured pair could produce a negative usable height, and every
+       fraction built on it would come back as nonsense. */
+    var full0 = Math.max(0, r.height);
+    if (topInset + bottomInset > full0){
+      var over = topInset + bottomInset - full0;
+      bottomInset = Math.max(0, bottomInset - over);
+      if (topInset + bottomInset > full0) topInset = Math.max(0, full0 - bottomInset);
+    }
     return {
       top: r.top + topInset,
       bottom: r.bottom - bottomInset,
       height: Math.max(0, full - topInset - bottomInset),
       topInset: topInset,
       bottomInset: bottomInset,
-      paper: p
+      paper: p,
+      /* Two callers ask for `paperRect` and have always got undefined, so both
+         silently measured the whole window instead of the page — the sheet's
+         four heights and the drag clamp among them. Returning it is the whole
+         fix; the callers were right and this was not here. */
+      paperRect: r
     };
   }
 
@@ -18985,7 +19079,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        Strip across the top, dragging the bottom sheet to the full window height
        covered the page entirely and left nothing to work against. */
     var room = usablePageViewport();
-    var most = Math.max(120, (room.paperRect ? room.paperRect.height : window.innerHeight) - 60);
+    var ph = (room.paperRect && room.paperRect.height) || window.innerHeight || 800;
+    /* the same room the height resolver uses, less the other dock */
+    var most = Math.max(120, ph - (room.topInset || 0) - 60);
     var h = Math.max(46, Math.min(most, sheetDrag.h + (sheetDrag.y - e.clientY)));
     $("pracSheet").style.height = h + "px";
     /* A hand-dragged height is this tab's override of Half, not a fifth state

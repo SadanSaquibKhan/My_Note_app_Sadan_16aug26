@@ -87,32 +87,49 @@ eq("Half auto-folds and Full defaults expanded unless manually overridden",
    /half[\s\S]{0,500}fold/i.test(dockCode) && /full[\s\S]{0,500}(?:expand|fold)/i.test(dockCode));
 
 console.log("the four heights come from one calculation:");
-/* This began as CSS keyed off the state attribute, which reads better and did
-   not work: the sheet stayed exactly the same height in all four states however
-   specific the selector was made. The pixels are worked out in one function
-   instead, the same way the Strip has always sized itself. Extracted and run
-   for real rather than pattern-matched — "there is a function" is not the
-   claim; the claim is that the four numbers come out ordered and sane. */
-const fnMatch = html.match(/function sheetHeightFor\(state, custom\)\{[\s\S]*?\n  \}/);
-eq("there is one height calculation", !!fnMatch);
+/* This block used to hand sheetHeightFor a fake viewport whose `paperRect`
+   production never returned — so it measured a tidy 1000px page in the test
+   while production fell through to window.innerHeight and measured the whole
+   window. Green, and wrong, which is worse than red.
+
+   The arithmetic lives in a pure resolver now that takes its numbers instead of
+   fetching them. A function that cannot reach out cannot be handed a lie. */
+const fnMatch = html.match(/function sheetHeight\(state, paperHeight, oppositeInset, custom\)\{[\s\S]*?\n  \}/);
+eq("the arithmetic is a pure resolver", !!fnMatch);
+eq("and it is handed its numbers, never left to fetch them",
+   !!fnMatch && !/usablePageViewport\(/.test(fnMatch[0]) && !/window\.innerHeight/.test(fnMatch[0]));
+/* The measuring belongs at the call site, and a sheet must never be sized
+   against its own inset — it would shrink a little every time it was asked. */
+eq("the call site measures, and passes only the OTHER dock's inset",
+   /function sheetHeightFor\(state, custom\)\{[\s\S]{0,400}sheetHeight\(state, ph, v\.topInset \|\| 0, custom\)/.test(html));
+
 if (fnMatch) {
-  const mk = new Function("usablePageViewport", "window",
-                          fnMatch[0] + "\nreturn sheetHeightFor;");
-  const H = mk(() => ({ paperRect: { height: 1000 } }), { innerHeight: 1000 });
-  eq("hidden is not sized at all", H("hidden") === null);
-  eq("strip is a readable band, not a sliver", H("strip") === 132);
-  eq("half is about half the room", H("half") === 520);
-  eq("full leaves the top bar showing", H("full") === 954);
+  const H = new Function(fnMatch[0] + "\nreturn sheetHeight;")();
+  eq("hidden is not sized at all", H("hidden", 1000, 0) === null);
+  eq("strip is a readable band", H("strip", 1000, 0) === 132);
+  eq("half is about half the page", H("half", 1000, 0) === 520);
+  eq("full leaves the top bar showing", H("full", 1000, 0) === 954);
   eq("the four are ordered 0 < strip < half < full",
-     0 < H("strip") && H("strip") < H("half") && H("half") < H("full"));
-  /* A height you dragged yourself is this tab's override of half, and must not
-     leak into strip or full — that is exactly what made Half and Full look as
-     though they did nothing. */
-  eq("a dragged height overrides half only", H("half", 700) === 700);
-  eq("and never strip or full", H("strip", 700) === 132 && H("full", 700) === 954);
-  /* A tiny window must not produce a negative or absurd sheet. */
-  const T = mk(() => ({ paperRect: { height: 40 } }), { innerHeight: 40 });
-  eq("a very small screen still gives a usable sheet", T("full") > 0 && T("half") > 0);
+     0 < H("strip",1000,0) && H("strip",1000,0) < H("half",1000,0) && H("half",1000,0) < H("full",1000,0));
+
+  /* With a Strip across the top, the bottom sheet has less room, and every
+     state must shrink to match rather than reaching under it. */
+  eq("a Strip across the top takes room from the sheet below",
+     H("half", 1000, 200) === 416 && H("full", 1000, 200) === 754);
+  eq("and half of a smaller room is smaller", H("half", 1000, 200) < H("half", 1000, 0));
+
+  /* A dragged height is an override of half, and only of half. */
+  eq("a dragged height overrides half", H("half", 1000, 0, 700) === 700);
+  eq("but never strip or full",
+     H("strip", 1000, 0, 700) === 132 && H("full", 1000, 0, 700) === 954);
+  eq("and it still has to fit the room", H("half", 1000, 600, 900) <= 400);
+
+  /* Nothing may return a negative or absurd height, however little room there
+     is: a sheet with no height at all cannot be dragged back open. */
+  eq("a tiny page still gives a usable sheet",
+     H("full", 40, 0) >= 120 && H("half", 40, 0) >= 120 && H("strip", 40, 0) >= 120);
+  eq("and an inset larger than the page does not go negative",
+     H("half", 300, 900) >= 120 && H("full", 300, 900) >= 120);
 }
 
 console.log("reference state machine:");
