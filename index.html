@@ -3035,7 +3035,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b190";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b191";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5999,13 +5999,19 @@ var MarginCore = (function(){
       var notes = r[1].filter(function(n){ return n.notebookId === nbId; });
       var ids = {};
       notes.forEach(function(n){ ids[n.id] = 1; });
+      /* every page anywhere, not only this notebook's. A sheet that has been
+         re-linked to a page in another notebook has been converted, but its
+         converted self is not in `ids` — so this notebook was asked whether the
+         conversion had happened and answered no, and shipped the legacy row. */
+      var everywhere = {};
+      r[1].forEach(function(n){ everywhere[n.id] = 1; });
       return Promise.all([getAll("practices"), getAll("assets")]).then(function(rr){
         /* A working page travels in `notes` now, because it is one. Shipping
            its legacy row beside it puts both halves of the same sheet in one
            file, and importing that file gives you each sheet twice. Only a row
            that has genuinely never been converted is still worth carrying, and
            after boot there are none. */
-        var pracs = rr[0].filter(function(p){ return ids[p.noteId] && !ids[p.id]; });
+        var pracs = rr[0].filter(function(p){ return ids[p.noteId] && !everywhere[p.id]; });
         var assets = rr[1].filter(function(a){ return ids[a.noteId]; });
         return encodeAssets(assets, skipAudio).then(function(withData){
           return {
@@ -10603,10 +10609,39 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      alone left the sheet filed in the old notebook's Working drawer — so it
      vanished from the drawer of the notebook it now belongs to, and its name
      still claimed a page it had nothing to do with. */
+  /* A marker left on the old page after a sheet has been re-linked is a lie:
+     it names a working page that belongs somewhere else now, and tapping it
+     walks you off to another page without saying why. A page that has since
+     been deleted must not hold the move up, so a failure here is quiet. */
+  function dropWorkPin(parentId, pracId){
+    if (!parentId || !pracId) return Promise.resolve();
+    var sel = 'span.pracpin[data-pracid="' + pracId + '"]';
+    var mountedId = $("body") && $("body").dataset.noteId;
+    if (mountedId === parentId){
+      /* the page is on screen: take it out of what is being looked at, or the
+         next save would write it straight back */
+      var here = $("body").querySelectorAll(sel);
+      if (!here.length) return Promise.resolve();
+      Array.prototype.forEach.call(here, function(el){ el.parentNode.removeChild(el); });
+      markDirty();
+      return flush();
+    }
+    return C.getNote(parentId).then(function(rec){
+      if (!rec || !rec.html) return;
+      var box = document.createElement("div");
+      box.innerHTML = rec.html;
+      var pins = box.querySelectorAll(sel);
+      if (!pins.length) return;
+      Array.prototype.forEach.call(pins, function(el){ el.parentNode.removeChild(el); });
+      return C.saveNote(parentId, { html: box.innerHTML });
+    }).catch(function(){});
+  }
+
   function relinkWorkingHere(){
     if (!prac.rec || !state.note) return;
     if (state.note.id === prac.rec.worksFor) return;
     var id = prac.rec.id;
+    var wasFor = prac.rec.worksFor;
     var target = state.note;
     C.practicePages(target.id).then(function(siblings){
       return C.ensureWorkingSection(target.notebookId).then(function(sec){
@@ -10620,6 +10655,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       });
     }).then(function(n){
       if (prac.rec && prac.rec.id === id) prac.rec = n;
+      /* and take the old page's marker off, before the new one goes on: both
+         at once and the page you are on could save while the other is still
+         being read */
+      return dropWorkPin(wasFor, id).then(function(){ return n; });
+    }).then(function(n){
       /* put a marker on the page it now belongs to, so it can be found again */
       if (typeof ensureWorkPin === "function") ensureWorkPin(id);
       if (typeof paintWorkPins === "function") paintWorkPins();
@@ -16781,6 +16821,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     /* same rule as a picture: it belongs to the page it was attached to */
     var owner = activeNoteId();
     if (!owner) return Promise.resolve();
+    /* The file already belonged to the page you were on — the chip did not.
+       It was written into the note whichever page you were actually typing on,
+       so attaching something in a working sheet left the sheet owning a file
+       that only the note had a way of opening: delete the sheet and the file
+       went with it while the chip stayed behind, pointing at nothing. */
+    var host = activeTextHost();
     return C.createFile(owner, file, file.name, file.type).then(function(a){
       var chip = document.createElement("span");
       chip.className = "filechip";
@@ -16788,17 +16834,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       chip.setAttribute("data-file", a.id);
       chip.textContent = a.name;
       var r = window.getSelection();
-      if (r && r.rangeCount && $("body").contains(r.anchorNode)){
+      if (r && r.rangeCount && host.contains(r.anchorNode)){
         var rr = r.getRangeAt(0); rr.collapse(false); rr.insertNode(chip);
-      } else $("body").appendChild(chip);
-      return hydrateFiles().then(function(){ markDirty(); return flush(); });
+      } else host.appendChild(chip);
+      return hydrateFiles().then(function(){
+        if (host.id === "pracText") return flushPractice();
+        markDirty();
+        return flush();
+      });
     });
   }
   var fileUrls = {};
   function hydrateFiles(){
     Object.keys(fileUrls).forEach(function(k){ URL.revokeObjectURL(fileUrls[k]); });
     fileUrls = {};
-    var chips = Array.prototype.slice.call($("body").querySelectorAll(".filechip"));
+    /* both places you can be typing: a sheet's chips are as real as a note's,
+       and one that is never hydrated is a dead label you cannot open */
+    var chips = [];
+    editHosts().forEach(function(h){
+      chips = chips.concat(Array.prototype.slice.call(h.querySelectorAll(".filechip")));
+    });
     return Promise.all(chips.map(function(chip){
       var id = chip.getAttribute("data-file");
       return C.reviveAsset(id).then(function(){ return C.getAsset(id); }).then(function(a){
