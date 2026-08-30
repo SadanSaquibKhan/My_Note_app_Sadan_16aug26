@@ -3035,7 +3035,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b189";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b190";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4375,6 +4375,24 @@ var MarginCore = (function(){
     (sections || []).forEach(function(s){ if (isDrawer(s)) m[s.id] = 1; });
     return m;
   }
+  /* "Is this in a drawer" was enough while both drawers were being kept out of
+     the same places. It is not enough for search: rough working is deliberately
+     out of results, but a short note is a note — it is the tidy version, and
+     leaving it out means the one page most worth finding is the one page you
+     cannot. So the question is which drawer, and the page's own marks are asked
+     first because they travel with it: a sheet that has arrived from another
+     device before its drawer has still knows what it is. */
+  function drawerKinds(sections){
+    var m = {};
+    (sections || []).forEach(function(s){ if (isDrawer(s)) m[s.id] = s.kind; });
+    return m;
+  }
+  function pageDrawer(n, kinds){
+    if (!n) return null;
+    if (n.worksFor) return "working";
+    if (isSummaryPage(n)) return "summary";
+    return (kinds && n.sectionId && kinds[n.sectionId]) || null;
+  }
   function isDrawerPage(n, drawerIds){
     if (!n) return false;
     /* worksFor is asked first on purpose: a working page is one wherever it
@@ -4563,7 +4581,7 @@ var MarginCore = (function(){
       .then(function(r){
         var nbName = {};
         r[1].forEach(function(nb){ nbName[nb.id] = nb.name; });
-        var dIds = drawerSectionIds(r[2]);
+        var kinds = drawerKinds(r[2]);
         var byId = {};
         r[0].forEach(function(n){ byId[n.id] = n; });
         var hits = [];
@@ -4574,10 +4592,23 @@ var MarginCore = (function(){
              Having it answer every ordinary search alongside the clean notes
              buries what you were looking for, so it is asked for rather than
              assumed. Once working pages became real pages they arrived in
-             these results by default, which is the bug. */
-          if (isDrawerPage(n, dIds)) return;
+             these results by default, which was the bug — and the fix went one
+             drawer too far and took the short notes out with them. A short note
+             is the boiled-down version of a stretch of pages; leaving it out of
+             search hides the single most findable thing in the notebook. */
+          var drawer = pageDrawer(n, kinds);
+          if (drawer === "working") return;
           if (matchNote(n, q)){
-            hits.push({ note:n, where:"note", notebook:nbName[n.notebookId] || "",
+            /* A short note is stored titled "Summary", which tells you nothing
+               about which one it is. What identifies it is the stretch of pages
+               it was written about, so the first of those travels with the hit
+               and the row is named from it. */
+            var about = null;
+            if (drawer === "summary" && n.covers && n.covers[0])
+              about = byId[n.covers[0].noteId] || null;
+            hits.push({ note:n, parent: about,
+                        where: drawer === "summary" ? "summary" : "note",
+                        notebook:nbName[n.notebookId] || "",
                         snippet: snippet(n.html, q) });
           }
         });
@@ -4593,7 +4624,12 @@ var MarginCore = (function(){
             if (seen[w.id]) return;
             if (!matchNote({ title:"", html:w.html, tags:[] }, q)) return;
             seen[w.id] = 1;
-            hits.push({ note: parent || w, where:"practice",
+            /* The page that MATCHED, not the page it hangs off. Storing the
+               parent here meant tapping a working hit opened the clean note and
+               showed you everything except the words you had searched for. The
+               parent is kept beside it, because that is where the sheet opens
+               over. */
+            hits.push({ note: w, parent: parent || null, where:"practice",
                         notebook: nbName[w.notebookId] || "",
                         snippet: snippet(w.html, q) });
           });
@@ -4643,26 +4679,46 @@ var MarginCore = (function(){
           return (marks[p.id] || 0) > 0 || plainText(p.html).length > 0;
         }).map(function(p){
           var n = note[p.worksFor];
+          /* A page in the bin is gone as far as this list is concerned. It is
+             still in the store, so asking only whether the record exists let a
+             sheet whose page had been deleted sort in among the live ones and
+             claim that page's title. */
+          if (n && !live(n)) n = null;
+          var bookId = (n && n.notebookId) || p.notebookId;
           return {
             practice: p, note: n || null,
             noteTitle: n ? displayTitle(n) : "(page deleted)",
-            notebook: n && nb[n.notebookId] ? nb[n.notebookId].name : "",
+            notebook: nb[bookId] ? nb[bookId].name : "",
             marks: marks[p.id] || 0
           };
         }).sort(function(a,b){
           /* Newest-first read as noise: the first sheet for page 9 landed
              between the two for page 2. A working page follows the page it
              hangs off, and only then its own sheet number. A sheet whose page
-             is gone has no place in that order, so it goes to the end. */
-          function parentOrder(x){
-            if (!x.note) return [1, 9e15, 9e15];          /* its page is gone: last */
-            var at = rank[x.note.id];
-            if (at == null) return [0, 9e14, x.note.createdAt || 0];
-            return [0, 0, at];
+             is gone has no place in that order, so it goes to the end.
+
+             The notebook has to come first of all. Each notebook numbers its
+             own pages from zero, so without it page 1 of one subject sorted
+             level with page 1 of another and the whole list interleaved — one
+             sheet from Optics, one from Circuits, one from Optics again. */
+          function key(x){
+            var n = x.note;
+            if (!n) return { gone:1, bo:9e15, book:"", miss:9e15, at:9e15 };
+            var book = nb[n.notebookId];
+            var at = rank[n.id];
+            return { gone:0,
+                     bo: (book && book.order != null) ? book.order : 9e14,
+                     book: n.notebookId || "",
+                     miss: (at == null) ? 1 : 0,
+                     at: (at == null) ? (n.createdAt || 0) : at };
           }
-          var pa = parentOrder(a), pb = parentOrder(b);
-          return (pa[0] - pb[0]) || (pa[1] - pb[1]) || (pa[2] - pb[2]) ||
-                 ((a.practice.workOrder||0) - (b.practice.workOrder||0));
+          var ka = key(a), kb = key(b);
+          if (ka.gone !== kb.gone) return ka.gone - kb.gone;
+          if (ka.bo !== kb.bo) return ka.bo - kb.bo;
+          if (ka.book !== kb.book) return ka.book < kb.book ? -1 : 1;
+          if (ka.miss !== kb.miss) return ka.miss - kb.miss;
+          if (ka.at !== kb.at) return ka.at - kb.at;
+          return (a.practice.workOrder||0) - (b.practice.workOrder||0);
         });
       });
   }
@@ -6507,6 +6563,7 @@ var MarginCore = (function(){
     summariesFor:summariesFor, resolveCover:resolveCover, coverRef:coverRef,
     summaryRun:summaryRun,
     isDrawerPage:isDrawerPage, ordinaryPages:ordinaryPages,
+    drawerKinds:drawerKinds, pageDrawer:pageDrawer,
     ordinarySections:ordinarySections, drawerSectionIds:drawerSectionIds,
     reviveAsset:reviveAsset, tombstoneAssets:tombstoneAssets, bumpNote:bumpNote,
     cloneAsset:cloneAsset, copyAsset:copyAsset,
@@ -7146,14 +7203,28 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       b.type = "button"; b.className = "row";
       var m = document.createElement("span"); m.className = "rowmain";
       var t = document.createElement("span"); t.className = "rowtitle";
-      t.textContent = C.displayTitle(h.note);
+      /* A sheet result says which sheet, and which page it is about, because
+         "S1P1w2" on its own does not tell you what you were working on, and a
+         short note's stored title is the same word for every one of them. */
+      t.textContent = (h.where === "summary")
+        ? ("Short note" + (h.parent ? " on " + C.displayTitle(h.parent) : ""))
+        : C.displayTitle(h.note);
       var s = document.createElement("span"); s.className = "rowsub";
-      s.appendChild(document.createTextNode(
-        (h.where === "practice" ? "in rough working \u00B7 " : "") + h.notebook + " \u00B7 "));
+      var lead = "";
+      if (h.where === "practice"){
+        lead = "in rough working" + (h.parent ? " on " + C.displayTitle(h.parent) : "") + " \u00B7 ";
+      }
+      s.appendChild(document.createTextNode(lead + h.notebook + " \u00B7 "));
       s.appendChild(markMatch(h.snippet, state.query));
       m.appendChild(t); m.appendChild(s);
       b.appendChild(m);
-      b.addEventListener("click", function(){ flush(); go({ nbId:h.note.notebookId, noteId:h.note.id }); });
+      b.addEventListener("click", function(){
+        flush();
+        /* a sheet page is not in the reading order, so it cannot be gone to as
+           a page: it is opened as the sheet it lives in, at itself */
+        if (h.where === "practice" || h.where === "summary"){ openSheetPage(h.note.id); return; }
+        go({ nbId:h.note.notebookId, noteId:h.note.id });
+      });
       host.appendChild(b);
     });
   }
@@ -16519,6 +16590,29 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      If a short note already covers this page, it opens that one instead of
      quietly making a second. */
   /* Open the run at whichever short note we want to be looking at. */
+  /* Open whichever sheet a page belongs to, at that page. A search result is
+     the page that matched, so landing on the page it hangs off shows you
+     everything except the words you searched for. */
+  function openSheetPage(id){
+    if (!id) return Promise.resolve();
+    return C.getNote(id).then(function(rec){
+      if (!rec || rec.deletedAt){ say("That page is no longer there."); return; }
+      if (rec.worksFor) return openPracticeById(id);
+      if (!C.isSummaryPage(rec)) return;
+      /* A short note is written ABOUT a stretch of pages rather than hanging
+         off one, so it opens over the first page it covers. */
+      var first = (rec.covers && rec.covers[0]) || null;
+      return (first ? C.resolveCover(first) : Promise.resolve(null)).then(function(src){
+        var goTo = src && src.note && src.note.id;
+        if (!goTo || (state.note && state.note.id === goTo)) return openSummaryAt(id);
+        go({ nbId: rec.notebookId, noteId: goTo });
+        return new Promise(function(res){ setTimeout(res, 420); }).then(function(){
+          return openSummaryAt(id);
+        });
+      });
+    }).catch(function(){});
+  }
+
   function openSummaryAt(noteId){
     if (!state.note) return Promise.resolve();
     return C.summaryRun(state.note.notebookId).then(function(run){
