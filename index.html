@@ -1492,6 +1492,22 @@
   /* it reads, it does not take the pen */
   .shortstrip-body{pointer-events:auto}
 
+  /* A heading between the pages of a list, saying which sitting the ones under
+     it belong to. It is not a row: tapping it folds its own pages away rather
+     than opening anything, so it has to look unlike the rows either side. */
+  .chunkhead{
+    display:flex; align-items:center; gap:8px; width:100%;
+    padding:9px 12px 6px; background:none; border:0; cursor:pointer;
+    font-family:var(--mono); font-size:10px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-2); text-align:left;
+    border-top:1px solid var(--rule);
+  }
+  .chunkhead:first-child{border-top:0}
+  .chunkhead .chunkname{flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .chunkhead .chunkcount{opacity:.7}
+  .chunkhead .chunkfold{width:12px; text-align:center; opacity:.7}
+  .chunkhead:hover{color:var(--live)}
+
   .pracsheet{
     position:fixed; left:0; right:0; bottom:0; z-index:40;
     display:flex; flex-direction:column; height:52vh; background:var(--panel);
@@ -2041,6 +2057,7 @@
       <button class="ghost" id="editNotebook" title="Rename, recolour or delete this notebook">Edit</button>
       <button class="ghost" id="pickBtn" title="Select several notes">Select</button>
       <button class="ghost" id="insertPageBtn" title="Insert a page after the open one and renumber the rest">Insert</button>
+      <button class="ghost" id="addChunkBtn" title="Start a new chunk at the open page. Pages written after it join the same one.">Chunk</button>
       <button class="add" id="addNote" aria-label="New note" title="New note">+</button>
     </div>
     <div class="filterwrap">
@@ -3035,7 +3052,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b192";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b193";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4531,6 +4548,27 @@ var MarginCore = (function(){
     return out;
   }
 
+  /* The same pages, in the order they are ALREADY in, with a break wherever
+     the chunk changes. This is what the page list paints, and it is a different
+     question from notesByChunk on purpose: regrouping a list someone is looking
+     at moves pages under their finger, so a chunk arriving must add headings
+     and nothing else. A chunk whose pages are not together shows up twice,
+     which is honest — it says the sitting was interrupted. */
+  function chunkRuns(pages, chunks){
+    var known = {};
+    (chunks || []).forEach(function(c){ if (c && !c.deletedAt) known[c.id] = c; });
+    var out = [], last;
+    (pages || []).forEach(function(n){
+      var id = (n && n.chunkId && known[n.chunkId]) ? n.chunkId : null;
+      if (!out.length || last !== id){
+        out.push({ chunk: id ? known[id] : null, notes: [] });
+        last = id;
+      }
+      out[out.length - 1].notes.push(n);
+    });
+    return out;
+  }
+
   /* S2C4P5 — where a page is, in one string.
 
      P counts within the SECTION, not within the chunk, so it agrees with the
@@ -4628,12 +4666,18 @@ var MarginCore = (function(){
 
   /* ---------- notes ---------- */
 
-  function createNote(notebookId, title, sectionId){
+  function createNote(notebookId, title, sectionId, opts){
     var now = Date.now();
+    opts = opts || {};
     return open().then(function(){
       return putOne("notes", {
         id: newId("nt"), notebookId: notebookId,
         sectionId: sectionId || null,
+        /* A page written straight after another belongs to the same sitting, so
+           it joins the same chunk. Starting every page loose would mean a chunk
+           could never be more than the one page you made it from. */
+        chunkId: opts.chunkId || null,
+        navOrder: (opts.navOrder == null) ? now : opts.navOrder,
         title: (title||"").trim(), html: "",
         tags: [], pinned: false, starred: false,
         createdAt: now, lastEdited: now,
@@ -6717,7 +6761,7 @@ var MarginCore = (function(){
     createSection:createSection, sectionsIn:sectionsIn, getSection:getSection,
     chunksIn:chunksIn, getChunk:getChunk, createChunk:createChunk,
     saveChunk:saveChunk, deleteChunk:deleteChunk,
-    notesByChunk:notesByChunk, pageAddress:pageAddress,
+    notesByChunk:notesByChunk, chunkRuns:chunkRuns, pageAddress:pageAddress,
     updateSection:updateSection, deleteSection:deleteSection, notesBySection:notesBySection,
     ensureDefaultSection:ensureDefaultSection, suggestSectionName:suggestSectionName,
     defaultSectionOf:defaultSectionOf,
@@ -7620,8 +7664,87 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       host.appendChild(b);
     }
 
-    shown.forEach(paintNoteRow);
+    /* Folded away is a thing about this device and this moment, not about the
+       chunk, so it is never written down: a chunk folded on the tablet must not
+       arrive folded on the laptop. */
+    var runs = C.chunkRuns(shown, state.chunks || []);
+    var anyChunk = runs.some(function(g){ return !!g.chunk; });
+    if (!anyChunk){
+      /* a notebook that has never made a chunk looks exactly as it did */
+      shown.forEach(paintNoteRow);
+      return;
+    }
+    runs.forEach(function(g){
+      var head = document.createElement("button");
+      head.type = "button"; head.className = "chunkhead";
+      var id = g.chunk ? g.chunk.id : "_loose";
+      var folded = !!chunkFold[id];
+      var caret = document.createElement("span");
+      caret.className = "chunkfold";
+      caret.textContent = folded ? "\u25B8" : "\u25BE";
+      var nm = document.createElement("span");
+      nm.className = "chunkname";
+      /* Before any chunk exists these pages are the whole section, so calling
+         them "earlier pages" would be a lie. Once one does, that is exactly
+         what they are. */
+      nm.textContent = g.chunk ? g.chunk.name : "Earlier pages";
+      var ct = document.createElement("span");
+      ct.className = "chunkcount";
+      ct.textContent = g.notes.length;
+      head.appendChild(caret); head.appendChild(nm); head.appendChild(ct);
+      head.addEventListener("click", function(){
+        if (chunkFold[id]) delete chunkFold[id]; else chunkFold[id] = 1;
+        paintNotes();
+      });
+      head.addEventListener("contextmenu", function(ev){
+        ev.preventDefault();
+        if (g.chunk) renameChunk(g.chunk);
+      });
+      host.appendChild(head);
+      if (!folded) g.notes.forEach(paintNoteRow);
+    });
   }
+
+  /* Which chunks are folded on this device right now. */
+  var chunkFold = {};
+
+  function renameChunk(c){
+    var name = window.prompt(
+      "Name this chunk, or clear the box to undo the grouping", c.name || "");
+    if (name === null) return;
+    if (!name.trim()){
+      /* Undoing a grouping must never take pages with it: the chunk goes, its
+         pages stay exactly where they are and simply stop being grouped. */
+      C.deleteChunk(c.id).then(function(){ return refreshLists(); })
+       .then(function(){ hint("Chunk removed. Its pages are still here."); });
+      return;
+    }
+    C.saveChunk(c.id, { name: name.trim() }).then(function(){ refreshLists(); });
+  }
+
+  /* Start one at the page you are on. The chunk is born with its first page —
+     there is no such thing as an empty chunk waiting to be filled, because a
+     grouping with nothing in it is only a thing to tidy up later. */
+  function startChunkHere(){
+    var n = state.note;
+    if (!n || !state.nbId) return say("Open the page the chunk should start at.");
+    if (C.isDrawerPage(n, C.drawerSectionIds(state.sections)))
+      return say("A working page or a short note is not part of the reading order.");
+    var made = (state.chunks || []).length + 1;
+    var name = window.prompt("Name this chunk", "Chunk " + made);
+    if (name === null) return;
+    C.createChunk(state.nbId, n.sectionId || null, name.trim() || ("Chunk " + made), Date.now())
+      .then(function(c){
+        return C.saveNote(n.id, { chunkId: c.id }).then(function(){ return c; });
+      })
+      .then(function(c){
+        if (state.note && state.note.id === n.id) state.note.chunkId = c.id;
+        return refreshLists();
+      })
+      .then(function(){ hint("Chunk started here. Pages written after it join it."); })
+      .catch(dbFail("Could not start a chunk"));
+  }
+  $("addChunkBtn").addEventListener("click", startChunkHere);
 
   function esc(s){
     return String(s||"").replace(/[&<>"]/g, function(c){
@@ -7870,11 +7993,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       C.allNotebooks(),
       state.nbId ? C.notesIn(state.nbId) : Promise.resolve([]),
       C.notesSnapshot(), C.trash(), C.practiceCounts(), C.allGroups(),
-      state.nbId ? C.ensureDefaultSection(state.nbId) : Promise.resolve([])
+      state.nbId ? C.ensureDefaultSection(state.nbId) : Promise.resolve([]),
+      state.nbId ? C.chunksIn(state.nbId) : Promise.resolve([])
     ]).then(function(r){
       state.notebooks = r[0]; state.notes = r[1];
       state.groups = r[5] || [];
       state.sections = r[6] || [];
+      state.chunks = r[7] || [];
       var d0 = C.defaultSectionOf(state.sections);
       if (d0){
         if (!state.sectionId || !state.sections.some(function(s){ return s.id === state.sectionId; }))
@@ -7923,12 +8048,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       r.noteId ? C.getNote(r.noteId) : Promise.resolve(null),
       C.trash(), C.notesSnapshot(), C.practiceCounts(), C.allGroups(),
       r.nbId ? C.ensureDefaultSection(r.nbId) : Promise.resolve([]),
-      C.practicesGrouped()
+      C.practicesGrouped(),
+      r.nbId ? C.chunksIn(r.nbId) : Promise.resolve([])
     ]).then(function(res){
       if (mine !== renderSeq) return;        /* a newer page was asked for */
       state.notebooks = res[0];
       state.groups = res[7] || [];
       state.sections = res[8] || [];
+      state.chunks = res[10] || [];
       state.notes = res[1];
       var d1 = C.defaultSectionOf(state.sections);
       if (d1){
@@ -8724,13 +8851,30 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function currentSectionId(){
     return state.sectionId || (state.note && state.note.sectionId) || null;
   }
+  /* The chunk a new page should join: the one the last page of that section is
+     already in. A page written straight after another belongs to the same
+     sitting, and without this a chunk could never be more than the one page it
+     was started from. */
+  function chunkForNewPage(sectionId){
+    var live = {};
+    (state.chunks || []).forEach(function(c){ if (c && !c.deletedAt) live[c.id] = 1; });
+    var last = null;
+    C.ordinaryPages(state.notes || [], state.sections || []).forEach(function(n){
+      if ((n.sectionId || null) !== (sectionId || null)) return;
+      last = n;
+    });
+    if (state.note && (state.note.sectionId || null) === (sectionId || null)) last = state.note;
+    return (last && last.chunkId && live[last.chunkId]) ? last.chunkId : null;
+  }
+
   function addPageInSection(sectionId){
     if (!state.nbId) return;
     var nbId = state.nbId;
+    var joins = chunkForNewPage(sectionId);
     flush().then(function(){
       return C.suggestPageTitle(nbId, sectionId || null);
     }).then(function(title){
-      return C.createNote(nbId, title, sectionId || null);
+      return C.createNote(nbId, title, sectionId || null, { chunkId: joins });
     }).then(function(n){
       go({nbId:nbId, noteId:n.id});
       setTimeout(function(){ $("noteTitle").focus(); $("noteTitle").select(); }, 60);
