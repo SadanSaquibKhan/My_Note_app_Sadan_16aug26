@@ -3030,12 +3030,12 @@ var MarginCore = (function(){
      the top level, so an older backup still imports unchanged.
      4 adds sections inside a notebook (notebooks → sections → pages).
      Existing pages have no sectionId and keep working as an unfiled group. */
-  var DB_VERSION = 5;      /* storage schema */
-  var FORMAT     = 8;      /* export file format (8 adds sections) */
+  var DB_VERSION = 6;      /* storage schema */
+  var FORMAT     = 9;      /* export file format (9 adds chunks) */
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b191";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b192";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -3093,6 +3093,20 @@ var MarginCore = (function(){
        loads only the ones that belong here. */
     if (!db.objectStoreNames.contains("sections")){
       db.createObjectStore("sections", {keyPath:"id"}).createIndex("by_notebook", "notebookId");
+    }
+    /* ---- chunks: a chapter between the section and the page ----
+       Section, then chunk, then page. It is a browsing layer and nothing else:
+       it must never rename a page. A page's name is the user's, and a grouping
+       that renames things is a grouping you cannot undo by regrouping.
+
+       Adding the store is the whole of the upgrade. Every page that exists
+       carries no chunk, which is not homelessness — pages without one form a
+       single implicit group, so a notebook that has never heard of chunks goes
+       on behaving exactly as it did. */
+    if (!db.objectStoreNames.contains("chunks")){
+      var ck = db.createObjectStore("chunks", {keyPath:"id"});
+      ck.createIndex("by_section", "sectionId");
+      ck.createIndex("by_notebook", "notebookId");
     }
     if (oldVersion >= 1 && oldVersion < 2 && tx) migrate1to2(tx);
     /* by_works arrived with v5. A store that already exists needs the index
@@ -4420,6 +4434,142 @@ var MarginCore = (function(){
     });
   }
   function getSection(id){ return getOne("sections", id); }
+
+  /* ---- chunks ----
+     A chunk belongs to one section of one notebook and holds pages of that
+     section. A page names its chunk (`chunkId`) or names none, and naming none
+     is the ordinary case: those pages are one implicit group. Keeping it
+     nullable is what lets this arrive without touching a single existing page.
+
+     Order inside a chunk is `navOrder`, which is deliberately not the title.
+     Reading the order out of an SxPy name only holds while every page is
+     auto-named; rename one and the grouping starts sorting by a number that no
+     longer means anything. Where no navOrder has been set the order a page
+     already had is kept, so nothing is reshuffled by this arriving. */
+  function newChunk(notebookId, sectionId, name, order){
+    var now = Date.now();
+    return {
+      id: newId("ck"), notebookId: notebookId || null, sectionId: sectionId || null,
+      name: name || "Chunk", order: (order == null ? now : order),
+      createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
+    };
+  }
+  function chunksIn(notebookId, opts){
+    opts = opts || {};
+    return byIndex("chunks", "by_notebook", notebookId).then(function(l){
+      var list = opts.includeDeleted ? l : l.filter(live);
+      return list.sort(function(a, b){
+        var ao = (a.order == null ? 1e15 : a.order), bo = (b.order == null ? 1e15 : b.order);
+        if (ao !== bo) return ao - bo;
+        return (a.createdAt || 0) - (b.createdAt || 0);
+      });
+    });
+  }
+  function getChunk(id){ return getOne("chunks", id); }
+  function createChunk(notebookId, sectionId, name, order){
+    var rec = newChunk(notebookId, sectionId, name, order);
+    return putOne("chunks", rec);
+  }
+  function saveChunk(id, patch){
+    return getChunk(id).then(function(c){
+      if (!c) throw new Error("No chunk " + id);
+      Object.keys(patch || {}).forEach(function(k){ c[k] = patch[k]; });
+      touch(c);
+      return putOne("chunks", c);
+    });
+  }
+  /* A tombstone, like everything else here. The pages inside it are not
+     touched: they fall back to the implicit group on their own, because a
+     chunk id that names nothing living is treated as no chunk at all. Deleting
+     a grouping must never take pages with it. */
+  function deleteChunk(id){
+    return getChunk(id).then(function(c){
+      if (!c) return false;
+      c.deletedAt = Date.now(); c.editedOn = _device; c.lastEdited = c.deletedAt;
+      return putOne("chunks", c).then(function(){ return true; });
+    });
+  }
+
+  /* The pages of ONE section, grouped. The implicit group comes first while it
+     has anything in it — those are the pages that were there before any chunk
+     was made, and pushing them below the chunks would reorder a notebook that
+     never asked for chunks at all. Then the explicit chunks in their own order.
+     An empty chunk is not shown; a chunk is born with its first page and is
+     worth nothing without one. */
+  function notesByChunk(pages, chunks){
+    /* sorted here rather than trusted from the caller: this is the one place
+       that decides what order the groups are shown in, and a caller handing
+       over whatever the store returned would show them in the order they were
+       written */
+    var live_ = (chunks || []).filter(function(c){ return c && !c.deletedAt; })
+      .sort(function(a, b){
+        var ao = (a.order == null ? 1e15 : a.order), bo = (b.order == null ? 1e15 : b.order);
+        return (ao - bo) || ((a.createdAt || 0) - (b.createdAt || 0));
+      });
+    var known = {};
+    live_.forEach(function(c){ known[c.id] = c; });
+    var loose = [], bucket = {};
+    (pages || []).forEach(function(n){
+      var id = n && n.chunkId;
+      if (id && known[id]){ (bucket[id] = bucket[id] || []).push(n); }
+      else loose.push(n);
+    });
+    function ordered(list){
+      /* stable: a page with no navOrder keeps the place it already had */
+      return list.map(function(n, i){ return { n:n, i:i }; }).sort(function(a, b){
+        var ao = (a.n.navOrder == null) ? null : a.n.navOrder;
+        var bo = (b.n.navOrder == null) ? null : b.n.navOrder;
+        if (ao != null && bo != null && ao !== bo) return ao - bo;
+        return a.i - b.i;
+      }).map(function(x){ return x.n; });
+    }
+    var out = [];
+    if (loose.length) out.push({ chunk: null, notes: ordered(loose) });
+    live_.forEach(function(c){
+      if (bucket[c.id] && bucket[c.id].length) out.push({ chunk: c, notes: ordered(bucket[c.id]) });
+    });
+    return out;
+  }
+
+  /* S2C4P5 — where a page is, in one string.
+
+     P counts within the SECTION, not within the chunk, so it agrees with the
+     page's own name. A chunk narrows where to look; it does not renumber what
+     is already there, and an address that disagreed with the title written at
+     the top of the page would be worse than no address at all. A page in the
+     implicit group has no C part, because there is no chunk to name. */
+  function pageAddress(note, sections, chunks, pages){
+    if (!note) return "";
+    var secs = ordinarySections(sections || []).filter(function(x){
+      return !x.deletedAt && x.notebookId === note.notebookId;
+    }).sort(function(a, b){
+      var ao = (a.order == null ? 1e15 : a.order), bo = (b.order == null ? 1e15 : b.order);
+      return (ao - bo) || ((a.createdAt || 0) - (b.createdAt || 0));
+    });
+    var si = -1;
+    secs.forEach(function(x, i){ if (x.id === note.sectionId) si = i; });
+    var mine = (pages || []).filter(function(n){
+      return n && !n.deletedAt && n.notebookId === note.notebookId &&
+             (n.sectionId || null) === (note.sectionId || null);
+    });
+    var pi = -1;
+    mine.forEach(function(n, i){ if (n.id === note.id) pi = i; });
+    var out = (si >= 0 ? "S" + (si + 1) : "S");
+    var ck = null;
+    (chunks || []).forEach(function(c){ if (c && !c.deletedAt && c.id === note.chunkId) ck = c; });
+    if (ck){
+      var sameSec = (chunks || []).filter(function(c){
+        return c && !c.deletedAt && c.sectionId === ck.sectionId;
+      }).sort(function(a, b){
+        var ao = (a.order == null ? 1e15 : a.order), bo = (b.order == null ? 1e15 : b.order);
+        return (ao - bo) || ((a.createdAt || 0) - (b.createdAt || 0));
+      });
+      var ci = -1;
+      sameSec.forEach(function(c, i){ if (c.id === ck.id) ci = i; });
+      if (ci >= 0) out += "C" + (ci + 1);
+    }
+    return out + (pi >= 0 ? "P" + (pi + 1) : "P");
+  }
   function updateSection(id, patch){
     return getSection(id).then(function(s){
       if (!s) throw new Error("No section " + id);
@@ -5661,7 +5811,7 @@ var MarginCore = (function(){
   }
 
   function deleteNotebook(id){
-    return Promise.all([getNotebook(id), notesIn(id), sectionsIn(id)]).then(function(r){
+    return Promise.all([getNotebook(id), notesIn(id), sectionsIn(id), chunksIn(id)]).then(function(r){
       if (!r[0]) return 0;
       var now = Date.now();
       r[0].deletedAt = now; r[0].editedOn = _device; r[0].lastEdited = now;
@@ -5674,8 +5824,12 @@ var MarginCore = (function(){
         s.deletedAt = now; s.editedOn = _device; s.lastEdited = now;
         return s;
       });
-      return putMany(["notebooks","notes","sections"],
-                     {notebooks:[r[0]], notes:notes, sections:sections})
+      var chunks = (r[3] || []).map(function(c){
+        c.deletedAt = now; c.editedOn = _device; c.lastEdited = now;
+        return c;
+      });
+      return putMany(["notebooks","notes","sections","chunks"],
+                     {notebooks:[r[0]], notes:notes, sections:sections, chunks:chunks})
              .then(function(){ return notes.length; });
     });
   }
@@ -5704,7 +5858,8 @@ var MarginCore = (function(){
   }
 
   function restoreNotebook(id){
-    return Promise.all([getNotebook(id), getAll("notes"), getAll("sections")]).then(function(r){
+    return Promise.all([getNotebook(id), getAll("notes"), getAll("sections"),
+                        getAll("chunks")]).then(function(r){
       if (!r[0]) throw new Error("No notebook " + id);
       r[0].deletedAt = null; touch(r[0]);
       /* deletedVia catches the working pages as well, because they are notes */
@@ -5712,8 +5867,10 @@ var MarginCore = (function(){
       notes.forEach(function(n){ n.deletedAt = null; n.deletedVia = null; touch(n); });
       var sections = (r[2] || []).filter(function(s){ return s.notebookId === id && s.deletedAt; });
       sections.forEach(function(s){ s.deletedAt = null; touch(s); });
-      return putMany(["notebooks","notes","sections"],
-                     {notebooks:[r[0]], notes:notes, sections:sections})
+      var chunks = (r[3] || []).filter(function(c){ return c.notebookId === id && c.deletedAt; });
+      chunks.forEach(function(c){ c.deletedAt = null; touch(c); });
+      return putMany(["notebooks","notes","sections","chunks"],
+                     {notebooks:[r[0]], notes:notes, sections:sections, chunks:chunks})
              .then(function(){ return notes.length; });
     });
   }
@@ -5734,10 +5891,10 @@ var MarginCore = (function(){
   /* hard erase — the only thing that actually removes bytes */
   function purge(ids){
     return open().then(function(db){
-      var t = db.transaction(["notebooks","notes","practices","assets","sections"], "readwrite");
+      var t = db.transaction(["notebooks","notes","practices","assets","sections","chunks"], "readwrite");
       var nb = t.objectStore("notebooks"), nt = t.objectStore("notes");
       var pr = t.objectStore("practices"), as = t.objectStore("assets");
-      var sc = t.objectStore("sections");
+      var sc = t.objectStore("sections"), ck = t.objectStore("chunks");
       ids.forEach(function(id){
         /* one bad entry used to abort the whole transaction, so nothing at all
            was erased and the trash quietly stayed full */
@@ -5757,6 +5914,10 @@ var MarginCore = (function(){
         });
         var cs = sc.index("by_notebook").openCursor(IDBKeyRange.only(id));
         cs.onsuccess = function(e){ var cur = e.target.result; if (cur){ cur.delete(); cur.continue(); } };
+        /* erasing a notebook for good leaves none of its groupings behind,
+           waiting to be re-adopted by a page that happens to reuse an id */
+        var cc = ck.index("by_notebook").openCursor(IDBKeyRange.only(id));
+        cc.onsuccess = function(e){ var cur = e.target.result; if (cur){ cur.delete(); cur.continue(); } };
       });
       return new Promise(function(res, rej){
         t.oncomplete = function(){ res(ids.length); };
@@ -5903,6 +6064,7 @@ var MarginCore = (function(){
     field("practices", b.practices || []);
     field("groups", b.groups || []);
     field("sections", b.sections || []);
+    field("chunks", b.chunks || []);
     field("meta", b.meta || {});
     parts.push((first ? "" : ",") + '"assets":[');
     (b.assets || []).forEach(function(a, i){
@@ -5944,7 +6106,7 @@ var MarginCore = (function(){
     var skipAudio = !!opts.skipAudio;
     return Promise.all([
       getAll("notebooks"), getAll("notes"), Promise.resolve([]), getAll("assets"), allMeta(),
-      getAll("groups"), getAll("sections")
+      getAll("groups"), getAll("sections"), getAll("chunks")
     ]).then(function(r){
       return encodeAssets(r[3], skipAudio).then(function(assets){ r[3] = assets; return r; });
     }).then(function(r){
@@ -5962,6 +6124,7 @@ var MarginCore = (function(){
         assets: r[3],     /* ink lives here; images join it at stage 4 */
         groups: r[5] || [],
         sections: r[6] || [],
+        chunks: r[7] || [],
         meta: meta
       };
     });
@@ -5994,7 +6157,8 @@ var MarginCore = (function(){
   function exportNotebook(nbId, opts){
     opts = opts || {};
     var skipAudio = opts.skipAudio !== false;
-    return Promise.all([getNotebook(nbId), getAll("notes"), sectionsIn(nbId, {includeDeleted:true})]).then(function(r){
+    return Promise.all([getNotebook(nbId), getAll("notes"), sectionsIn(nbId, {includeDeleted:true}),
+                        chunksIn(nbId, {includeDeleted:true})]).then(function(r){
       if (!r[0]) throw new Error("No notebook " + nbId);
       var notes = r[1].filter(function(n){ return n.notebookId === nbId; });
       var ids = {};
@@ -6019,7 +6183,7 @@ var MarginCore = (function(){
             exportedAt: Date.now(), exportedBy: _device,
             audioOmitted: skipAudio,
             notebooks: [r[0]], notes: notes, practices: pracs, assets: withData,
-            sections: r[2] || [], groups: [], meta: {}
+            sections: r[2] || [], chunks: r[3] || [], groups: [], meta: {}
           };
         });
       });
@@ -6067,6 +6231,15 @@ var MarginCore = (function(){
       if (r.bookmark === undefined) r.bookmark = null;
       if (r.conflictOf === undefined) r.conflictOf = null;
       if (r.sectionId === undefined) r.sectionId = null;
+      /* naming no chunk is the ordinary case, not a missing value */
+      if (r.chunkId === undefined) r.chunkId = null;
+      if (r.navOrder === undefined) r.navOrder = null;
+    }
+    if (kind === "chunk"){
+      if (!r.name) r.name = "Chunk";
+      if (r.sectionId === undefined) r.sectionId = null;
+      if (r.notebookId === undefined) r.notebookId = null;
+      if (r.order == null) r.order = r.createdAt || 0;
     }
     if (kind === "section"){
       if (!r.name) r.name = "Section";
@@ -6102,6 +6275,9 @@ var MarginCore = (function(){
     var inAs = (b.assets||[]).map(function(x){ return normalise(x, "asset"); }).filter(Boolean);
     var inGp = (b.groups||[]).map(function(x){ return normalise(x, "group"); }).filter(Boolean);
     var inSc = (b.sections||[]).map(function(x){ return normalise(x, "section"); }).filter(Boolean);
+    /* an older file has none, which is not an error: every page in it names no
+       chunk, and pages that name no chunk are the implicit group */
+    var inCk = (b.chunks||[]).map(function(x){ return normalise(x, "chunk"); }).filter(Boolean);
 
     /* A format-1 file keeps its scratch text inline. That is the same thing as
        a working row, only older still, so it joins the same queue. */
@@ -6117,9 +6293,9 @@ var MarginCore = (function(){
     });
 
     return Promise.all([getAll("notebooks"), getAll("notes"), getAll("practices"),
-                        getAll("assets"), getAll("groups"), getAll("sections")])
+                        getAll("assets"), getAll("groups"), getAll("sections"), getAll("chunks")])
       .then(function(cur){
-        var have = [{}, {}, {}, {}, {}, {}];
+        var have = [{}, {}, {}, {}, {}, {}, {}];
         cur.forEach(function(list, i){ list.forEach(function(x){ have[i][x.id] = x; }); });
 
         /* Legacy working rows become pages before the merge ever sees them, so
@@ -6140,7 +6316,7 @@ var MarginCore = (function(){
         });
 
         var res = {added:0, updated:0, skipped:0, deleted:0, conflicts:0};
-        var write = [[], [], [], [], [], []];
+        var write = [[], [], [], [], [], [], []];
 
         /* ---- a page edited on both devices ----
            Last-writer-wins is fine until the two copies genuinely differ, and
@@ -6173,7 +6349,7 @@ var MarginCore = (function(){
           return !!twinIndex[x.id + "@" + (x.lastEdited || 0)];
         }
 
-        [inNb, inNt, inPr, inAs, inGp, inSc].forEach(function(incoming, i){
+        [inNb, inNt, inPr, inAs, inGp, inSc, inCk].forEach(function(incoming, i){
           incoming.forEach(function(x){
             var mine = have[i][x.id];
             if (!mine){
@@ -6238,9 +6414,20 @@ var MarginCore = (function(){
         write[5].forEach(function(x){ scIds[x.id] = 1; });
         write[1].forEach(function(x){ if (x.sectionId && !scIds[x.sectionId]) x.sectionId = null; });
 
-        return putMany(["notebooks","notes","practices","assets","groups","sections"],
+        /* A chunk whose section did not arrive would hide every page in it, and
+           a page pointing at a chunk that did not arrive would be filed under
+           nothing at all. Both fall back to the implicit group, which is where
+           a page with no grouping has always belonged — losing a grouping is
+           recoverable, losing sight of the pages is not. */
+        var ckIds = {};
+        Object.keys(have[6]).forEach(function(k){ ckIds[k] = 1; });
+        write[6].forEach(function(x){ ckIds[x.id] = 1; });
+        write[6].forEach(function(x){ if (x.sectionId && !scIds[x.sectionId]) x.sectionId = null; });
+        write[1].forEach(function(x){ if (x.chunkId && !ckIds[x.chunkId]) x.chunkId = null; });
+
+        return putMany(["notebooks","notes","practices","assets","groups","sections","chunks"],
                        {notebooks:write[0], notes:write[1], practices:write[2],
-                        assets:write[3], groups:write[4], sections:write[5]})
+                        assets:write[3], groups:write[4], sections:write[5], chunks:write[6]})
                .then(function(){ return res; });
       });
   }
@@ -6248,7 +6435,7 @@ var MarginCore = (function(){
   /* The legacy working store is deliberately absent. It is read once at boot to
      be converted and is never written again; publishing it would make a second,
      older copy of every working page that another device would keep re-adopting. */
-  var SYNC_STORES = ["notebooks","notes","sections","groups","assets"];
+  var SYNC_STORES = ["notebooks","notes","sections","chunks","groups","assets"];
 
   function stripBlobs(r){
     if (!r || typeof r !== "object") return r;
@@ -6528,6 +6715,9 @@ var MarginCore = (function(){
     updateGroup:updateGroup, moveGroup:moveGroup, deleteGroup:deleteGroup,
     wouldCycle:wouldCycle,
     createSection:createSection, sectionsIn:sectionsIn, getSection:getSection,
+    chunksIn:chunksIn, getChunk:getChunk, createChunk:createChunk,
+    saveChunk:saveChunk, deleteChunk:deleteChunk,
+    notesByChunk:notesByChunk, pageAddress:pageAddress,
     updateSection:updateSection, deleteSection:deleteSection, notesBySection:notesBySection,
     ensureDefaultSection:ensureDefaultSection, suggestSectionName:suggestSectionName,
     defaultSectionOf:defaultSectionOf,
@@ -21853,7 +22043,12 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     /* Parents before children: a page that lands before its section looks
        unfiled, which is what happened with Sec4 on the tablet.
        Picture bytes (imgdata) come after the asset row they belong to. */
-    var storeOrd = { notebooks:0, groups:1, sections:2, notes:3, practices:4, assets:5, meta:6, imgdata:7 };
+    /* A page must not land before the chunk it names, or it arrives filed under
+       nothing, shows up in the implicit group, and moves again a moment later
+       when its chunk finally turns up. Notebooks, then folders, then sections,
+       then chunks, then the pages themselves. */
+    var storeOrd = { notebooks:0, groups:1, sections:2, chunks:3, notes:4, practices:5,
+                     assets:6, meta:7, imgdata:8 };
     list.sort(function(a, b){
       var da = storeOrd[a && a.store] != null ? storeOrd[a.store] : 9;
       var db = storeOrd[b && b.store] != null ? storeOrd[b.store] : 9;
@@ -21898,7 +22093,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
                 return finishImage(row.id, "orig", []);
               });
             }
-            if (row.store === "sections" || row.store === "notebooks") secHit = true;
+            if (row.store === "sections" || row.store === "notebooks" ||
+                row.store === "chunks") secHit = true;
           });
         });
       });
