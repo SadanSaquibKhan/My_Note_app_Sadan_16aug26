@@ -1567,6 +1567,22 @@
   #sectionList .row.drawerrow .swatch{border-radius:3px}
   .pracpage{font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--ink-2); flex:none}
   .paper.prac{background:var(--desk); overflow-y:auto; -webkit-overflow-scrolling:touch}
+  /* The band you scroll into at the foot of a sheet page. It sits INSIDE the
+     sheet's own scroller, so the native scroll reaches it with no gesture
+     plumbing at all — the same shape as the peek bands between ordinary pages,
+     and it carries .prevpeek-body so the next page's words are laid out by the
+     very rules the live page uses. A band that lays out even slightly
+     differently puts a step in the join, which is the whole thing being
+     avoided. */
+  .pracpeek{zoom:var(--z,1); padding:0 0 24px; background:var(--desk)}
+  .pracpeek[hidden]{display:none}
+  .pracpeek-head{
+    font-family:var(--mono); font-size:10px; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--ink-2);
+    padding:10px 16px 8px; border-top:1px dashed var(--rule);
+  }
+  .pracpeek-body{opacity:.7; padding:0 16px}
+  .pracpeek-add{margin:2px 16px 0}
   .paper.prac > .sheet.prac{--field:var(--ground-work)}
   .sheet.prac{
     max-width:var(--page-w); margin:0 auto;
@@ -2354,6 +2370,11 @@
           <div id="pracText" contenteditable="true" spellcheck="false"
                data-placeholder="Work it out here. None of this reaches the clean note."></div>
         </div>
+        <div class="pracpeek" id="pracPeek" hidden>
+          <div class="pracpeek-head" id="pracPeekHead"></div>
+          <button class="ghost pracpeek-add" id="pracPeekAdd" hidden>+ Add a page here</button>
+          <div class="prevpeek-body pracpeek-body" id="pracPeekBody"></div>
+        </div>
       </div>
       <canvas class="inklayer" id="pracInk"></canvas>
     </div>
@@ -3014,7 +3035,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b188";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b189";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -10374,6 +10395,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (typeof paintWorkPins === "function") paintWorkPins();
       setTimeout(function(){ pracSurface.redraw(); }, 60);
       paintInkTools();
+      paintPracPeek();
     });
   }
 
@@ -10381,6 +10403,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     captureSheetPlace();
     return flushPractice().then(function(){
       prac.open = false;
+      prac.turning = false;
+      clearTimeout(prac.turnGuard);
+      paintPracPeek();
       saveDockTabs();
       paintDockRail();
       /* nothing is mounted now, so a save that somehow arrives late has no
@@ -10421,8 +10446,23 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
                                 strokes: pracSurface.strokes,
                                 removed: pracSurface.removed || {},
                                 restored: pracSurface.restored || {} })
-             .then(function(r){ if (prac.rec && prac.rec.id === id) prac.rec = r; })
+             .then(function(r){
+               if (prac.rec && prac.rec.id === id) prac.rec = r;
+               /* and back into the run, which is what the band below the page
+                  previews. The list was fetched when the sheet opened, so
+                  without this the next page is shown as it was then — write a
+                  line on it, come back a page, and the band says it is empty. */
+               for (var i = 0; i < prac.pages.length; i++)
+                 if (prac.pages[i] && prac.pages[i].id === id) prac.pages[i] = r;
+               if (prac.open) paintPracPeek();
+             })
              .catch(function(){});
+  }
+
+  function sheetPageName(i){
+    if (prac.kind === "summary") return "Short note " + (i + 1);
+    return (typeof C.workingName === "function" && state.note)
+      ? C.workingName(state.note, i) : ("w" + (i + 1));
   }
 
   function paintPracHead(){
@@ -10430,10 +10470,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        that is the only thing that says what it is for. A short note is not
        hanging off one page, it is written about a stretch of them, so that
        name would be a lie: it said S1P5w2 for a note covering pages 2 to 4. */
-    var name = (prac.kind === "summary")
-      ? ("Short note " + (prac.idx + 1))
-      : ((typeof C.workingName === "function" && state.note)
-           ? C.workingName(state.note, prac.idx) : ("w" + (prac.idx + 1)));
+    var name = sheetPageName(prac.idx);
     /* the sheet says which kind it is, because it is the same sheet either way */
     var mark = $("pracSheet") && $("pracSheet").querySelector(".pracmark");
     if (mark) mark.textContent = (prac.kind === "summary") ? "SHORT NOTE" : "ROUGH WORKING";
@@ -10546,7 +10583,25 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
   }
 
-  function gotoPracPage(i){
+  /* Arriving by scrolling off the end of a page means the top of the next one
+     is where you were heading. Putting a remembered place back instead drops
+     you into the middle of a page you have not read a word of yet — which is
+     right when you pick a page out of the rail, and wrong when you simply
+     kept scrolling. */
+  function landSheetTop(guardId){
+    afterLayout(function(){
+      if (!prac.rec || prac.rec.id !== guardId) return;
+      var p = $("pracPaper");
+      if (!p) return;
+      p.scrollTop = 0;
+      p.scrollLeft = 0;
+      pracSurface.redraw();
+      armPracPeek();
+      prac.turning = false;
+    });
+  }
+
+  function gotoPracPage(i, atTop){
     if (i < 0 || i >= prac.pages.length) return;
     /* Where you were on the sheet you are leaving, captured before anything
        asynchronous starts. Read afterwards it is already the new sheet's
@@ -10562,14 +10617,90 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       pracSurface.restored = {};
       var tab = dockTabFor(mounting) || rememberDockTab(prac.rec, "working");
       loadPracInk(mounting, pracSeq).then(function(){
-        restoreSheetPlace(tab, mounting);
+        if (atTop) landSheetTop(mounting); else restoreSheetPlace(tab, mounting);
       });
       pracSurface.undo = []; pracSurface.redo = [];
       if (typeof hydrateImages === "function") hydrateImages();
       pracSurface.redraw();
-      paintPracHead(); paintInkTools(); paintDockRail();
+      paintPracHead(); paintInkTools(); paintDockRail(); paintPracPeek();
     });
   }
+
+  /* ---- scrolling off the end of one sheet page onto the next ----
+     The pages of a sheet are a run, so reaching the foot of one should reach
+     the head of the next the way it does between ordinary pages, rather than
+     stopping dead until a button is found. The band below the page carries the
+     next page's words; scroll it more than PRAC_TURN of the way up the sheet
+     and the page turns. That is the same line the finger crosses between
+     ordinary pages, on purpose, so the two feel like one thing.
+
+     At the end of the run the band holds an OFFER, not a page. It must never
+     make one by itself: a stray blank working page every time you overscroll
+     is far worse than reaching for a button once. */
+  var PRAC_TURN = 0.60;
+
+  function peekCover(){
+    var band = $("pracPeek"), p = $("pracPaper");
+    if (!band || band.hidden || !p) return 0;
+    var pr = p.getBoundingClientRect(), br = band.getBoundingClientRect();
+    if (!pr.height) return 0;
+    return Math.max(0, Math.min(1, (pr.bottom - br.top) / pr.height));
+  }
+  /* Counted on the CROSSING, never on the state. A page shorter than the sheet
+     has its band in view the moment it mounts, and a rule that asked "is the
+     band showing" each scroll event would turn that page the instant you
+     touched it — and then the next, and the next, all the way to the end of the
+     run. So the band's coverage is remembered, and only a move from below the
+     line to above it counts. */
+  function armPracPeek(){ prac.peekWas = peekCover(); }
+
+  function paintPracPeek(){
+    var band = $("pracPeek");
+    if (!band) return;
+    var head = $("pracPeekHead"), body = $("pracPeekBody"), add = $("pracPeekAdd");
+    band.hidden = !prac.open;
+    if (!prac.open){ if (body) body.innerHTML = ""; return; }
+    var nxt = prac.pages[prac.idx + 1];
+    band.classList.toggle("end", !nxt);
+    if (nxt){
+      if (head) head.textContent = "Next  " + sheetPageName(prac.idx + 1) + "  keep scrolling";
+      if (add) add.hidden = true;
+      if (body){
+        body.hidden = false;
+        body.innerHTML = (typeof previewHtml === "function")
+          ? previewHtml(nxt.html || "") : "";
+      }
+    } else {
+      if (head) head.textContent = (prac.kind === "summary")
+        ? "End of the short notes in this notebook"
+        : "End of the working for this page";
+      if (add) add.hidden = false;
+      if (body){ body.hidden = true; body.innerHTML = ""; }
+    }
+    /* tall enough to be scrolled properly into view, so the crossing is a
+       deliberate pull rather than something a stray flick can trip */
+    var p = $("pracPaper");
+    if (p) band.style.minHeight = Math.max(200, Math.round(p.clientHeight * 0.9)) + "px";
+    armPracPeek();
+  }
+
+  $("pracPaper").addEventListener("scroll", function(){
+    if (!prac.open) return;
+    var now = peekCover();
+    var was = (prac.peekWas == null) ? now : prac.peekWas;
+    prac.peekWas = now;
+    if (prac.turning) return;
+    if (was >= PRAC_TURN || now < PRAC_TURN) return;
+    if (prac.idx + 1 >= prac.pages.length) return;
+    prac.turning = true;
+    /* the same shape as the page handover: a guard, in case the save the turn
+       waits on never comes back, so a sheet can never be left unable to turn */
+    clearTimeout(prac.turnGuard);
+    prac.turnGuard = setTimeout(function(){ prac.turning = false; }, 2500);
+    gotoPracPage(prac.idx + 1, true);
+  }, { passive: true });
+
+  $("pracPeekAdd").addEventListener("click", function(){ addSheetPage(); });
 
   $("pracBtn").addEventListener("click", function(){
     if (!state.note) return;
