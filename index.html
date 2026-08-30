@@ -3014,7 +3014,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b187";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b188";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -16911,7 +16911,33 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      contenteditable's own undo gets wiped whenever the app rewrites innerHTML,
      which it does for maths, pictures and attachments. So the text layer keeps
      its own stack, separate from the ink stack. */
-  var textHist = { past: [], future: [], last: null, timer: null };
+  /* ---- one undo history per page ----
+     There was one history for the whole app, and it serialised the note
+     whatever you had been typing in. So the working sheet had no undo at all,
+     and sharing the note's would have been worse than none: every keystroke in
+     the sheet would have pushed the note's own unchanged markup onto the note's
+     stack — snapshots of nothing, taken because you typed somewhere else, with
+     your real edits pushed off the end of an eighty-deep stack.
+
+     A history belongs to a page. Which page you are undoing follows from where
+     the pen or the caret actually is. */
+  var textHists = {};
+  function histFor(id){
+    if (!id) id = "_none";
+    if (!textHists[id]) textHists[id] = { past: [], future: [], last: null, timer: null };
+    return textHists[id];
+  }
+  /* Which page is being edited, and in which element. The sheet only counts
+     when it is genuinely the active surface — reading one with the pen still on
+     the note underneath must leave the note's undo alone. */
+  function activeEditHost(){
+    if (ink.active === "practice" && prac.open && prac.rec && $("pracText"))
+      return { el: $("pracText"), id: prac.rec.id, sheet: true };
+    return { el: $("body"), id: state.noteId, sheet: false };
+  }
+  function textHistNow(){ return histFor(activeEditHost().id); }
+  /* a page that is gone should not hold its history for the session */
+  function dropTextHist(id){ if (id && textHists[id]) delete textHists[id]; }
   function caretPagePos(){
     var paper = $("paper");
     var sel = window.getSelection();
@@ -16934,60 +16960,77 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     };
   }
   function snapText(){
-    var html = serializeBody();
-    if (html === textHist.last) return;
-    if (textHist.last !== null){
-      var pos = caretPagePos();
-      textHist.past.push({
-        html: textHist.last, seq: nextSeq(),
-        noteId: state.noteId, nbId: state.nbId,
+    var where = activeEditHost();
+    var hist = histFor(where.id);
+    var html = serializeHost(where.el);
+    if (html === hist.last) return;
+    if (hist.last !== null){
+      var pos = where.sheet ? null : caretPagePos();
+      hist.past.push({
+        html: hist.last, seq: nextSeq(),
+        noteId: where.id, nbId: state.nbId, sheet: where.sheet,
         atX: pos ? pos.x : null, atY: pos ? pos.y : null
       });
-      if (textHist.past.length > 80) textHist.past.shift();
-      textHist.future = [];
+      if (hist.past.length > 80) hist.past.shift();
+      hist.future = [];
       clearInkRedoAll();               /* a fresh edit ends the shared redo line */
     }
-    textHist.last = html;
+    hist.last = html;
     paintTextUndo();
     if (typeof paintGlobalUndo === "function") paintGlobalUndo();
   }
   function resetTextHist(){
-    textHist.past = []; textHist.future = []; textHist.last = serializeBody();
+    var where = activeEditHost();
+    var hist = histFor(where.id);
+    hist.past = []; hist.future = []; hist.last = serializeHost(where.el);
     paintTextUndo();
   }
   function paintTextUndo(){
-    var canU = textHist.past.length || (typeof anyUndo === "function" && anyUndo());
-    var canR = textHist.future.length || (typeof anyRedo === "function" && anyRedo());
+    var hist = textHistNow();
+    var canU = hist.past.length || (typeof anyUndo === "function" && anyUndo());
+    var canR = hist.future.length || (typeof anyRedo === "function" && anyRedo());
     if ($("textUndo")) $("textUndo").disabled = !canU;
     if ($("textRedo")) $("textRedo").disabled = !canR;
   }
-  function setBodyHTML(html){
-    $("body").innerHTML = html;
-    renderMath($("body")); hydrateImages(); hydrateFiles();
+  /* Puts the markup back into the page it came from, and re-hydrates only that
+     one: pictures and maths in the sheet are the sheet's. */
+  function setBodyHTML(html, host){
+    var el = host || activeEditHost().el;
+    el.innerHTML = html;
+    renderMath(el); hydrateImages(); hydrateFiles();
   }
   function textUndo(){
-    if (!textHist.past.length) return;
-    var entry = textHist.past.pop();
-    textHist.future.push({
-      html: textHist.last, seq: entry.seq, undoneAt: nextRedoSeq(),
+    var where = activeEditHost();
+    var hist = histFor(where.id);
+    if (!hist.past.length) return;
+    var entry = hist.past.pop();
+    hist.future.push({
+      html: hist.last, seq: entry.seq, undoneAt: nextRedoSeq(),
       atX: entry.atX, atY: entry.atY
     });
-    textHist.last = entry.html;
-    setBodyHTML(entry.html);
-    paintTextUndo(); markDirty(); flush(); paintGlobalUndo();
-    if (typeof revealXY === "function") revealXY(entry.atX, entry.atY);
+    hist.last = entry.html;
+    setBodyHTML(entry.html, where.el);
+    paintTextUndo(); markDirty();
+    if (where.sheet) flushPractice(); else flush();
+    paintGlobalUndo();
+    /* only the note has page coordinates to reveal at */
+    if (!where.sheet && typeof revealXY === "function") revealXY(entry.atX, entry.atY);
   }
   function textRedo(){
-    if (!textHist.future.length) return;
-    var entry = textHist.future.pop();
-    textHist.past.push({
-      html: textHist.last, seq: nextSeq(),
+    var where = activeEditHost();
+    var hist = histFor(where.id);
+    if (!hist.future.length) return;
+    var entry = hist.future.pop();
+    hist.past.push({
+      html: hist.last, seq: nextSeq(),
       atX: entry.atX, atY: entry.atY
     });
-    textHist.last = entry.html;
-    setBodyHTML(entry.html);
-    paintTextUndo(); markDirty(); flush(); paintGlobalUndo();
-    if (typeof revealXY === "function") revealXY(entry.atX, entry.atY);
+    hist.last = entry.html;
+    setBodyHTML(entry.html, where.el);
+    paintTextUndo(); markDirty();
+    if (where.sheet) flushPractice(); else flush();
+    paintGlobalUndo();
+    if (!where.sheet && typeof revealXY === "function") revealXY(entry.atX, entry.atY);
   }
   holdRepeat($("textUndo"), function(){
     if (typeof globalUndo === "function") globalUndo(); else textUndo();
@@ -16995,14 +17038,13 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("textRedo").addEventListener("click", function(){
     if (typeof globalRedo === "function") globalRedo(); else textRedo();
   });
-  /* Deliberately still the note only. snapText serialises $("body") whichever
-     host the keystroke came from, so firing it for the sheet would push the
-     note's unchanged markup into the note's own undo history — snapshots of
-     nothing, taken because you typed somewhere else. The sheet needs an undo
-     history of its own before this can be shared, and that is its own job. */
-  $("body").addEventListener("input", function(){
-    clearTimeout(textHist.timer);
-    textHist.timer = setTimeout(snapText, 500);
+  /* Both places now, because snapText finally knows which page it is looking
+     at. The timer belongs to that page's own history, so a pause in the sheet
+     cannot cut short a snapshot pending on the note. */
+  onEditHost("input", function(){
+    var hist = textHistNow();
+    clearTimeout(hist.timer);
+    hist.timer = setTimeout(snapText, 500);
   });
 
   /* ---- 6. Tab should indent a list, not jump out of the page ---- */
@@ -20080,17 +20122,21 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!id || id === "undefined") return;
     /* a typed change is only snapped after a short pause. Leaving the
        page sooner used to park an empty stack, so undo could not find it. */
-    if (textHist && textHist.timer){
-      clearTimeout(textHist.timer);
-      textHist.timer = null;
+    /* This is the note's history, named outright. Since b188 there is one per
+       page, and parking must not reach for "the current one" — by the time a
+       page is being left, the current one can already be the sheet's. */
+    var hist = histFor(id);
+    if (hist && hist.timer){
+      clearTimeout(hist.timer);
+      hist.timer = null;
       if (typeof snapText === "function") snapText();
     }
     pageUndo[id] = {
       inkUndo: (noteSurface.undo || []).slice(),
       inkRedo: (noteSurface.redo || []).slice(),
-      textPast: (textHist.past || []).slice(),
-      textFuture: (textHist.future || []).slice(),
-      textLast: textHist.last,
+      textPast: (hist.past || []).slice(),
+      textFuture: (hist.future || []).slice(),
+      textLast: hist.last,
       nbId: state.nbId,
       sectionId: state.sectionId
     };
@@ -20103,9 +20149,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     noteSurface.undo = p.inkUndo;
     noteSurface.redo = p.inkRedo;
-    textHist.past = p.textPast;
-    textHist.future = p.textFuture;
-    textHist.last = p.textLast;
+    var hist = histFor(id);
+    hist.past = p.textPast;
+    hist.future = p.textFuture;
+    hist.last = p.textLast;
   }
   function latestAcross(which){
     var best = { v: -1, noteId: state.noteId, nbId: state.nbId, sectionId: state.sectionId, kind: null };
@@ -20114,11 +20161,18 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     if (which === "undo"){
       consider(inkTop("undo").v, state.noteId, state.nbId, "ink", state.sectionId);
-      if (textHist.past.length) consider(textHist.past[textHist.past.length - 1].seq || 0, state.noteId, state.nbId, "text", state.sectionId);
+      /* the page being edited, which inside a sheet is the sheet's own page.
+         Asking the note's history here meant a sheet's undo could never be
+         chosen at all, however recently you had typed in it. */
+      var uw = activeEditHost();
+      var uh = histFor(uw.id);
+      if (uh.past.length) consider(uh.past[uh.past.length - 1].seq || 0, uw.id, state.nbId, "text", state.sectionId);
       consider(bigTop("undo"), state.noteId, state.nbId, "big", state.sectionId);
     } else {
       consider(inkTop("redo").v, state.noteId, state.nbId, "ink", state.sectionId);
-      if (textHist.future.length) consider(textHist.future[textHist.future.length - 1].undoneAt || 0, state.noteId, state.nbId, "text", state.sectionId);
+      var rw = activeEditHost();
+      var rh = histFor(rw.id);
+      if (rh.future.length) consider(rh.future[rh.future.length - 1].undoneAt || 0, rw.id, state.nbId, "text", state.sectionId);
       consider(bigTop("redo"), state.noteId, state.nbId, "big", state.sectionId);
     }
     Object.keys(pageUndo).forEach(function(id){
@@ -20182,7 +20236,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       revealCaret();
     }
   }
-  function clearTextRedo(){ if (typeof textHist === "object"){ textHist.future = []; paintTextUndo(); } }
+  /* the redo line that ends is the one belonging to the page being edited */
+  function clearTextRedo(){ var h = textHistNow(); if (h){ h.future = []; paintTextUndo(); } }
   function clearInkRedoAll(){ Object.keys(ink.surfaces).forEach(function(k){ ink.surfaces[k].redo = []; }); }
 
   function inkTop(stackName){
@@ -20252,10 +20307,49 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return which === "undo" ? (op.seq || 0) : (op.undoneAt || 0);
   }
 
+  /* Inside a sheet, undo means the sheet: its words or its ink, whichever you
+     did last, and nothing else. The general chooser also weighs document-level
+     things like making a notebook, and those outrank a couple of typed lines by
+     sequence — so pressing undo in a working sheet undid something you could
+     not even see, and the line you had just written stayed put. It must also
+     never jump: a sheet is not a page in the reading order, so there is nowhere
+     to jump to. */
+  function sheetUndo(which){
+    var where = activeEditHost();
+    if (!where.sheet) return false;
+    var hist = histFor(where.id);
+    var inkStack = (which === "undo") ? (pracSurface.undo || []) : (pracSurface.redo || []);
+    var textList = (which === "undo") ? hist.past : hist.future;
+    if (!inkStack.length && !textList.length){
+      hint(which === "undo" ? "Nothing to undo." : "Nothing to redo.");
+      return true;
+    }
+    var inkSeq = inkStack.length
+      ? ((which === "undo" ? inkStack[inkStack.length - 1].seq
+                           : inkStack[inkStack.length - 1].undoneAt) || 0)
+      : -1;
+    var txtSeq = textList.length
+      ? ((which === "undo" ? textList[textList.length - 1].seq
+                           : textList[textList.length - 1].undoneAt) || 0)
+      : -1;
+    if (inkSeq >= txtSeq && inkStack.length){
+      if (which === "undo") pracSurface.doUndo(); else pracSurface.doRedo();
+      return true;
+    }
+    if (which === "undo") textUndo(); else textRedo();
+    return true;
+  }
+
   function globalUndo(){
+    if (sheetUndo("undo")) return;
     var best = latestAcross("undo");
     if (best.v < 0){ hint("Nothing to undo."); return; }
-    if (best.noteId && best.noteId !== state.noteId && best.kind !== "big"){
+    /* Inside a sheet, undo is the sheet's own and stays there. Jumping would
+       mean leaving the working page you are looking at to undo something on the
+       notes underneath — and the sheet is not a page in the reading order, so
+       going "to" it is not a thing that can happen. */
+    if (!activeEditHost().sheet &&
+        best.noteId && best.noteId !== state.noteId && best.kind !== "big"){
       undoJump = { noteId: best.noteId, which: "undo" };
       undoReveal = peekOpLoc(best.noteId, "undo") || {};
       var nm = "";
@@ -20268,7 +20362,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return;
     }
     var i = inkTop("undo");
-    var t = textHist.past.length ? (textHist.past[textHist.past.length - 1].seq || 0) : -1;
+    var t = textHistNow().past.length ? (textHistNow().past[textHistNow().past.length - 1].seq || 0) : -1;
     var g = bigTop("undo");
     if (i.v < 0 && t < 0 && g < 0){ hint("Nothing to undo."); return; }
     if (g >= i.v && g >= t){
@@ -20289,9 +20383,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     paintGlobalUndo();
   }
   function globalRedo(){
+    if (sheetUndo("redo")) return;
     var best = latestAcross("redo");
     if (best.v < 0){ hint("Nothing to redo."); return; }
-    if (best.noteId && best.noteId !== state.noteId && best.kind !== "big"){
+    if (!activeEditHost().sheet &&
+        best.noteId && best.noteId !== state.noteId && best.kind !== "big"){
       undoJump = { noteId: best.noteId, which: "redo" };
       undoReveal = peekOpLoc(best.noteId, "redo") || {};
       var nm = "";
@@ -20304,7 +20400,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return;
     }
     var i = inkTop("redo");
-    var t = textHist.future.length ? (textHist.future[textHist.future.length - 1].undoneAt || 0) : -1;
+    var t = textHistNow().future.length ? (textHistNow().future[textHistNow().future.length - 1].undoneAt || 0) : -1;
     var g = bigTop("redo");
     if (i.v < 0 && t < 0 && g < 0){ hint("Nothing to redo."); return; }
     if (g >= i.v && g >= t){

@@ -42,13 +42,27 @@ const both = [
 both.forEach(([label, re]) => eq(label + " reaches both", re.test(html)));
 eq("a dozen behaviours in total", (html.match(/onEditHost\(/g) || []).length >= 12);
 
-console.log("two are deliberately still the note's alone:");
-/* snapText serialises $("body") whichever host the keystroke came from. Shared,
-   it would push the note's unchanged markup into the note's own undo history —
-   snapshots of nothing, taken because you typed somewhere else. */
-eq("the text undo history is not shared yet, and says why",
-   /snapText serialises \$\("body"\)/.test(html) &&
-   /\$\("body"\)\.addEventListener\("input", function\(\)\{[\s\S]{0,120}textHist\.timer/.test(html));
+console.log("undo reaches the sheet too, now that it can:");
+/* b183 deliberately held this back, and was right to: snapText serialised the
+   note whatever host the keystroke came from, so sharing it would have pushed
+   the note's own unchanged markup onto the note's stack — snapshots of nothing,
+   taken because you typed somewhere else, with real edits pushed off the end.
+
+   b188 removed the reason. There is one history per page now, and which one you
+   are undoing follows from where the caret actually is. */
+eq("there is one undo history per page, not one for the app",
+   /var textHists = \{\};/.test(html) && /function histFor\(id\)\{/.test(html));
+eq("which page you are undoing follows the active surface",
+   /function activeEditHost\(\)\{[\s\S]{0,300}ink\.active === "practice"[\s\S]{0,200}prac\.rec\.id/.test(html));
+eq("typing in either place records", /onEditHost\("input", function\(\)\{[\s\S]{0,160}hist\.timer/.test(html));
+eq("and each page's pause timer is its own",
+   /var hist = textHistNow\(\);\s*\n\s*clearTimeout\(hist\.timer\);/.test(html));
+/* Parking must name the page it parks. By the time a page is being left, "the
+   current history" can already be the sheet's. */
+eq("parking a page's undo names that page",
+   /var hist = histFor\(id\);/.test(html));
+
+console.log("one is deliberately still the note's alone:");
 /* A recording is pinned to the note's own lines; the walk up to $("body") finds
    nothing at all from inside the sheet. */
 eq("audio caret stamping is not shared yet, and says why",

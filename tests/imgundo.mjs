@@ -14,8 +14,14 @@ eq("remove snapshots before and after",
    /pickedImage\.fig\.remove\(\);[\s\S]{0,120}snapText\(\)/.test(html));
 eq("remove does not ask for confirmation",
    !/Take this picture out of the note\?/.test(html));
+/* b188 gave setBodyHTML the host to write into, because undo is per page now
+   and the sheet has its own. Same guarantee, one argument wider: whichever page
+   is put back, its pictures and maths are hydrated again rather than left as
+   empty boxes. */
 eq("undo of text/html still hydrates pictures",
-   has(/function setBodyHTML\(html\)\{/) && has(/hydrateImages\(\)/));
+   has(/function setBodyHTML\(html, host\)\{/) && has(/hydrateImages\(\)/));
+eq("and it puts the markup back into the page it came from, not always the note",
+   has(/var el = host \|\| activeEditHost\(\)\.el;/) && has(/el\.innerHTML = html;/));
 
 console.log("");
 console.log("the picture bar sits on the picture and can be dragged:");
