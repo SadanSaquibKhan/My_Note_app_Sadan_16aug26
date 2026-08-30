@@ -63,7 +63,7 @@ var NEW = ["favBar","favGrip","favPop","favPick","setFavBar","marksRow","marksCo
            "coverBand","sumBtn","srcBadge",
            "sstrip","sstripFor","sstripOpen","sstripMore","sstripHide","sstripBody",
            "dockRail","pracFold","pracHead","snap_strip",
-           "pracPeek","pracPeekHead","pracPeekBody","pracPeekAdd","addChunkBtn"];
+           "pracPeek","pracPeekHead","pracPeekBody","pracPeekAdd","addChunkBtn","chunkAsk","chunkAskText","chunkAskYes","chunkAskNo"];
 var bad = NEW.filter(function(k){ return !have[k]; });
 console.log((bad.length ? "\nNEW ELEMENTS MISSING: " + bad.join(", ")
                         : "\nok  all " + NEW.length + " newly added elements are present"));

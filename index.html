@@ -1944,6 +1944,11 @@
   <button class="ghost" id="backupNow">Save backup</button>
   <button class="ghost" id="backupLater">Later</button>
 </div>
+<div class="notice" id="chunkAsk" hidden>
+  <p id="chunkAskText"></p>
+  <button class="ghost" id="chunkAskYes">Start a new chunk</button>
+  <button class="ghost" id="chunkAskNo">Keep it with the last one</button>
+</div>
 <div class="notice" id="notice" hidden>
   <p id="noticeText"></p>
   <button class="ghost" id="noticeOk">OK</button>
@@ -3052,7 +3057,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b193";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b194";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -7767,6 +7772,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       return;
     }
     blank.style.display = "none"; live.hidden = false;
+    /* an offer made for one page must not be answered on another */
+    if (chunkOffer && chunkOffer.noteId !== state.note.id) hideChunkOffer();
     $("noteTitle").value = state.note.title || "";
     $("noteTitle").readOnly = false;
     document.body.classList.remove("working");
@@ -8851,6 +8858,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function currentSectionId(){
     return state.sectionId || (state.note && state.note.sectionId) || null;
   }
+  /* How long a gap makes it a different sitting. Four hours is long enough that
+     a lecture and the reading afterwards stay together, and short enough that
+     yesterday's work and today's do not. */
+  var CHUNK_GAP_MS = 4 * 60 * 60 * 1000;
+
+  /* Whether to ASK. It never decides anything by itself, and that is the whole
+     point: a boundary drawn without being asked for is a boundary you have to
+     go and undo, and the offer costs one tap to decline.
+
+     There is nothing to offer when the section has no page before this one —
+     the first page of a section is not a break from anything. */
+  function shouldOfferChunk(prevEdited, now){
+    if (!prevEdited) return false;
+    return (now - prevEdited) > CHUNK_GAP_MS;
+  }
+
   /* The chunk a new page should join: the one the last page of that section is
      already in. A page written straight after another belongs to the same
      sitting, and without this a chunk could never be more than the one page it
@@ -8858,19 +8881,35 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function chunkForNewPage(sectionId){
     var live = {};
     (state.chunks || []).forEach(function(c){ if (c && !c.deletedAt) live[c.id] = 1; });
-    var last = null;
+    /* The page you were LAST WRITING IN, which is not the same as the last one
+       in the list: the list is sorted, and taking whatever fell at the end of it
+       picked the oldest page in the section — so a new page joined the sitting
+       from weeks ago instead of the one from ten minutes ago. */
+    var last = lastPageIn(sectionId);
+    return (last && last.chunkId && live[last.chunkId]) ? last.chunkId : null;
+  }
+  /* when the section was last written in, which is what says whether this is a
+     new sitting or the same one carried on */
+  function lastPageIn(sectionId){
+    var best = null;
     C.ordinaryPages(state.notes || [], state.sections || []).forEach(function(n){
       if ((n.sectionId || null) !== (sectionId || null)) return;
-      last = n;
+      if (!best || (n.lastEdited || 0) > (best.lastEdited || 0)) best = n;
     });
-    if (state.note && (state.note.sectionId || null) === (sectionId || null)) last = state.note;
-    return (last && last.chunkId && live[last.chunkId]) ? last.chunkId : null;
+    return best;
+  }
+  function lastEditedInSection(sectionId){
+    var n = lastPageIn(sectionId);
+    return n ? (n.lastEdited || 0) : 0;
   }
 
   function addPageInSection(sectionId){
     if (!state.nbId) return;
     var nbId = state.nbId;
     var joins = chunkForNewPage(sectionId);
+    /* read before the page is made, or the page being made is the most recent
+       thing in the section and the gap is always nothing */
+    var gapFrom = lastEditedInSection(sectionId);
     flush().then(function(){
       return C.suggestPageTitle(nbId, sectionId || null);
     }).then(function(title){
@@ -8878,8 +8917,53 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }).then(function(n){
       go({nbId:nbId, noteId:n.id});
       setTimeout(function(){ $("noteTitle").focus(); $("noteTitle").select(); }, 60);
+      /* Asked whether or not the page joined a chunk on the way in. Coming back
+         the next morning to a section whose last page is already in one is
+         exactly when you want to break out of it — declining leaves the page in
+         the chunk it inherited, accepting moves it into a new one. */
+      if (shouldOfferChunk(gapFrom, Date.now()))
+        offerChunkFor(n, sectionId || null, gapFrom);
     });
   }
+
+  /* Offered, never taken. Declining changes nothing at all — the page stays
+     exactly where it was put — because a grouping that appears without being
+     asked for is one you then have to go and undo. */
+  var chunkOffer = null;
+  function offerChunkFor(note, sectionId, since){
+    chunkOffer = { noteId: note.id, sectionId: sectionId };
+    var bar = $("chunkAsk");
+    if (!bar) return;
+    $("chunkAskText").textContent =
+      "Nothing has been written here since " + C.relTime(since) +
+      ". Is this a new chunk?";
+    bar.hidden = false;
+  }
+  function hideChunkOffer(){
+    chunkOffer = null;
+    if ($("chunkAsk")) $("chunkAsk").hidden = true;
+  }
+  $("chunkAskNo").addEventListener("click", hideChunkOffer);
+  $("chunkAskYes").addEventListener("click", function(){
+    var want = chunkOffer;
+    hideChunkOffer();
+    if (!want || !state.nbId) return;
+    /* named after the chunks already in this section, so two sections do not
+       both call their second sitting Chunk 2 and read as the same one */
+    var here = (state.chunks || []).filter(function(c){
+      return c && !c.deletedAt && (c.sectionId || null) === (want.sectionId || null);
+    }).length;
+    C.createChunk(state.nbId, want.sectionId, "Chunk " + (here + 1), Date.now())
+      .then(function(c){
+        return C.saveNote(want.noteId, { chunkId: c.id }).then(function(){ return c; });
+      })
+      .then(function(c){
+        if (state.note && state.note.id === want.noteId) state.note.chunkId = c.id;
+        return refreshLists();
+      })
+      .then(function(){ hint("New chunk started. You can rename it from its heading."); })
+      .catch(dbFail("Could not start a chunk"));
+  });
   $("addNote").addEventListener("click", function(){
     addPageInSection(currentSectionId());
   });
