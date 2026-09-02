@@ -22,8 +22,13 @@ eq("the zoom is the one we set ourselves",
 eq("guarded, so a nonsense zoom cannot divide by zero", /if \(!\(z > 0\)\) z = 1;/.test(html));
 eq("the size comes from the rendered rectangle, divided by that zoom",
    /var w = hr0\.width \/ z, h = hr0\.height \/ z;/.test(html));
-eq("and so does the sideways correction",
-   /\? \(hr0\.left - paper\.getBoundingClientRect\(\)\.left\) \/ z : 0;/.test(html));
+/* b207 went further and took the sideways correction off measurement
+   altogether: page x=0 is a fixed inset from the scroller, not this canvas's
+   own distance from it divided by the zoom. Dividing a measurement by z was
+   right only where the sheet happened to be sitting at that inset — which is
+   exactly 100%, and nowhere else. See joinorigin.mjs. */
+eq("and the sideways correction no longer measures anything at all",
+   /var offX = paper \? sheetInsetAtOne\(paper\) : 0;/.test(html));
 eq("clientWidth is no longer part of the peek canvas's arithmetic",
    !/var w = host\.clientWidth, h = host\.clientHeight;/.test(html));
 eq("and neither is the ratio it was used for",

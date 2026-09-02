@@ -3070,7 +3070,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b206";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b207";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9273,6 +9273,24 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
      where a straight scale would have put it. At 100% that difference is zero,
      so every existing page draws exactly as it always has and nothing stored
      needs changing; at every other zoom it moves the ink back onto its words. */
+  /* How far in from the scroller's left edge a sheet sits WHEN NOT ZOOMED: the
+     centring margin, and nothing else. Its own function because two different
+     canvases have to agree about it, and when they disagreed the handwriting in
+     a preview band sat a couple of hundred pixels away from where the very same
+     strokes appear once that page is live.
+
+     The sheet's width is taken from the stylesheet rather than measured.
+     Measuring looks equivalent and is not: past 100% the sheet is wider than the
+     scroller, and the rect that comes back is no use for working out where an
+     unzoomed sheet would have sat. */
+  function sheetInsetAtOne(scroller){
+    if (!scroller) return 0;
+    var wide = scroller.clientWidth;
+    var pageW = parseFloat(getComputedStyle(document.documentElement)
+                  .getPropertyValue("--page-w")) || 794;
+    return Math.max(0, (wide - Math.min(pageW, wide)) / 2);
+  }
+
   function sheetDrift(scroller){
     if (!scroller) return 0;
     var sheet = scroller.querySelector(".sheet");
@@ -9281,15 +9299,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var pr = scroller.getBoundingClientRect();
     var sr = sheet.getBoundingClientRect();
     var here = sr.left - pr.left;              /* where it is, on screen */
-    var wide = scroller.clientWidth;
-    /* The sheet's own width, taken from the stylesheet rather than measured.
-       Measuring looks equivalent and is not: past 100% the sheet is wider than
-       the scroller, and the rect that comes back is no use for working out
-       where an unzoomed sheet would have sat. */
-    var pageW = parseFloat(getComputedStyle(document.documentElement)
-                  .getPropertyValue("--page-w")) || 794;
-    var atOne = Math.max(0, (wide - Math.min(pageW, wide)) / 2);
-    return here - atOne * z;                   /* zero at 100% by construction */
+    return here - sheetInsetAtOne(scroller) * z;   /* zero at 100% by construction */
   }
 
   function makeSurface(name, cfg){
@@ -19404,9 +19414,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
            the page becomes live. Shift the origin left by the sheet's offset from
            #paper. The clientWidth / rect-width factor turns the on-screen gap into
            the canvas's own pre-zoom units, so it holds at any zoom. */
+        /* THE SIDEWAYS SHIFT AT THE JOIN.
+
+           Page x=0 is not the left edge of the sheet, it is a fixed inset from
+           the scroller — the centring margin an UNZOOMED sheet would have. The
+           live canvas says so: it offsets by sheetDrift, which is `here minus
+           that inset times the zoom` and is zero at 100% by construction.
+
+           This canvas measured its own distance from the scroller instead and
+           divided it by the zoom. At 100% the two agree, because the sheet is
+           sitting exactly at that inset. At any other zoom they do not: measured
+           at 52%, this put page x=0 at the scroller's left edge while the live
+           page put it 198px in. So every stroke in a band sat a couple of
+           hundred pixels away from where the same strokes appear the moment that
+           page becomes live — which is the sideways jump, and why it is
+           invisible at 100% and worst zoomed out.
+
+           The inset is the whole answer, and it does not need the zoom at all:
+           this canvas is already CSS-zoomed by the band around it. */
         var paper = $("paper");
-        var offX = paper
-          ? (hr0.left - paper.getBoundingClientRect().left) / z : 0;
+        var offX = paper ? sheetInsetAtOne(paper) : 0;
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, cv.width, cv.height);
         ctx.setTransform(dpr, 0, 0, dpr, -offX * dpr, 0);
