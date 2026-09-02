@@ -3070,7 +3070,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b204";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b206";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -10570,11 +10570,41 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!isFinite(pct) || pct <= 0) return 0;
     return Math.min(100, pct) / 100;
   }
+  /* Zooming keeps the words you were looking at under your eye.
+
+     It did not. Everything in the scroller is zoomed - the band above the page
+     as well as the page - so changing the zoom changes how much sits above the
+     top of the screen, while scrollTop stays exactly where it was. Measured:
+     one step of zoom moved the band's height from 800px to 1200px with
+     scrollTop pinned at 1201, so the page slid four hundred pixels under the
+     reader for no reason they asked for.
+
+     Where you are is not a scroll position, it is a point ON THE PAGE. Screen y
+     of page y is pad - scrollTop + y*z, so the page point at the top of the
+     screen is (scrollTop - pad) / z. Work that out before, put it back after,
+     and the zoom happens around what you were reading.
+
+     Read back after the style is set on purpose: the band is zoomed too, so its
+     new height is not known until the browser has laid it out again. */
   function applyZoom(z){
     z = clampZoom(z);
+    var sc = $("paper");
+    var zOld = state.zoom || 1;
+    var anchor = null;
+    /* Not while a page swap or a restore is placing the scroll itself - those
+       are mid-flight and re-anchoring underneath them is how two things end up
+       arguing over one scrollTop, which this app has been bitten by before. */
+    var settled = sc && zOld > 0 &&
+                  !(typeof swapping === "function" && swapping()) &&
+                  !(typeof placeRestoring !== "undefined" && placeRestoring);
+    if (settled) anchor = (sc.scrollTop - ((typeof prevPad === "function") ? prevPad() : 0)) / zOld;
     state.zoom = z;
     $("paper").style.setProperty("--z", z);
     if ($("pracPaper")) $("pracPaper").style.setProperty("--z", z);
+    if (settled && anchor != null){
+      var padNew = (typeof prevPad === "function") ? prevPad() : 0;
+      sc.scrollTop = Math.max(0, Math.round(padNew + anchor * z));
+    }
     $("zoomLabel").textContent = zoomPct(z) + "%";
     $("zoomOut").disabled = z <= zoomFloor() + 0.001;
     $("zoomIn").disabled = z >= zoomCeil() - 0.001;
@@ -18669,8 +18699,35 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   /* A page the chip has asked for that has not arrived yet. Nothing else may
      be asked for until it does, or a drag can have three page loads in the air
      at once, each landing on top of the last. */
+  /* How long a page load may hold the drag up before it is written off. The
+     same idea as the page handover's own guard, and for the same reason. */
+  var CHIP_LOAD_LOST_MS = 900;
+
+  /* "A load is in the air" - and every seek stands down while it is, so that a
+     moving finger cannot start a fresh render each frame and have renderSeq
+     cancel the last one before it can mount.
+
+     The catch: this was a latch with no way out. If the page asked for never
+     mounts - it was deleted, the load threw, or the id simply never turns up as
+     the mounted one - pendingId is never cleared, so this stays true for the
+     REST OF THE DRAG. Every following seek returns early, the view sits frozen
+     on the page it was on, and the chip's own label goes on reading the target
+     because it is painted before the seek is even attempted. Let go and the
+     release path supersedes the stale load once, so the page finally changes -
+     which is exactly "it sticks, the number keeps moving, and when I let go it
+     has changed after all".
+
+     So a load that has been in the air too long is a LOST load, not a load.
+     Forget it and let the chase aim again; the newest target is the only one
+     that matters by then anyway. */
   function chipLoading(){
-    return !!(chipDrag && chipDrag.pendingId && chipDrag.pendingId !== visualNoteId());
+    if (!chipDrag || !chipDrag.pendingId) return false;
+    if (chipDrag.pendingId === visualNoteId()){ chipDrag.pendingId = null; return false; }
+    if (chipDrag.lastSeek && (Date.now() - chipDrag.lastSeek) > CHIP_LOAD_LOST_MS){
+      chipDrag.pendingId = null;
+      return false;
+    }
+    return true;
   }
   /* Where the chip is pointing, made sticky around the page already on screen. */
   function placeForDrag(list, prog, stickId){
