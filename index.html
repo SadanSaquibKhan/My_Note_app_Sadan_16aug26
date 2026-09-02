@@ -3070,7 +3070,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b201";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b202";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -9700,15 +9700,39 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     };
 
     S.scroller.addEventListener("scroll", S.queueRedraw, { passive: true });
+    /* One tick, not three listeners.
+
+       A finger drag fires scroll far faster than the screen refreshes, and
+       every one of these measures: placeLassoPop reads the catch's rectangle,
+       paintNavChips places both chips, and paintOutlineHere asked EVERY heading
+       on the page for its position — thirty headings on a long page meant
+       thirty forced layouts per scroll event, dozens of times a second, while
+       the ink layer was trying to redraw on the same frames. That is felt as
+       the scroll going gritty on exactly the pages that have the most in them.
+
+       Coalescing to one animation frame does not lose anything: nothing here
+       decides anything, they all only describe where you have got to, and once
+       per drawn frame is as often as that can possibly matter. */
     if (name === "note"){
+      var followTick = 0;
       S.scroller.addEventListener("scroll", function(){
-        if (typeof lassoHas === "function" && lassoHas() && typeof placeLassoPop === "function")
-          placeLassoPop();
-      }, { passive: true });
-    }
-    if (name === "note"){
-      S.scroller.addEventListener("scroll", function(){
-        if (typeof paintScrollDot === "function"){ paintScrollDot(); paintOutlineHere(); }
+        if (followTick) return;
+        /* the clock is the fallback, for the same reason as the sheet's turn:
+           a webview that never delivers a frame would otherwise stop following
+           the scroll at all */
+        followTick = 1;
+        var ranFollow = false;
+        function follow(){
+          if (ranFollow) return;
+          ranFollow = true;
+          followTick = 0;
+          if (typeof lassoHas === "function" && lassoHas() && typeof placeLassoPop === "function")
+            placeLassoPop();
+          if (typeof paintScrollDot === "function") paintScrollDot();
+          if (typeof paintOutlineHere === "function") paintOutlineHere();
+        }
+        if (typeof requestAnimationFrame === "function") requestAnimationFrame(follow);
+        setTimeout(follow, 32);
       }, { passive: true });
     }
     ink.surfaces[name] = S;
@@ -11275,8 +11299,38 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     armPracPeek();
   }
 
+  /* One frame at a time, with a clock behind it. Some webviews never deliver
+     an animation frame at all - the reason afterLayout exists a few hundred
+     lines up - and a page turn that simply stops happening on those is far
+     worse than one that measures a little more often than it needs to. */
+  var pracTurnTick = 0;
+  function queuePracTurn(){
+    if (pracTurnTick) return;
+    var done = false;
+    function go(){
+      if (done) return;
+      done = true; pracTurnTick = 0;
+      checkPracTurn();
+    }
+    pracTurnTick = 1;
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(go);
+    setTimeout(go, 32);
+  }
   $("pracPaper").addEventListener("scroll", function(){
+    if (prac.open) queuePracTurn();
+  }, { passive: true });
+
+  function checkPracTurn(){
     if (!prac.open) return;
+    /* Two rectangles is not much, but it is two rectangles on every frame of
+       every scroll, and for almost all of them the band is nowhere near. The
+       scroller's own numbers answer "could it even be close" without asking
+       the layout engine for anything new. */
+    var p = $("pracPaper");
+    if (p && (p.scrollHeight - p.scrollTop - p.clientHeight) > p.clientHeight * 1.5){
+      prac.peekWas = 0;
+      return;
+    }
     var now = peekCover();
     var was = (prac.peekWas == null) ? now : prac.peekWas;
     prac.peekWas = now;
@@ -11289,7 +11343,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     clearTimeout(prac.turnGuard);
     prac.turnGuard = setTimeout(function(){ prac.turning = false; }, 2500);
     gotoPracPage(prac.idx + 1, true);
-  }, { passive: true });
+  }
 
   $("pracPeekAdd").addEventListener("click", function(){ addSheetPage(); });
 
@@ -20822,7 +20876,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
        heading that is currently behind the Strip */
     var top = usablePageViewport().top + 40;
     var idx = 0;
-    hs.forEach(function(h, i){ if (h.getBoundingClientRect().top <= top) idx = i; });
+    /* Stop at the first heading that is still below the line. The list is in
+       document order, so everything after it is below it too — asking them all
+       anyway measured the whole page to learn something the first few headings
+       had already settled. */
+    for (var hi = 0; hi < hs.length; hi++){
+      if (hs[hi].getBoundingClientRect().top > top) break;
+      idx = hi;
+    }
     Array.prototype.forEach.call($("outlineList").children, function(el, i){
       el.classList.toggle("here", i === idx);
     });
