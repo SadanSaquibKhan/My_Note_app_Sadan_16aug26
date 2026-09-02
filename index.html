@@ -3070,7 +3070,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b202";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b203";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -19312,7 +19312,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     var body = host.querySelector(".prevpeek-body, .nextpeek-body");
     var dpr = window.devicePixelRatio || 1;
     function fit(){
-      var w = host.clientWidth, h = host.clientHeight;
+      /* The band is CSS-zoomed by --z, so its canvas has to be sized in the
+         band's OWN unzoomed units and is then scaled up with everything else.
+
+         Those units used to come from clientWidth/clientHeight, and the sideways
+         correction below divided by clientWidth/rect.width to turn on-screen
+         pixels into them. That works only while the browser reports clientWidth
+         unzoomed and getBoundingClientRect zoomed — which this one does, but it
+         is the browser's business, not ours, and Chrome has changed exactly this
+         about CSS zoom before. Where the two agree instead, every stroke in a
+         preview band is drawn at the wrong scale and sits shifted against the
+         words beside it — and then snaps into place the moment that page becomes
+         the live one and the real canvas takes over, which is precisely the
+         fault being chased.
+
+         So the size comes from the rectangle, which is always the rendered one,
+         divided by the zoom we set ourselves. Nothing is inferred. */
+      var z = (typeof state === "object" && state && state.zoom) || 1;
+      if (!(z > 0)) z = 1;
+      var hr0 = host.getBoundingClientRect();
+      var w = hr0.width / z, h = hr0.height / z;
       if (!w || !h) return null;
       cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
       var ctx = cv.getContext("2d");
@@ -19329,9 +19348,8 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
            #paper. The clientWidth / rect-width factor turns the on-screen gap into
            the canvas's own pre-zoom units, so it holds at any zoom. */
         var paper = $("paper");
-        var hr = host.getBoundingClientRect();
-        var offX = (paper && hr.width)
-          ? (hr.left - paper.getBoundingClientRect().left) * (w / hr.width) : 0;
+        var offX = paper
+          ? (hr0.left - paper.getBoundingClientRect().left) / z : 0;
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, cv.width, cv.height);
         ctx.setTransform(dpr, 0, 0, dpr, -offX * dpr, 0);
