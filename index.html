@@ -3070,7 +3070,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b196";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b197";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -10904,7 +10904,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       paintDockRail();
       pracSurface.undo = []; pracSurface.redo = [];
       ink.active = "practice";
-      if (typeof hydrateImages === "function") hydrateImages();
+      hydrateSheet();
       if (typeof applyTemplate === "function") applyTemplate(cfg.template);
       if (ink.mode === "type") setMode("auto");    /* ink-first, as intended */
       $("inkTools").hidden = false;
@@ -11153,6 +11153,20 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
   }
 
+  /* Everything a page needs turning from stored markup into a page you can
+     use. Written out once because the two ways into a sheet - opening it and
+     turning to another of its pages - had drifted apart: one hydrated the
+     pictures, the other hydrated the pictures and nothing else, and NEITHER
+     ever rendered the maths. A formula written in a working sheet stayed as
+     the raw text you typed, on the page and in every reopening of it. */
+  function hydrateSheet(){
+    var el = $("pracText");
+    if (!el) return;
+    if (typeof hydrateImages === "function") hydrateImages();
+    if (typeof hydrateFiles === "function") hydrateFiles();
+    if (typeof renderMath === "function") renderMath(el);
+  }
+
   function gotoPracPage(i, atTop){
     if (i < 0 || i >= prac.pages.length) return;
     /* Where you were on the sheet you are leaving, captured before anything
@@ -11172,7 +11186,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         if (atTop) landSheetTop(mounting); else restoreSheetPlace(tab, mounting);
       });
       pracSurface.undo = []; pracSurface.redo = [];
-      if (typeof hydrateImages === "function") hydrateImages();
+      hydrateSheet();
       pracSurface.redraw();
       paintPracHead(); paintInkTools(); paintDockRail(); paintPracPeek();
     });
