@@ -3070,7 +3070,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b197";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b198";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -11317,6 +11317,10 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     prac.saveTimer = setTimeout(flushPractice, 700);
   });
   $("pracText").addEventListener("pointerdown", function(){ ink.active = "practice"; });
+  /* The note saves when it loses focus; a sheet only had its 700ms timer, so
+     the last few letters of a line could still be in the air when you touched
+     something else. */
+  $("pracText").addEventListener("blur", function(){ flushPractice(); });
   $("pracText").addEventListener("paste", function(e){
     var dt = e.clipboardData;
     if (!dt) return;
@@ -20744,7 +20748,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
 
   /* ---- 20. taking a link out again ---- */
-  $("body").addEventListener("contextmenu", function(e){
+  onEditHost("contextmenu", function(e){
     var a = e.target.closest ? e.target.closest("a.ilink") : null;
     if (!a) return;
     e.preventDefault();
@@ -21328,7 +21332,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return true;
   }
 
-  $("body").addEventListener("beforeinput", function(e){
+  /* Bound to both places you can type. Smart quotes, the arrow, and the rest of
+     the shorthand were wired to the note alone, so the same keystrokes in a
+     working sheet or a short note produced plain straight quotes - the sheets
+     looked like a poorer editor because for these they were one. */
+  onEditHost("beforeinput", function(e){
     if (e.inputType !== "insertText" || !e.data) return;
     var ch = e.data;
     if (ch === " "){ /* handled on input via symbol/space */ }
@@ -21442,7 +21450,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     sel.collapse(after, 1);
     markDirty();
   }
-  $("body").addEventListener("keyup", function(e){
+  onEditHost("keyup", function(e){
     if (e.key === " " || e.key === "Enter") autolinkTail();
   });
 

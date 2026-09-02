@@ -34,7 +34,7 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b197**. Recent: b167 fixes finger-scroll (not chip) freeze/jump at a page join on Windows (Bug E) — during a remount the page no longer freezes under the finger (its travel is banked and applied after the swap re-anchors), and letting go mid-swap no longer starts a glide that fights the re-anchor (it hands off to the damped glideCarry). Both device-confirmable. This closes the A-H batch: A toolbar shift, B pen-down delay, C false notice, D chip staircase, E finger scroll, F immerse arrows, G cross-page ink shift, plus the build-not-updating SW fix.
+- Current build: **b198**. Recent: b167 fixes finger-scroll (not chip) freeze/jump at a page join on Windows (Bug E) — during a remount the page no longer freezes under the finger (its travel is banked and applied after the swap re-anchors), and letting go mid-swap no longer starts a glide that fights the re-anchor (it hands off to the damped glideCarry). Both device-confirmable. This closes the A-H batch: A toolbar shift, B pen-down delay, C false notice, D chip staircase, E finger scroll, F immerse arrows, G cross-page ink shift, plus the build-not-updating SW fix.
   panels) visible in Immerse (Bug F) — paintEdge hid them in immerse, the one place they are
   needed; now shown whenever a note is open (browser-verified). b163 fixed writing shifting up
   on pen-touch (Bug A — the mode chip AUTO→PEN moved the toolbar wrap and dropped a row; fixed
@@ -305,6 +305,8 @@ layers, both in `tests/`:
 ---
 
 ## Build log (append one line per shipped build — newest at top)
+
+- **b198** `PENDING` - **four more note-only behaviours reach the sheets.** The editor grew up on the note, so a behaviour added there worked only there - and each of these is invisible until you type the exact keystroke that should have fired it. **Smart quotes and the rest of the typed shorthand** were bound to the note alone, so the same keystrokes in a working sheet or a short note produced plain straight quotes. **A typed web address** did not become a link. **The menu on a link** inside the page did not open. All three now go through `onEditHost`, which is the whole reason that exists. Fourth: **a sheet now saves when it loses focus**, as the note always has - a sheet only had its 700ms timer, so the last few letters of a line could still be in the air when you touched something else. - *Claude Code (Opus 5)*
 
 - **b197** `PENDING` - **a sheet page turns its stored markup into a page you can actually use.** The two ways into a sheet - opening it, and turning to another of its pages - had drifted apart: one hydrated the pictures, the other hydrated the pictures and nothing else, and **neither one had ever rendered the maths**. A formula written in a working sheet or a short note stayed as the raw text you typed, on the page and in every reopening of it - b183 gave the sheets maths *editing* and nobody noticed the render was missing because the editing looks the same until you leave the page. Attachments had the same shape of fault one step down: turning a page inside a sheet never hydrated the chips, and the click that opens an attachment is attached during hydration, so a chip reached that way was a dead label. All of it is one function now, aimed at the sheet rather than the note underneath, called from both ways in. - *Claude Code (Opus 5)*
 
