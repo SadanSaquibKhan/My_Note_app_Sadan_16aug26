@@ -3070,7 +3070,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b200";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b201";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -5699,7 +5699,12 @@ var MarginCore = (function(){
       var copy = Object.assign({}, src);
       copy.id = newId("nt");
       copy.notebookId = intoNotebookId || src.notebookId;
-      copy.sectionId = intoNotebookId && intoNotebookId !== src.notebookId ? null : (src.sectionId || null);
+      var moved = intoNotebookId && intoNotebookId !== src.notebookId;
+      copy.sectionId = moved ? null : (src.sectionId || null);
+      /* A chunk belongs to one section of one notebook, so a copy that has left
+         both cannot still name it. Spreading the source record carried it over,
+         which pointed a page in one notebook at a grouping in another. */
+      copy.chunkId = moved ? null : (src.chunkId || null);
       copy.title = (src.title ? src.title : displayTitle(src)) + " (copy)";
       copy.html = html;
       copy.tags = (src.tags||[]).slice();
@@ -5784,7 +5789,8 @@ var MarginCore = (function(){
   function copyAsset(a, noteId){ return putOne("assets", cloneAsset(a, noteId)); }
 
   function duplicateNotebook(id){
-    return Promise.all([getNotebook(id), notesIn(id, {includeDeleted:false}), sectionsIn(id)])
+    return Promise.all([getNotebook(id), notesIn(id, {includeDeleted:false}), sectionsIn(id),
+                        chunksIn(id)])
       .then(function(r){
       var src = r[0];
       if (!src) throw new Error("No notebook " + id);
@@ -5808,6 +5814,21 @@ var MarginCore = (function(){
         secMap[s.id] = ns.id;
         return ns;
       });
+      /* The groupings are copied too, and re-homed onto the copied sections.
+         Without this the copy's pages went on naming the ORIGINAL notebook's
+         chunks: every page in the copy showed as ungrouped, and deleting the
+         original tombstoned groupings the copy was still pointing at. */
+      var ckMap = {};
+      var chunks = (r[3] || []).map(function(c){
+        var nc = {
+          id: newId("ck"), notebookId: nb.id,
+          sectionId: (c.sectionId && secMap[c.sectionId]) ? secMap[c.sectionId] : null,
+          name: c.name, order: c.order,
+          createdAt: now, lastEdited: now, deletedAt: null, editedOn: _device
+        };
+        ckMap[c.id] = nc.id;
+        return nc;
+      });
       /* notesIn returns the working pages too, because they are pages. They are
          copied in the same pass, then their worksFor is remapped to the copy of
          the page they hang off — an id from the old notebook left in the new one
@@ -5821,6 +5842,9 @@ var MarginCore = (function(){
           copy.id = idMap[n.id];
           copy.notebookId = nb.id;
           copy.sectionId = (n.sectionId && secMap[n.sectionId]) ? secMap[n.sectionId] : null;
+          /* the same re-homing for the grouping. A chunk id that does not map
+             becomes none, which is the implicit group — never a dangling name */
+          copy.chunkId = (n.chunkId && ckMap[n.chunkId]) ? ckMap[n.chunkId] : null;
           copy.tags = (n.tags||[]).slice();
           copy.createdAt = now; copy.lastEdited = now;
           copy.deletedAt = null; copy.deletedVia = null; copy.editedOn = _device;
@@ -5853,8 +5877,9 @@ var MarginCore = (function(){
             });
           }
         });
-        return putMany(["notebooks","notes","sections","assets"],
-                       {notebooks:[nb], notes:notes, sections:sections, assets:newAssets});
+        return putMany(["notebooks","notes","sections","chunks","assets"],
+                       {notebooks:[nb], notes:notes, sections:sections,
+                        chunks:chunks, assets:newAssets});
       }).then(function(){ return nb; });
     });
   }
