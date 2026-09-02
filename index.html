@@ -3070,7 +3070,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b203";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b204";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -19358,6 +19358,26 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     }
     fit();                                     /* something on screen at once */
     if (!noteId) return;
+    /* THE SHIFT AT THE JOIN.
+
+       Growing this band pushes the live page down, and every stroke on the live
+       page is drawn from prevPad() — the band's height. Both branches below set
+       body.style.minHeight to the neighbour's real page height, and the second
+       one does it inside a promise, a moment after the live canvas has already
+       been painted from the OLD height. The peek's own canvas is re-fitted right
+       there, so the preview looks right; the LIVE page's handwriting is left
+       sitting the difference away from its own words, until the next scroll
+       event happens to redraw it — which is why it snaps back into place as soon
+       as you carry on scrolling.
+
+       paintPrevPeek already guards its own synchronous version of this with
+       `if (prevPad() !== was) redrawAll()`. This is the same guard for the path
+       that finishes later. */
+    var padWas = (typeof prevPad === "function") ? prevPad() : 0;
+    function followPad(){
+      if (typeof prevPad !== "function" || typeof redrawAll !== "function") return;
+      if (prevPad() !== padWas) redrawAll();
+    }
     var wstrokes = (typeof workStrokesOf === "function") ? workStrokesOf(noteId) : null;
     if (wstrokes){
       if (body && host.parentNode && !host.parentNode.classList.contains("thin")){
@@ -19366,6 +19386,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       }
       var cW = fit();
       if (cW) wstrokes.forEach(function(s){ drawStroke(cW, s); });
+      followPad();
       return;
     }
     C.getPageInk(noteId).then(function(a){
@@ -19383,8 +19404,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
         host.style.minHeight = "0px";          /* size to the body, as the live sheet does */
       }
       var c2 = fit();                          /* re-measure against the grown band */
-      if (!c2) return;
+      if (!c2){ followPad(); return; }
       strokes.forEach(function(s){ drawStroke(c2, s); });
+      followPad();
     }).catch(function(){});
   }
 
