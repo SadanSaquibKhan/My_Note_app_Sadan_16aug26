@@ -3070,7 +3070,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b199";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b200";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -11313,6 +11313,9 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   });
   $("pracText").addEventListener("input", function(){
     if (typeof maybeAutoFull === "function") maybeAutoFull();
+    /* the same shorthand the note gets. It runs before the save is queued so
+       the queued save carries the finished text rather than the raw keystroke */
+    if (typeof runTypingAids === "function") runTypingAids();
     clearTimeout(prac.saveTimer);
     prac.saveTimer = setTimeout(flushPractice, 700);
   });
@@ -22013,11 +22016,23 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     return replaceBeforeCaret(1, rep);
   }
   /* one pass, cheapest test first; each returns true once it has acted */
+  /* The typed shorthand: -> becoming an arrow, straight quotes curling,
+     **bold** closing itself. All three work on the caret, so they were always
+     host-agnostic - what was note-only was the ONE line that called them, which
+     sat inside the note'''s own input listener. b198 rebound a beforeinput
+     handler that had been a no-op stub since v12, so it changed nothing; this
+     is the live path.
+
+     Marking dirty is the note'''s way of queueing a save. A sheet queues its own
+     on the same input event, so marking the note here would say the wrong page
+     had changed. */
   function runTypingAids(){
     if (!state.note) return;
-    if (runSymbol()) { markDirty(); return; }
-    if (runSmartQuotes()) { markDirty(); return; }
-    if (runInlineMarkdown()) { markDirty(); return; }
+    var host = (typeof activeTextHost === "function") ? activeTextHost() : $("body");
+    var mine = !(host && host.id === "pracText");
+    if (runSymbol()) { if (mine) markDirty(); return; }
+    if (runSmartQuotes()) { if (mine) markDirty(); return; }
+    if (runInlineMarkdown()) { if (mine) markDirty(); return; }
   }
 
   /* ---- 5. two and three finger taps ----
