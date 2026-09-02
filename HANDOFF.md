@@ -34,7 +34,7 @@ message:
 That's it. Everything it needs to catch up is in those two files.
 
 **Where things stand right now (keep this line honest — update it each build).**
-- Current build: **b198**. Recent: b167 fixes finger-scroll (not chip) freeze/jump at a page join on Windows (Bug E) — during a remount the page no longer freezes under the finger (its travel is banked and applied after the swap re-anchors), and letting go mid-swap no longer starts a glide that fights the re-anchor (it hands off to the damped glideCarry). Both device-confirmable. This closes the A-H batch: A toolbar shift, B pen-down delay, C false notice, D chip staircase, E finger scroll, F immerse arrows, G cross-page ink shift, plus the build-not-updating SW fix.
+- Current build: **b199**. Recent: b167 fixes finger-scroll (not chip) freeze/jump at a page join on Windows (Bug E) — during a remount the page no longer freezes under the finger (its travel is banked and applied after the swap re-anchors), and letting go mid-swap no longer starts a glide that fights the re-anchor (it hands off to the damped glideCarry). Both device-confirmable. This closes the A-H batch: A toolbar shift, B pen-down delay, C false notice, D chip staircase, E finger scroll, F immerse arrows, G cross-page ink shift, plus the build-not-updating SW fix.
   panels) visible in Immerse (Bug F) — paintEdge hid them in immerse, the one place they are
   needed; now shown whenever a note is open (browser-verified). b163 fixed writing shifting up
   on pen-touch (Bug A — the mode chip AUTO→PEN moved the toolbar wrap and dropped a row; fixed
@@ -305,6 +305,8 @@ layers, both in `tests/`:
 ---
 
 ## Build log (append one line per shipped build — newest at top)
+
+- **b199** `PENDING` - **Find, Replace and the code block follow the page you are looking at.** They were bound to the open *note*, always. So with a working sheet up over the page - which is the state you are in while you are actually writing rough working - **Find searched the notes underneath, reported no matches for words that were on the screen in front of you, and Replace All quietly rewrote the page you could not see.** All three ask `activeTextHost()` now, and save through it: a tool that writes into one host and then saves the note has done half a job, because the change is on screen and nowhere else, and the next time that sheet is mounted it is gone. One saver (`saveHost`) for either host, so the next tool added cannot get this wrong on its own. One detail worth recording: the search marks are drawn in the host being searched, but **clearing them sweeps both** - `#body` is saved as innerHTML, so a forgotten `<mark>` is not decoration, it is written into the note and stays there. - *Claude Code (Opus 5)*
 
 - **b198** `PENDING` - **four more note-only behaviours reach the sheets.** The editor grew up on the note, so a behaviour added there worked only there - and each of these is invisible until you type the exact keystroke that should have fired it. **Smart quotes and the rest of the typed shorthand** were bound to the note alone, so the same keystrokes in a working sheet or a short note produced plain straight quotes. **A typed web address** did not become a link. **The menu on a link** inside the page did not open. All three now go through `onEditHost`, which is the whole reason that exists. Fourth: **a sheet now saves when it loses focus**, as the note always has - a sheet only had its 700ms timer, so the last few letters of a line could still be in the air when you touched something else. - *Claude Code (Opus 5)*
 

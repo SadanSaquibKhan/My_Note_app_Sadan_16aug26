@@ -5,7 +5,7 @@
    cached — the build number never moved on the tablet even though sync worked.
    Static assets (icons, the on-demand PDF reader) stay cache-first below.
    bump.py bumps CACHE to match index.html's BUILD on every build. */
-const CACHE = "margin-2026-08-16-v198";
+const CACHE = "margin-2026-08-16-v199";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest",
                "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png"];
 /* The PDF reader is 1.4MB and only matters the first time you import a PDF,

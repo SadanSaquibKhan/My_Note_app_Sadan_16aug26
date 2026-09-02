@@ -3070,7 +3070,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b198";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b199";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -14292,16 +14292,22 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   $("calloutBtn").addEventListener("click", function(){ buildCallouts(); $("calloutDlg").showModal(); });
   $("calloutCancel").addEventListener("click", function(){ $("calloutDlg").close(); });
   $("codeBtn").addEventListener("click", function(){
+    var host = activeTextHost();
     var pre = document.createElement("pre");
     pre.appendChild(document.createTextNode(String(window.getSelection() || "") || " "));
     var sel = window.getSelection();
-    if (sel && sel.rangeCount && $("body").contains(sel.anchorNode)){
+    if (sel && sel.rangeCount && host.contains(sel.anchorNode)){
       var r = sel.getRangeAt(0); r.deleteContents(); r.insertNode(pre);
-    } else $("body").appendChild(pre);
-    markDirty(); flush();
+    } else host.appendChild(pre);
+    saveHost(host);
   });
 
-  /* ---- find and replace in the open note ---- */
+  /* ---- find and replace in the page you are looking at ----
+     It used to be the open NOTE, always. So with a working sheet up over the
+     page — which is the state you are in while you are actually writing rough
+     working — Find searched the notes underneath and reported no matches for
+     words that were on the screen in front of you, and Replace All quietly
+     rewrote the page you could not see. */
   $("findBtn").addEventListener("click", function(){
     $("findBar").hidden = !$("findBar").hidden;
     if (!$("findBar").hidden) $("findWhat").focus();
@@ -14312,10 +14318,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function runFind(all){
     var what = $("findWhat").value;
     if (!what) return;
+    var host = activeTextHost();
     var withText = $("findWith").value;
     var esc2 = what.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     var re = new RegExp(esc2, "gi");
-    var walker = document.createTreeWalker($("body"), NodeFilter.SHOW_TEXT, null);
+    var walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, null);
     var nodes = [];
     while (walker.nextNode()) nodes.push(walker.currentNode);
     var n = 0;
@@ -14337,7 +14344,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     });
     if (!n){ $("findStat").textContent = "No matches."; return; }
     $("findStat").textContent = all ? ("Replaced " + n + ".") : "Replaced 1.";
-    markDirty(); flush();
+    saveHost(host);
   }
 
   /* ---- tags ---- */
@@ -15081,6 +15088,14 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
   function activeTextHost(){
     if (ink.active === "practice" && prac.open && $("pracText")) return $("pracText");
     return $("body");
+  }
+  /* And the matching save. A tool that writes into a host and then saves the
+     note instead has done half a job: the change is on screen and nowhere else,
+     and the next time that sheet is mounted it is gone. */
+  function saveHost(host){
+    if (host && host.id === "pracText") return flushPractice();
+    markDirty();
+    return flush();
   }
   /* ---- both places you can be typing ----
      The editor grew up on the note, so every one of its behaviours was wired
@@ -20638,19 +20653,25 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
 
   /* ---- 15. find should show you the matches, and walk them ---- */
   var findState = { hits: [], at: -1 };
+  /* Both hosts, always, whichever one is being searched now. A mark left behind
+     in the other host is not decoration: #body is saved as innerHTML, so a
+     forgotten <mark> is written into the note and stays there. */
   function clearFindMarks(){
-    Array.prototype.forEach.call($("body").querySelectorAll("mark.findhit"), function(m){
-      var t = document.createTextNode(m.textContent);
-      m.parentNode.replaceChild(t, m);
+    editHosts().forEach(function(h){
+      Array.prototype.forEach.call(h.querySelectorAll("mark.findhit"), function(m){
+        var t = document.createTextNode(m.textContent);
+        m.parentNode.replaceChild(t, m);
+      });
+      h.normalize();
     });
-    $("body").normalize();
     findState.hits = []; findState.at = -1;
   }
   function runFindMarks(){
     clearFindMarks();
     var what = $("findWhat").value;
     if (!what) return;
-    var walker = document.createTreeWalker($("body"), NodeFilter.SHOW_TEXT, null);
+    var host = activeTextHost();
+    var walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, null);
     var targets = [], node;
     while ((node = walker.nextNode())) targets.push(node);
     var lower = what.toLowerCase();
@@ -20670,7 +20691,7 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
       if (pos < txt.length) frag.appendChild(document.createTextNode(txt.slice(pos)));
       if (t.parentNode) t.parentNode.replaceChild(frag, t);
     });
-    findState.hits = Array.prototype.slice.call($("body").querySelectorAll("mark.findhit"));
+    findState.hits = Array.prototype.slice.call(host.querySelectorAll("mark.findhit"));
     findState.at = -1;
     $("findStat").textContent = findState.hits.length
       ? findState.hits.length + " found" : "No matches.";
