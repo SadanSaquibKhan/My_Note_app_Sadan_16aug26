@@ -972,8 +972,21 @@
     border-radius:14px; padding:6px 8px; min-width:48px; text-align:center;
     box-shadow:0 6px 20px var(--shadow); user-select:none; -webkit-user-select:none;
     white-space:nowrap;
-    transition:transform .2s ease;
+    transition:transform .2s ease, opacity .18s ease;
   }
+  /* A chip sits over the page you are writing on, so at rest it is faint
+     enough to read through and solid the moment you take hold of it. Faint,
+     not invisible: it is also the only thing on screen saying where in the
+     notebook you are, and something you cannot find is worse than something
+     slightly in the way.
+
+     .tuck is already "you have not touched me for a second", which is exactly
+     the right moment, so this hangs off it rather than adding a second idea of
+     resting that could disagree with the first. */
+  .navchip.tuck{opacity:.42}
+  .navchip.tuck:hover{opacity:.85}
+  /* whichever one you actually have hold of is fully solid, tucked or not */
+  .navchip.dragging{opacity:1 !important}
   .navchip[hidden]{display:none}
   /* 32px apart, chips ~64px wide → about half of each stays exposed when they
      share a row. That is what lets them sit on the edge instead of out in
@@ -3057,7 +3070,7 @@ var MarginCore = (function(){
   /* The trailing bXX must match the CACHE line in sw.js. Without it the top
      bar read the same on every build, so there was no way to tell a fix that
      had not worked from one the tablet had simply not fetched yet. */
-  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b195";
+  var BUILD      = "v12 \u00B7 2026-08-16 \u00B7 b196";
   var TRASH_DAYS = 30;     /* also the tombstone lifetime — see notes */
 
   /* ---------- ids ---------- */
@@ -4757,14 +4770,19 @@ var MarginCore = (function(){
       list.forEach(function(n){ if (n.id === afterNoteId) after = n; });
       var p = after ? splitSeries(after.title) : null;
       var sec = after ? (after.sectionId || null) : null;
-      if (!p) return createNote(nbId, "", sec);      /* unnumbered: nothing to shift */
+      /* A page put in BETWEEN two pages belongs to whatever they belong to.
+         Without this an inserted page dropped out of its chunk and split one
+         heading into three - the sitting before it, the new page on its own,
+         and the same sitting again underneath. */
+      var join = { chunkId: (after && after.chunkId) || null };
+      if (!p) return createNote(nbId, "", sec, join);   /* unnumbered: nothing to shift */
       var plan = renumberPlan(list.map(function(n){ return n.title; }), p.stem, p.num + 1);
       return plan.reduce(function(chain, step){
         return chain.then(function(){
           return saveNote(list[step.index].id, { title: step.to });
         });
       }, Promise.resolve()).then(function(){
-        return createNote(nbId, seriesName(p.stem, p.num + 1, p.pad), sec);
+        return createNote(nbId, seriesName(p.stem, p.num + 1, p.pad), sec, join);
       });
     });
   }
@@ -18342,6 +18360,11 @@ if (typeof module === "object" && module.exports) module.exports = MarginCore;
     if (!el) return;
     el.style.transform = "translate(" + chipTuckX(el) + "px,-50%)";
     el.classList.toggle("tuck", !!chipDock[chipKindOf(el)]);
+    /* Held in the hand beats every other state. A drag that starts on a tucked
+       chip wakes it, but waking is a timer and the finger is already there —
+       so the chip you are dragging says so itself rather than waiting to be
+       told. */
+    el.classList.toggle("dragging", !!(chipDrag && chipDrag.kind === chipKindOf(el)));
   }
   function setChipTuck(kind, on){
     chipDock[kind] = !!on;
